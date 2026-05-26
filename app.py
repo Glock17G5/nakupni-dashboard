@@ -43,8 +43,8 @@ def now_prague() -> datetime:
 # Musí být PRVNÍ Streamlit příkaz – před jakýmkoliv jiným st.*
 # ==============================================================================
 st.set_page_config(
-    page_title="⚡ Kabelářský Nákupní Dashboard",
-    page_icon="⚡",
+    page_title="pbcable Dashboard",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed",
     menu_items={
@@ -54,6 +54,14 @@ st.set_page_config(
     },
 )
 
+col1, col2 = st.columns([1, 4])
+with col1:
+    try:
+        st.image("logo.png", width=150)
+    except Exception:
+        pass
+with col2:
+    st.title("pbcable - Nákupní terminál")
 
 # ==============================================================================
 # CSS INJEKCE — Veškeré styly přímo v kódu
