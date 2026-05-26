@@ -1678,6 +1678,94 @@ def render_rsi_signals(steel_data: dict | None) -> None:
                 st.info("Nedostatek historických dat pro výpočet RSI (min. 15 bodů).")
 
 
+def build_daily_export_df() -> pd.DataFrame:
+    """
+    Jednořádkový snapshot aktuálních cen, kurzů a RSI pro export (datum = dnes, Praha).
+    """
+    today = now_prague().strftime("%Y-%m-%d")
+    ccy = get_display_currency()
+    wm = fetch_westmetall()
+    steel = fetch_steel_yfinance()
+    cnb = fetch_cnb_rates()
+
+    cu_usd, _, _ = resolve_metal_price("copper", wm)
+    al_usd, _, _ = resolve_metal_price("aluminum", wm)
+
+    row: dict = {
+        "datum": today,
+        "mena_zobrazeni": ccy,
+        "med_cena_usd_t": cu_usd,
+        "hlinik_cena_usd_t": al_usd,
+        "med_cena_zobrazeni": usd_to_display(cu_usd, ccy),
+        "hlinik_cena_zobrazeni": usd_to_display(al_usd, ccy),
+        "eur_usd": get_eurusd_rate(),
+    }
+
+    if steel:
+        row["ocel_cena_usd_t"] = steel.get("price")
+        row["ocel_cena_zobrazeni"] = usd_to_display(steel.get("price"), ccy)
+        row["ocel_delta_pct"] = steel.get("delta_pct")
+    else:
+        row["ocel_cena_usd_t"] = None
+        row["ocel_cena_zobrazeni"] = None
+        row["ocel_delta_pct"] = None
+
+    for metal_key, prefix in [("copper", "med"), ("aluminum", "hlinik"), ("steel", "ocel")]:
+        rsi = _metal_rsi_value(metal_key, steel)
+        row[f"{prefix}_rsi"] = round(rsi, 2) if rsi is not None else None
+        if rsi is not None:
+            signal_text, _ = interpret_rsi(rsi)
+            row[f"{prefix}_rsi_signal"] = signal_text
+        else:
+            row[f"{prefix}_rsi_signal"] = None
+
+    if cnb:
+        row["cnb_datum"] = cnb.get("_date")
+        for code, col in [("USD", "usd_czk"), ("EUR", "eur_czk"), ("CNY", "cny_czk")]:
+            info = cnb.get(code)
+            row[col] = info.get("rate") if info else None
+    else:
+        row["cnb_datum"] = None
+        row["usd_czk"] = row["eur_czk"] = row["cny_czk"] = None
+
+    try:
+        oil = fetch_oil_data()
+        if oil and oil.get("brent"):
+            row["brent_usd_bbl"] = oil["brent"].get("price")
+        else:
+            row["brent_usd_bbl"] = None
+    except Exception:
+        row["brent_usd_bbl"] = None
+
+    return pd.DataFrame([row])
+
+
+def render_data_export() -> None:
+    """Postranní panel — stažení denního CSV snapshotu (bez zápisu na server)."""
+    with st.sidebar:
+        st.markdown("### 💾 Export dat pro analýzu")
+        st.caption(
+            "Aktuální ceny kovů, kurzy ČNB, EUR/USD a RSI v jednom řádku. "
+            "Soubor se generuje při každém stažení — na serveru se neukládá."
+        )
+        try:
+            export_df = build_daily_export_df()
+            if export_df.empty:
+                st.warning("Data pro export nejsou k dispozici.")
+                return
+            csv_bytes = export_df.to_csv(index=False).encode("utf-8-sig")
+            file_name = f"pbcable_ceny_{now_prague().strftime('%Y-%m-%d')}.csv"
+            st.download_button(
+                label="⬇️ Stáhnout CSV",
+                data=csv_bytes,
+                file_name=file_name,
+                mime="text/csv",
+                use_container_width=True,
+            )
+        except Exception:
+            st.warning("Export se nepodařilo připravit. Zkuste obnovit data.")
+
+
 # Globální přepínač období grafů → yfinance period
 CHART_PERIODS: dict[str, str] = {
     "1W": "5d",
@@ -3077,6 +3165,7 @@ def render_footer() -> None:
 
 def main() -> None:
     """Hlavní funkce – sestaví celý dashboard voláním dílčích render funkcí."""
+    render_data_export()
     render_header()
     render_global_controls()
     render_metals()
