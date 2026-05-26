@@ -13,6 +13,14 @@ import re
 import json
 import time
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+TZ_PRAGUE = ZoneInfo("Europe/Prague")
+
+
+def now_prague() -> datetime:
+    """Aktuální datum a čas ve středoevropském pásmu (Praha)."""
+    return datetime.now(TZ_PRAGUE)
 
 # ── Datové a numerické knihovny ────────────────────────────────────────────────
 import numpy as np
@@ -245,15 +253,18 @@ footer { visibility: hidden; }
 .section-header {
     display: flex;
     align-items: center;
-    gap: 10px;
-    margin: 28px 0 16px 0;
-    padding-bottom: 12px;
+    flex-wrap: wrap;
+    gap: 10px 12px;
+    margin: 28px 0 20px 0;
+    padding-bottom: 14px;
     border-bottom: 1px solid #0a1830;
+    line-height: 1.4;
 }
 
 .section-icon {
     font-size: 1.1rem;
-    line-height: 1;
+    line-height: 1.3;
+    flex-shrink: 0;
 }
 
 .section-title {
@@ -263,7 +274,9 @@ footer { visibility: hidden; }
     color: #8ab0d4;
     text-transform: uppercase;
     letter-spacing: 1.5px;
-    flex: 1;
+    flex: 1 1 auto;
+    line-height: 1.45;
+    min-width: 0;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -274,11 +287,12 @@ footer { visibility: hidden; }
     background: linear-gradient(145deg, #090f1e 0%, #060c18 60%, #05090f 100%);
     border: 1px solid #0d1d35;
     border-radius: 14px;
-    padding: 16px 18px 14px 18px;
-    overflow: hidden;
+    padding: 18px 18px 16px 18px;
+    overflow: visible;
     transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
-    min-height: 120px;
+    min-height: auto;
     cursor: default;
+    margin-bottom: 10px;
 }
 
 .metric-card:hover {
@@ -357,10 +371,11 @@ footer { visibility: hidden; }
     color: #2a4a78;
     text-transform: uppercase;
     letter-spacing: 1.2px;
-    margin-bottom: 8px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    margin-bottom: 10px;
+    line-height: 1.4;
+    white-space: normal;
+    overflow: visible;
+    word-wrap: break-word;
 }
 
 .card-value {
@@ -368,9 +383,10 @@ footer { visibility: hidden; }
     font-size: 1.5rem;
     font-weight: 600;
     color: #dceeff;
-    line-height: 1.05;
+    line-height: 1.3;
     letter-spacing: -0.5px;
-    margin-bottom: 4px;
+    margin-bottom: 8px;
+    word-wrap: break-word;
 }
 
 .card-value-sm {
@@ -381,8 +397,10 @@ footer { visibility: hidden; }
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.67rem;
     color: #1e3a5a;
-    margin-bottom: 10px;
-    white-space: nowrap;
+    margin-bottom: 12px;
+    line-height: 1.45;
+    white-space: normal;
+    word-wrap: break-word;
 }
 
 .card-delta-row {
@@ -390,6 +408,9 @@ footer { visibility: hidden; }
     align-items: center;
     gap: 6px;
     flex-wrap: wrap;
+    margin-top: 4px;
+    margin-bottom: 6px;
+    line-height: 1.4;
 }
 
 .delta-chip {
@@ -409,8 +430,11 @@ footer { visibility: hidden; }
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.62rem;
     color: #1e3a5a;
-    margin-top: 4px;
+    margin-top: 8px;
+    margin-bottom: 2px;
+    line-height: 1.5;
     font-style: italic;
+    word-wrap: break-word;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -431,7 +455,8 @@ footer { visibility: hidden; }
     color: #2a4a78;
     text-transform: uppercase;
     letter-spacing: 1.2px;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
+    line-height: 1.4;
 }
 
 .spread-value {
@@ -439,6 +464,8 @@ footer { visibility: hidden; }
     font-size: 1.25rem;
     font-weight: 600;
     letter-spacing: -0.5px;
+    line-height: 1.35;
+    margin-bottom: 6px;
 }
 
 .spread-details {
@@ -456,8 +483,25 @@ footer { visibility: hidden; }
     background: linear-gradient(145deg, #070e1e 0%, #050c18 100%);
     border: 1px solid #0a1830;
     border-radius: 14px;
-    padding: 16px 16px 8px 16px;
-    overflow: hidden;
+    padding: 18px 14px 14px 14px;
+    overflow: visible;
+    margin-bottom: 14px;
+}
+
+.chart-wrap .js-plotly-plot {
+    overflow: visible !important;
+}
+
+/* Mezery mezi sloupci (PC) */
+[data-testid="stHorizontalBlock"] {
+    gap: 0.65rem !important;
+    align-items: stretch !important;
+}
+
+div[data-testid="column"] {
+    padding-left: 6px !important;
+    padding-right: 6px !important;
+    margin-bottom: 10px !important;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -501,33 +545,38 @@ footer { visibility: hidden; }
     }
 
     .metric-card {
-        padding: 12px 12px 10px 12px;
-        min-height: 0;
-        margin-bottom: 6px;
+        padding: 14px 12px 12px 12px;
+        min-height: auto;
+        margin-bottom: 10px;
     }
 
     .card-label {
         font-size: 0.6rem;
-        margin-bottom: 4px;
+        margin-bottom: 8px;
+        line-height: 1.45;
     }
 
     .card-value {
         font-size: 1.25rem;
-        margin-bottom: 2px;
+        margin-bottom: 8px;
+        line-height: 1.3;
     }
 
     .card-value-sm {
         font-size: 1rem;
+        line-height: 1.3;
     }
 
     .card-unit {
         font-size: 0.6rem;
-        margin-bottom: 6px;
+        margin-bottom: 10px;
+        line-height: 1.45;
     }
 
     .card-extra {
         font-size: 0.58rem;
-        margin-top: 2px;
+        margin-top: 6px;
+        line-height: 1.5;
     }
 
     .spread-card {
@@ -552,8 +601,9 @@ footer { visibility: hidden; }
     }
 
     .chart-wrap {
-        padding: 10px 8px 4px 8px;
+        padding: 14px 10px 12px 10px;
         border-radius: 10px;
+        margin-bottom: 12px;
     }
 
     /* Sloupce – na mobilu stack vertikálně */
@@ -709,11 +759,7 @@ footer { visibility: hidden; }
    STREAMLIT PŘEPISY
    ══════════════════════════════════════════════════════════════════════════ */
 
-/* Sloupce - zmenšení defaultního paddingu */
-div[data-testid="column"] {
-    padding-left: 5px !important;
-    padding-right: 5px !important;
-}
+/* Sloupce – mezery definovány výše u .chart-wrap bloku */
 
 /* Streamlit tlačítka */
 button[kind="secondary"] {
@@ -837,14 +883,15 @@ details summary {
     color: #3a6a9a;
     text-transform: uppercase;
     letter-spacing: 1px;
-    margin-bottom: 4px;
+    margin-bottom: 8px;
+    line-height: 1.4;
 }
 .currency-bar-hint {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.68rem;
     color: #1e3a60;
-    line-height: 1.6;
-    padding-top: 6px;
+    line-height: 1.65;
+    padding-top: 8px;
 }
 [data-testid="stSegmentedControl"] {
     background: #050d1a !important;
@@ -1127,7 +1174,7 @@ def filter_wm_history_by_period(df: pd.DataFrame | None) -> pd.DataFrame | None:
     days = _WM_PERIOD_DAYS.get(get_chart_period(), 92)
     out = df.copy()
     out["Date"] = pd.to_datetime(out["Date"])
-    cutoff = pd.Timestamp.now().normalize() - pd.Timedelta(days=days)
+    cutoff = pd.Timestamp(now_prague().replace(tzinfo=None)).normalize() - pd.Timedelta(days=days)
     filtered = out[out["Date"] >= cutoff]
     return filtered.reset_index(drop=True) if not filtered.empty else None
 
@@ -1205,7 +1252,7 @@ def fetch_westmetall() -> dict | None:
 
         if result:
             result["_source"] = "westmetall.com"
-            result["_ts"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+            result["_ts"] = now_prague().strftime("%Y-%m-%d %H:%M")
             return result
         return None
 
@@ -1241,7 +1288,7 @@ def fetch_steel_yfinance() -> dict | None:
                 "ticker":     ticker,
                 "note":       "Hot Rolled Coil (CME)",
                 "_source":    "Yahoo Finance",
-                "_ts":        datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "_ts":        now_prague().strftime("%Y-%m-%d %H:%M"),
             }
         except Exception:
             continue
@@ -1353,7 +1400,7 @@ def fetch_cnb_rates() -> dict | None:
             return None
 
         date_str = lines[0].split("#")[0].strip()   # "02.05.2024"
-        rates: dict = {"_date": date_str, "_ts": datetime.now().strftime("%Y-%m-%d %H:%M")}
+        rates: dict = {"_date": date_str, "_ts": now_prague().strftime("%Y-%m-%d %H:%M")}
 
         for line in lines[2:]:
             parts = line.strip().split("|")
@@ -1616,7 +1663,7 @@ def fetch_oil_data() -> dict | None:
         except Exception:
             continue
     if result:
-        result["_ts"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+        result["_ts"] = now_prague().strftime("%Y-%m-%d %H:%M")
         return result
     return None
 
@@ -1686,7 +1733,7 @@ def fetch_bdi() -> dict | None:
             "delta":     round(value - prev, 0),
             "delta_pct": round((value - prev) / prev * 100, 2) if prev else 0,
             "unit":      "bodů (index)",
-            "_ts":       datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "_ts":       now_prague().strftime("%Y-%m-%d %H:%M"),
         }
     except Exception:
         return None
@@ -1742,7 +1789,7 @@ def fetch_scfi() -> dict | None:
                             "value":  val,
                             "unit":   "bodů (index)",
                             "source": url,
-                            "_ts":    datetime.now().strftime("%Y-%m-%d %H:%M"),
+                            "_ts":    now_prague().strftime("%Y-%m-%d %H:%M"),
                         }
         except Exception:
             continue
@@ -1835,14 +1882,14 @@ def interactive_line_chart(
     fig.update_layout(
         title=dict(text=title, font=dict(family="Syne, sans-serif", size=12, color="#3a6a9a"), y=0.97),
         height=height,
-        margin=dict(l=10, r=10, t=30, b=10),
+        margin=dict(l=10, r=10, t=42 if show_legend else 36, b=12),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         showlegend=show_legend,
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=1.02,
+            y=1.08,
             xanchor="right",
             x=1,
             font=dict(family="IBM Plex Mono, monospace", size=9, color="#4a7ab5"),
@@ -1909,23 +1956,23 @@ def interactive_metal_dual_chart(
     ) if has_stock else None
 
     fig.update_layout(
-        title=dict(text=title, font=dict(family="Syne, sans-serif", size=12, color="#3a6a9a"), y=0.97),
+        title=dict(text=title, font=dict(family="Syne, sans-serif", size=12, color="#3a6a9a"), y=0.98),
         height=height,
-        margin=dict(l=10, r=10, t=30, b=10),
+        margin=dict(l=10, r=10, t=48, b=12),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         showlegend=True,
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=1.02,
+            y=1.1,
             xanchor="right",
             x=1,
             font=dict(family="IBM Plex Mono, monospace", size=9, color="#4a7ab5"),
             bgcolor="rgba(0,0,0,0)",
         ),
         xaxis=dict(**_TICK_AXIS, tickformat="%b %y"),
-        yaxis=dict(**_TICK_AXIS, tickformat=",.0f", title=y_price_label),
+        yaxis=dict(**_TICK_AXIS, tickformat=",.0f", title=dict(text=y_price_label, standoff=8)),
         yaxis2=y2_axis,
         hoverlabel=_HOVER_LABEL,
         hovermode="x unified",
@@ -2081,7 +2128,7 @@ def line_chart(
     fig.update_layout(
         title=dict(text=title, font=dict(family="Syne, sans-serif", size=12, color="#3a6a9a"), y=0.97),
         height=height,
-        margin=dict(l=10, r=10, t=30, b=10),
+        margin=dict(l=10, r=10, t=36, b=12),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         showlegend=False,
@@ -2135,7 +2182,7 @@ def bar_metals(
     fig.update_layout(
         title=dict(text=title, font=dict(family="Syne, sans-serif", size=12, color="#3a6a9a")),
         height=220,
-        margin=dict(l=10, r=10, t=30, b=10),
+        margin=dict(l=10, r=10, t=36, b=12),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         showlegend=False,
@@ -2168,7 +2215,7 @@ def bar_metals(
 
 def render_header() -> None:
     """Vykreslí animované záhlaví dashboardu."""
-    now = datetime.now()
+    now = now_prague()
     st.markdown(f"""
     <div class="dash-header">
         <div class="dash-header-content">
@@ -2182,7 +2229,7 @@ def render_header() -> None:
             </div>
             <div class="dash-meta">
                 <div class="dash-timestamp">
-                    <strong>Aktualizováno</strong><br>
+                    <strong>Poslední aktualizace</strong> (CET)<br>
                     {now.strftime("%d.%m.%Y %H:%M:%S")}<br>
                     Cache TTL: <strong>15 min</strong>
                 </div>
@@ -2883,13 +2930,13 @@ def render_logistics() -> None:
         )
         ship_date = st.date_input(
             "Datum odeslání",
-            value=datetime.now().date(),
+            value=now_prague().date(),
             help="Den odjezdu nákladu z Číny",
         )
 
     transit_days = TRANSIT_DAYS[transport]
     delivery_date = ship_date + timedelta(days=transit_days)
-    today = datetime.now().date()
+    today = now_prague().date()
 
     if today < ship_date:
         elapsed = 0
@@ -3098,7 +3145,7 @@ def render_summary_table() -> None:
 
 def render_footer() -> None:
     """Footer s metadaty a upozorněním."""
-    now = datetime.now()
+    now = now_prague()
     st.markdown(f"""
     <div class="dash-footer">
         <div>⚡ Kabelářský Nákupní Dashboard &nbsp;·&nbsp; v2.0.0 &nbsp;·&nbsp; Python + Streamlit</div>
