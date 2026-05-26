@@ -461,6 +461,113 @@ footer { visibility: hidden; }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
+   MOBILNÍ REŽIM (max-width: 768px)
+   ══════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+    /* Hlavní kontejner – menší vnitřní okraje */
+    section[data-testid="stMain"] > div:first-child {
+        padding-left: 0.4rem !important;
+        padding-right: 0.4rem !important;
+    }
+
+    .dash-header {
+        padding: 16px 14px 14px 14px;
+        margin-bottom: 14px;
+        border-radius: 14px;
+    }
+
+    .dash-title {
+        font-size: 1.35rem;
+    }
+
+    .dash-subtitle {
+        font-size: 0.62rem;
+        letter-spacing: 1.4px;
+    }
+
+    .dash-timestamp {
+        font-size: 0.62rem;
+        line-height: 1.5;
+    }
+
+    .section-header {
+        margin: 18px 0 8px 0;
+        padding-bottom: 6px;
+    }
+
+    .section-title {
+        font-size: 0.8rem;
+        letter-spacing: 1.1px;
+    }
+
+    .metric-card {
+        padding: 12px 12px 10px 12px;
+        min-height: 0;
+        margin-bottom: 6px;
+    }
+
+    .card-label {
+        font-size: 0.6rem;
+        margin-bottom: 4px;
+    }
+
+    .card-value {
+        font-size: 1.25rem;
+        margin-bottom: 2px;
+    }
+
+    .card-value-sm {
+        font-size: 1rem;
+    }
+
+    .card-unit {
+        font-size: 0.6rem;
+        margin-bottom: 6px;
+    }
+
+    .card-extra {
+        font-size: 0.58rem;
+        margin-top: 2px;
+    }
+
+    .spread-card {
+        padding: 10px 10px;
+        margin-bottom: 6px;
+    }
+
+    .spread-value {
+        font-size: 1.05rem;
+    }
+
+    .spread-details {
+        font-size: 0.6rem;
+    }
+
+    .info-box,
+    .warning-box,
+    .error-box {
+        font-size: 0.65rem;
+        padding: 8px 10px;
+        margin: 6px 0;
+    }
+
+    .chart-wrap {
+        padding: 10px 8px 4px 8px;
+        border-radius: 10px;
+    }
+
+    /* Sloupce – na mobilu stack vertikálně */
+    [data-testid="stHorizontalBlock"] {
+        flex-direction: column !important;
+        gap: 0.5rem !important;
+    }
+
+    [data-testid="stHorizontalBlock"] > div {
+        width: 100% !important;
+    }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
    INFO / WARNING / ERROR BOXY
    ══════════════════════════════════════════════════════════════════════════ */
 .info-box {
@@ -1728,7 +1835,7 @@ def interactive_line_chart(
     fig.update_layout(
         title=dict(text=title, font=dict(family="Syne, sans-serif", size=12, color="#3a6a9a"), y=0.97),
         height=height,
-        margin=dict(l=48, r=12, t=36 if show_legend else 28, b=36),
+        margin=dict(l=10, r=10, t=30, b=10),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         showlegend=show_legend,
@@ -1804,7 +1911,7 @@ def interactive_metal_dual_chart(
     fig.update_layout(
         title=dict(text=title, font=dict(family="Syne, sans-serif", size=12, color="#3a6a9a"), y=0.97),
         height=height,
-        margin=dict(l=52, r=62 if has_stock else 16, t=40, b=36),
+        margin=dict(l=10, r=10, t=30, b=10),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         showlegend=True,
@@ -1932,6 +2039,7 @@ def sparkline(df: pd.DataFrame, color: str = "#3b82f6", height: int = 70) -> go.
     ))
     fig.update_layout(
         height=height,
+        margin=dict(l=10, r=10, t=10, b=4),
         **_PLOTLY_DEFAULTS,
         xaxis=_AXIS_STYLE,
         yaxis=_AXIS_STYLE,
@@ -1973,7 +2081,7 @@ def line_chart(
     fig.update_layout(
         title=dict(text=title, font=dict(family="Syne, sans-serif", size=12, color="#3a6a9a"), y=0.97),
         height=height,
-        margin=dict(l=48, r=12, t=28, b=36),
+        margin=dict(l=10, r=10, t=30, b=10),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         showlegend=False,
@@ -2027,7 +2135,7 @@ def bar_metals(
     fig.update_layout(
         title=dict(text=title, font=dict(family="Syne, sans-serif", size=12, color="#3a6a9a")),
         height=220,
-        margin=dict(l=70, r=80, t=32, b=20),
+        margin=dict(l=10, r=10, t=30, b=10),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         showlegend=False,
