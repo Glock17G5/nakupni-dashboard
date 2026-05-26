@@ -10,20 +10,9 @@
 
 # ── Standardní knihovny ────────────────────────────────────────────────────────
 import re
-import json
-import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-TZ_PRAGUE = ZoneInfo("Europe/Prague")
-
-
-def now_prague() -> datetime:
-    """Aktuální datum a čas ve středoevropském pásmu (Praha)."""
-    return datetime.now(TZ_PRAGUE)
-
-# ── Datové a numerické knihovny ────────────────────────────────────────────────
-import numpy as np
 import pandas as pd
 
 # ── Web scraping ───────────────────────────────────────────────────────────────
@@ -35,10 +24,18 @@ import yfinance as yf
 
 # ── Vizualizace ────────────────────────────────────────────────────────────────
 import plotly.graph_objects as go
-import plotly.express as px
 
 # ── Streamlit ─────────────────────────────────────────────────────────────────
 import streamlit as st
+
+TZ_PRAGUE = ZoneInfo("Europe/Prague")
+CACHE_TTL = 3600
+_YF_HIST_PERIOD = "1y"
+
+
+def now_prague() -> datetime:
+    """Aktuální datum a čas ve středoevropském pásmu (Praha)."""
+    return datetime.now(TZ_PRAGUE)
 
 
 # ==============================================================================
@@ -1014,9 +1011,97 @@ def error_card(label: str, card_class: str = "card-neutral", msg: str = "Data mo
     """
 
 
+def _show_plotly(fig: go.Figure | None, *, toolbar: bool = True) -> None:
+    """Vykreslí Plotly graf v chart-wrap kontejneru."""
+    if fig is None:
+        return
+    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": toolbar})
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+_LME_METAL_CARDS: list[tuple[str, str, str, str]] = [
+    ("copper", "Měď (Cu)", "card-copper", "copper_stock"),
+    ("aluminum", "Hliník (Al)", "card-aluminum", "aluminum_stock"),
+]
+
+_SHFE_SPREAD_METALS = [("copper", "Měď"), ("aluminum", "Hliník")]
+
+_CNB_METRIC_CARDS = [
+    ("USD", "USD/CZK", "Americký dolar", "card-usd"),
+    ("EUR", "EUR/CZK", "Euro", "card-eur"),
+    ("CNY", "CNY/CZK", "Čínský jüan", "card-cny"),
+]
+
+
+def _render_lme_metal_card(
+    metal_key: str,
+    label: str,
+    card_class: str,
+    stock_key: str,
+    wm_data: dict | None,
+) -> None:
+    """Metrická karta LME Cash (měď / hliník) — Westmetall."""
+    price_usd, _, _ = resolve_metal_price(metal_key, wm_data)
+    unit = metal_unit_label()
+    ccy = get_display_currency()
+    stock_extra = wm_stock_extra(wm_data, stock_key)
+    if price_usd is not None:
+        price_disp = usd_to_display(price_usd, ccy)
+        if price_disp is None and ccy == "EUR":
+            st.markdown(
+                error_card(label, card_class, "N/A — chybí EUR/USD"),
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                metric_card(
+                    label,
+                    format_num(price_disp, 0) if price_disp is not None else "N/A",
+                    unit,
+                    card_class=card_class,
+                    extra=stock_extra or "Westmetall LME Cash",
+                ),
+                unsafe_allow_html=True,
+            )
+    else:
+        st.markdown(
+            error_card(label, card_class, "Data nedostupná · Westmetall"),
+            unsafe_allow_html=True,
+        )
+
+
+def _render_steel_metric_card(steel_data: dict | None) -> None:
+    """Metrická karta oceli (HRC) — Yahoo."""
+    unit = metal_unit_label()
+    ccy = get_display_currency()
+    d_suffix = currency_delta_suffix()
+    if steel_data:
+        st_price = usd_to_display(steel_data["price"], ccy)
+        st_delta = usd_to_display(steel_data.get("delta"), ccy)
+        st.markdown(
+            metric_card(
+                "Ocel (HRC)",
+                format_num(st_price, 0) if st_price is not None else "N/A",
+                unit,
+                delta=st_delta,
+                delta_suffix=d_suffix if st_delta is not None else "",
+                card_class="card-steel",
+                extra=f'{steel_data.get("ticker", "HRC")} · Yahoo · armoured cables',
+            ),
+            unsafe_allow_html=True,
+        )
+    else:
+        st.warning("Ocel (HRC): Yahoo Finance nevrátilo živou cenu.")
+        st.markdown(
+            error_card("Ocel (HRC)", "card-steel", "Data nedostupná"),
+            unsafe_allow_html=True,
+        )
+
+
 # ==============================================================================
 # ─────────────────────────────────────────────────────────────────────────────
-#  DATOVÉ FUNKCE – METALY (LME via westmetall.com + yfinance záloha)
+#  DATOVÉ FUNKCE – METALY (LME via westmetall.com)
 # ─────────────────────────────────────────────────────────────────────────────
 # ==============================================================================
 
@@ -1115,7 +1200,7 @@ def _parse_wm_table_date(text: str) -> datetime | None:
     return None
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=CACHE_TTL)
 def fetch_westmetall_history(url: str) -> pd.DataFrame | None:
     """
     Stáhne historii z westmetall tabulky (action=table&field=LME_*_cash).
@@ -1167,19 +1252,23 @@ def fetch_westmetall_history(url: str) -> pd.DataFrame | None:
         return None
 
 
-def filter_wm_history_by_period(df: pd.DataFrame | None) -> pd.DataFrame | None:
-    """Ořízne westmetall historii podle globálního přepínače období (1W–1Y)."""
+def filter_history_by_period(df: pd.DataFrame | None, date_col: str = "Date") -> pd.DataFrame | None:
+    """Ořízne historii podle globálního přepínače období (1W–1Y) — bez nového stahování."""
     if df is None or df.empty:
         return None
     days = _WM_PERIOD_DAYS.get(get_chart_period(), 92)
     out = df.copy()
-    out["Date"] = pd.to_datetime(out["Date"])
+    if date_col in out.columns:
+        out[date_col] = pd.to_datetime(out[date_col])
     cutoff = pd.Timestamp(now_prague().replace(tzinfo=None)).normalize() - pd.Timedelta(days=days)
-    filtered = out[out["Date"] >= cutoff]
+    filtered = out[out[date_col] >= cutoff]
     return filtered.reset_index(drop=True) if not filtered.empty else None
 
 
-@st.cache_data(ttl=900)
+filter_wm_history_by_period = filter_history_by_period
+
+
+@st.cache_data(ttl=CACHE_TTL)
 def fetch_westmetall() -> dict | None:
     """
     Scrapuje LME Cash (Settlement Kasse) z westmetall.com/en/markdaten.php.
@@ -1266,7 +1355,7 @@ _ST_TON_FACTOR = 2204.623 / 2000.0
 _STEEL_TICKERS = ("HRC=F", "STRE=F")
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=CACHE_TTL)
 def fetch_steel_yfinance() -> dict | None:
     """Ocel (Hot Rolled Coil) — Yahoo HRC=F nebo STRE=F, cena v USD/t."""
     for ticker in _STEEL_TICKERS:
@@ -1295,20 +1384,25 @@ def fetch_steel_yfinance() -> dict | None:
     return None
 
 
-@st.cache_data(ttl=900)
-def fetch_metal_history(ticker: str = "HG=F", period: str = "6mo") -> pd.DataFrame | None:
-    """
-    Stáhne historická data pro zadaný ticker (yfinance) a vrátí DataFrame.
-    Sloupce: Date, Close. Pokud selže, vrátí None.
-    """
+@st.cache_data(ttl=CACHE_TTL)
+def _yf_history(ticker: str) -> pd.DataFrame | None:
+    """Plná historie tickeru (1 rok) — cache nezávislá na přepínači období."""
     try:
-        hist = yf.Ticker(ticker).history(period=period)
+        hist = yf.Ticker(ticker).history(period=_YF_HIST_PERIOD)
         hist = hist.dropna(subset=["Close"])
         if hist.empty:
             return None
-        return hist[["Close"]].reset_index()
+        out = hist[["Close"]].reset_index()
+        if "Date" not in out.columns and "Datetime" in out.columns:
+            out = out.rename(columns={"Datetime": "Date"})
+        return out
     except Exception:
         return None
+
+
+def fetch_metal_history(ticker: str = "HG=F", period: str = "6mo") -> pd.DataFrame | None:
+    """Historie tickeru oříznutá podle globálního období (period jen kvůli kompatibilitě API)."""
+    return filter_history_by_period(_yf_history(ticker))
 
 
 # ==============================================================================
@@ -1317,21 +1411,17 @@ def fetch_metal_history(ticker: str = "HG=F", period: str = "6mo") -> pd.DataFra
 # ─────────────────────────────────────────────────────────────────────────────
 # ==============================================================================
 
-@st.cache_data(ttl=900)
+_SHFE_TICKERS = {"copper": "nf_CU0", "aluminum": "nf_AL0"}
+
+
+@st.cache_data(ttl=CACHE_TTL)
 def fetch_shfe_sina(metal: str = "copper") -> dict | None:
     """
     Stahuje aktuální ceny z SHFE přes Sina Finance hq API.
     Formát odpovědi: var hq_str_nf_CU0="datum,čas,open,high,low,close,settle,...";
     Vrátí {price (CNY/t), open, settle, ticker} nebo None.
     """
-    ticker_map = {
-        "copper":   "nf_CU0",
-        "aluminum": "nf_AL0",
-        "zinc":     "nf_ZN0",
-        "lead":     "nf_PB0",
-        "tin":      "nf_SN0",
-        "nickel":   "nf_NI0",
-    }
+    ticker_map = _SHFE_TICKERS
     ticker = ticker_map.get(metal, "nf_CU0")
     url    = f"http://hq.sinajs.cn/list={ticker}"
     headers = {
@@ -1379,7 +1469,7 @@ def _safe_float(s: str) -> float | None:
 # ─────────────────────────────────────────────────────────────────────────────
 # ==============================================================================
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=CACHE_TTL)
 def fetch_cnb_rates() -> dict | None:
     """
     Stahuje denní kurzovní lístek ČNB z URL:
@@ -1426,38 +1516,20 @@ def fetch_cnb_rates() -> dict | None:
         return None
 
 
-@st.cache_data(ttl=900)
 def fetch_fx_history(ticker: str, period: str = "3mo") -> pd.DataFrame | None:
-    """
-    Stáhne historii FX páru (yfinance) pro sparkline/trend grafy.
-    Např. ticker = 'USDCZK=X'.
-    Vrátí DataFrame (Date, Close) nebo None.
-    """
-    try:
-        hist = yf.Ticker(ticker).history(period=period)
-        hist = hist.dropna(subset=["Close"])
-        if hist.empty:
-            return None
-        out = hist[["Close"]].reset_index()
-        if "Date" not in out.columns and "Datetime" in out.columns:
-            out = out.rename(columns={"Datetime": "Date"})
-        return out
-    except Exception:
-        return None
+    """Historie FX páru oříznutá podle globálního období (period jen kvůli kompatibilitě)."""
+    return filter_history_by_period(_yf_history(ticker))
 
 
-@st.cache_data(ttl=900)
-def fetch_cny_czk_history(period: str = "3mo") -> tuple[pd.DataFrame | None, bool]:
-    """
-    Historie CNY/CZK: primárně CNYCZK=X, jinak odvozeno USDCZK=X × CNYUSD=X (živá data).
-    Vrátí (DataFrame, derived_flag).
-    """
-    direct = fetch_fx_history("CNYCZK=X", period)
+@st.cache_data(ttl=CACHE_TTL)
+def _cny_czk_history_full() -> tuple[pd.DataFrame | None, bool]:
+    """Plná historie CNY/CZK — cache nezávislá na přepínači období."""
+    direct = _yf_history("CNYCZK=X")
     if direct is not None and not direct.empty:
         return direct, False
 
-    usd_czk = fetch_fx_history("USDCZK=X", period)
-    cny_usd = fetch_fx_history("CNYUSD=X", period)
+    usd_czk = _yf_history("USDCZK=X")
+    cny_usd = _yf_history("CNYUSD=X")
     if usd_czk is None or cny_usd is None or usd_czk.empty or cny_usd.empty:
         return None, False
 
@@ -1473,7 +1545,13 @@ def fetch_cny_czk_history(period: str = "3mo") -> tuple[pd.DataFrame | None, boo
     return merged[["Date", "Close"]].copy(), True
 
 
-@st.cache_data(ttl=900)
+def fetch_cny_czk_history(period: str = "3mo") -> tuple[pd.DataFrame | None, bool]:
+    """Historie CNY/CZK oříznutá podle globálního období."""
+    full, derived = _cny_czk_history_full()
+    return filter_history_by_period(full), derived
+
+
+@st.cache_data(ttl=CACHE_TTL)
 def fetch_yf_spot(ticker: str) -> dict | None:
     """Aktuální spot kurz / cena z yfinance (poslední close vs. předchozí den)."""
     try:
@@ -1632,36 +1710,29 @@ def wm_stock_extra(wm_data: dict | None, stock_key: str) -> str | None:
 # ─────────────────────────────────────────────────────────────────────────────
 # ==============================================================================
 
-@st.cache_data(ttl=900)
+_OIL_TICKERS = {
+    "brent": ("BZ=F", "Brent Crude Oil"),
+    "wti":   ("CL=F", "WTI Crude Oil"),
+}
+
+
+@st.cache_data(ttl=CACHE_TTL)
 def fetch_oil_data() -> dict | None:
-    """
-    Stahuje ceny ropy Brent (BZ=F) a WTI (CL=F) přes yfinance.
-    Vrátí dict {'brent': {...}, 'wti': {...}} nebo None.
-    """
-    cfg = {
-        "brent": ("BZ=F",  "Brent Crude Oil"),
-        "wti":   ("CL=F",  "WTI Crude Oil"),
-    }
+    """Ceny ropy Brent a WTI — sdílená cache s fetch_yf_spot."""
     result: dict = {}
-    for key, (ticker, name) in cfg.items():
-        try:
-            hist = yf.Ticker(ticker).history(period="10d")
-            hist = hist.dropna(subset=["Close"])
-            if hist.empty:
-                continue
-            price      = float(hist["Close"].iloc[-1])
-            prev_price = float(hist["Close"].iloc[-2]) if len(hist) > 1 else price
-            result[key] = {
-                "price":     round(price, 2),
-                "prev":      round(prev_price, 2),
-                "delta":     round(price - prev_price, 2),
-                "delta_pct": round((price - prev_price) / prev_price * 100, 2) if prev_price else 0,
-                "unit":      "USD/bbl",
-                "name":      name,
-                "ticker":    ticker,
-            }
-        except Exception:
+    for key, (ticker, name) in _OIL_TICKERS.items():
+        spot = fetch_yf_spot(ticker)
+        if not spot:
             continue
+        result[key] = {
+            "price":     round(spot["price"], 2),
+            "prev":      round(spot["prev"], 2),
+            "delta":     round(spot["delta"], 2),
+            "delta_pct": spot["delta_pct"],
+            "unit":      "USD/bbl",
+            "name":      name,
+            "ticker":    ticker,
+        }
     if result:
         result["_ts"] = now_prague().strftime("%Y-%m-%d %H:%M")
         return result
@@ -1695,105 +1766,9 @@ def calc_plastic_prices(brent_usd: float | None) -> dict | None:
         return None
 
 
-@st.cache_data(ttl=900)
 def fetch_oil_history(period: str = "6mo") -> pd.DataFrame | None:
-    """Stáhne historii Brent ropy (BZ=F) pro grafické zobrazení."""
-    try:
-        hist = yf.Ticker("BZ=F").history(period=period)
-        hist = hist.dropna(subset=["Close"])
-        if hist.empty:
-            return None
-        return hist[["Close"]].reset_index()
-    except Exception:
-        return None
-
-
-# ==============================================================================
-# ─────────────────────────────────────────────────────────────────────────────
-#  DATOVÉ FUNKCE – LOGISTIKA (BDI + SCFI scraper)
-# ─────────────────────────────────────────────────────────────────────────────
-# ==============================================================================
-
-@st.cache_data(ttl=900)
-def fetch_bdi() -> dict | None:
-    """
-    Stahuje Baltic Dry Index přes yfinance (ticker '^BDI').
-    Vrátí dict {value, prev, delta, delta_pct, unit} nebo None.
-    """
-    try:
-        hist = yf.Ticker("^BDI").history(period="1mo")
-        hist = hist.dropna(subset=["Close"])
-        if hist.empty:
-            return None
-        value = float(hist["Close"].iloc[-1])
-        prev  = float(hist["Close"].iloc[-2]) if len(hist) > 1 else value
-        return {
-            "value":     round(value, 0),
-            "prev":      round(prev, 0),
-            "delta":     round(value - prev, 0),
-            "delta_pct": round((value - prev) / prev * 100, 2) if prev else 0,
-            "unit":      "bodů (index)",
-            "_ts":       now_prague().strftime("%Y-%m-%d %H:%M"),
-        }
-    except Exception:
-        return None
-
-
-@st.cache_data(ttl=900)
-def fetch_bdi_history() -> pd.DataFrame | None:
-    """Stáhne historii BDI pro grafické zobrazení (6 měsíců)."""
-    try:
-        hist = yf.Ticker("^BDI").history(period="6mo")
-        hist = hist.dropna(subset=["Close"])
-        if hist.empty:
-            return None
-        return hist[["Close"]].reset_index()
-    except Exception:
-        return None
-
-
-@st.cache_data(ttl=900)
-def fetch_scfi() -> dict | None:
-    """
-    Pokus o scrapování SCFI (Shanghai Containerized Freight Index).
-    Zkouší sse.net.cn (SSE – Shanghai Shipping Exchange).
-    Při selhání vrátí None – UI zobrazí OFFLINE.
-    """
-    urls = [
-        "https://en.sse.net.cn/indices/scfinew.jsp",
-        "https://www.chineseshipping.com.cn/en/indices/scfi.shtml",
-    ]
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "text/html,application/xhtml+xml",
-        "Accept-Language": "en-US,en;q=0.8",
-    }
-    for url in urls:
-        try:
-            resp = requests.get(url, headers=headers, timeout=14)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, "lxml")
-            text = soup.get_text(" ", strip=True)
-
-            # Hledáme vzor SCFI composite čísla
-            patterns = [
-                r"(?:SCFI|composite|综合指数)[^\d]{0,20}(\d[\d,]{2,}\.\d+|\d[\d,]{3,})",
-                r"(\d{3,4}\.\d{2})\s*(?:pts|points|bodů)",
-            ]
-            for pat in patterns:
-                m = re.search(pat, text, re.IGNORECASE)
-                if m:
-                    val = _safe_float(m.group(1).replace(",", ""))
-                    if val and 100 < val < 20_000:
-                        return {
-                            "value":  val,
-                            "unit":   "bodů (index)",
-                            "source": url,
-                            "_ts":    now_prague().strftime("%Y-%m-%d %H:%M"),
-                        }
-        except Exception:
-            continue
-    return None
+    """Historie Brent (BZ=F) oříznutá podle globálního období."""
+    return filter_history_by_period(_yf_history("BZ=F"))
 
 
 # ==============================================================================
@@ -1801,21 +1776,6 @@ def fetch_scfi() -> dict | None:
 #  GRAFICKÉ FUNKCE (Plotly)
 # ─────────────────────────────────────────────────────────────────────────────
 # ==============================================================================
-
-_PLOTLY_DEFAULTS = dict(
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(0,0,0,0)",
-    font_family="IBM Plex Mono, monospace",
-    showlegend=False,
-    margin=dict(l=0, r=0, t=0, b=0),
-)
-
-_AXIS_STYLE = dict(
-    showgrid=False,
-    showticklabels=False,
-    zeroline=False,
-    showline=False,
-)
 
 _TICK_AXIS = dict(
     gridcolor="#070e1e",
@@ -2025,9 +1985,7 @@ def _render_wm_metal_history_chart(
         y_unit,
     )
     if fig:
-        st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
-        st.markdown("</div>", unsafe_allow_html=True)
+        _show_plotly(fig)
     else:
         st.warning("Chyba načítání dat z Westmetallu")
         st.markdown(
@@ -2062,85 +2020,6 @@ def interactive_oil_chart(
         }],
         show_legend=True,
     )
-
-
-def sparkline(df: pd.DataFrame, color: str = "#3b82f6", height: int = 70) -> go.Figure | None:
-    """
-    Minimalistický sparkline – jen křivka s gradientovou výplní, bez os.
-    df musí mít sloupec 'Close'.
-    """
-    if df is None or df.empty:
-        return None
-    # Dekódujeme hex barvu na RGB pro fill
-    r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
-    x_data = df["Date"] if "Date" in df.columns else df.index
-
-    fig = go.Figure(go.Scatter(
-        x=x_data,
-        y=df["Close"],
-        mode="lines",
-        line=dict(color=color, width=1.8, shape="spline", smoothing=1.1),
-        fill="tozeroy",
-        fillcolor=f"rgba({r},{g},{b},0.07)",
-        hovertemplate="%{y:.2f}<extra></extra>",
-    ))
-    fig.update_layout(
-        height=height,
-        margin=dict(l=10, r=10, t=10, b=4),
-        **_PLOTLY_DEFAULTS,
-        xaxis=_AXIS_STYLE,
-        yaxis=_AXIS_STYLE,
-    )
-    return fig
-
-
-def line_chart(
-    df: pd.DataFrame,
-    title: str,
-    color: str = "#3b82f6",
-    y_label: str = "",
-    height: int = 230,
-) -> go.Figure | None:
-    """
-    Plný trendový graf s osami, popisky a hover templated.
-    """
-    if df is None or df.empty:
-        return None
-    r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
-    x_data = df["Date"] if "Date" in df.columns else df.index
-
-    fig = go.Figure(go.Scatter(
-        x=x_data,
-        y=df["Close"],
-        mode="lines",
-        line=dict(color=color, width=2.2, shape="spline", smoothing=0.8),
-        fill="tozeroy",
-        fillcolor=f"rgba({r},{g},{b},0.08)",
-        hovertemplate=f"<b>%{{x|%d.%m.%Y}}</b><br>{y_label}: %{{y:,.2f}}<extra></extra>",
-    ))
-    tick_style = dict(
-        gridcolor="#070e1e",
-        tickfont=dict(family="IBM Plex Mono, monospace", size=9, color="#1e3a60"),
-        showgrid=True,
-        zeroline=False,
-        showline=False,
-    )
-    fig.update_layout(
-        title=dict(text=title, font=dict(family="Syne, sans-serif", size=12, color="#3a6a9a"), y=0.97),
-        height=height,
-        margin=dict(l=10, r=10, t=36, b=12),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        showlegend=False,
-        xaxis=dict(**tick_style, tickformat="%b %y"),
-        yaxis=dict(**tick_style, tickformat=",.0f"),
-        hoverlabel=dict(
-            bgcolor="#070e1e",
-            bordercolor="#0f2040",
-            font=dict(family="IBM Plex Mono, monospace", size=11, color="#8ab0d4"),
-        ),
-    )
-    return fig
 
 
 def bar_metals(
@@ -2231,7 +2110,7 @@ def render_header() -> None:
                 <div class="dash-timestamp">
                     <strong>Poslední aktualizace</strong> (CET)<br>
                     {now.strftime("%d.%m.%Y %H:%M:%S")}<br>
-                    Cache TTL: <strong>15 min</strong>
+                    Cache TTL: <strong>1 hod</strong>
                 </div>
             </div>
         </div>
@@ -2248,7 +2127,7 @@ def render_header() -> None:
         st.markdown(
             '<div style="padding:8px 0;font-family:\'IBM Plex Mono\',monospace;'
             'font-size:0.7rem;color:#1a3050;">'
-            'Data se automaticky obnovují každých 15 minut · '
+            'Data se automaticky obnovují každou hodinu · '
             'Všechny ceny jsou orientační · Žádné placené API</div>',
             unsafe_allow_html=True,
         )
@@ -2341,67 +2220,13 @@ def render_metals() -> None:
     if not wm_data:
         st.warning("Westmetall: LME data se nepodařilo stáhnout — ceny mědi a hliníku nejsou k dispozici.")
 
-    metal_cfg = [
-        ("copper",   "Měď (Cu)",    "card-copper"),
-        ("aluminum", "Hliník (Al)", "card-aluminum"),
-    ]
     ccy = get_display_currency()
-    unit = metal_unit_label()
-    d_suffix = currency_delta_suffix()
-
-    stock_keys = {"copper": "copper_stock", "aluminum": "aluminum_stock"}
-
     cols = st.columns(3)
-    for (mk, mn, cls), col in zip(metal_cfg, cols[:2]):
+    for (mk, mn, cls, stock_key), col in zip(_LME_METAL_CARDS, cols[:2]):
         with col:
-            price_usd, _, _src = resolve_metal_price(mk, wm_data)
-            stock_extra = wm_stock_extra(wm_data, stock_keys[mk])
-            if price_usd is not None:
-                price_disp = usd_to_display(price_usd, ccy)
-                if price_disp is None and ccy == "EUR":
-                    st.markdown(
-                        error_card(mn, cls, "N/A — chybí EUR/USD"),
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    st.markdown(
-                        metric_card(
-                            mn,
-                            format_num(price_disp, 0) if price_disp is not None else "N/A",
-                            unit,
-                            card_class=cls,
-                            extra=stock_extra or "Westmetall LME Cash",
-                        ),
-                        unsafe_allow_html=True,
-                    )
-            else:
-                st.markdown(
-                    error_card(mn, cls, "Data nedostupná · Westmetall"),
-                    unsafe_allow_html=True,
-                )
-
+            _render_lme_metal_card(mk, mn, cls, stock_key, wm_data)
     with cols[2]:
-        if steel_data:
-            st_price = usd_to_display(steel_data["price"], ccy)
-            st_delta = usd_to_display(steel_data.get("delta"), ccy)
-            st.markdown(
-                metric_card(
-                    "Ocel (HRC)",
-                    format_num(st_price, 0) if st_price is not None else "N/A",
-                    unit,
-                    delta=st_delta,
-                    delta_suffix=d_suffix if st_delta is not None else "",
-                    card_class="card-steel",
-                    extra=f'{steel_data.get("ticker", "HRC")} · Yahoo · armoured cables',
-                ),
-                unsafe_allow_html=True,
-            )
-        else:
-            st.warning("Ocel (HRC): Yahoo Finance nevrátilo živou cenu.")
-            st.markdown(
-                error_card("Ocel (HRC)", "card-steel", "Data nedostupná"),
-                unsafe_allow_html=True,
-            )
+        _render_steel_metric_card(steel_data)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -2436,9 +2261,7 @@ def render_metals() -> None:
                 y_unit,
             )
             if fig_st:
-                st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
-                st.plotly_chart(fig_st, use_container_width=True, config={"displayModeBar": True})
-                st.markdown("</div>", unsafe_allow_html=True)
+                _show_plotly(fig_st)
         else:
             st.markdown('<div class="error-box">Graf oceli momentálně nedostupný</div>', unsafe_allow_html=True)
 
@@ -2464,9 +2287,7 @@ def render_metals() -> None:
         fig_bar = bar_metals(bar_data, currency=ccy)
         if fig_bar:
             st.markdown("<br>", unsafe_allow_html=True)
-            st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
-            st.plotly_chart(fig_bar, use_container_width=True, config={"displayModeBar": False})
-            st.markdown("</div>", unsafe_allow_html=True)
+            _show_plotly(fig_bar, toolbar=False)
 
     if wm_data and wm_data.get("_source") == "westmetall.com":
         st.markdown(
@@ -2479,10 +2300,51 @@ def render_metals() -> None:
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
 
+def _render_shfe_spread_item(metal_key: str, metal_name: str, wm_data: dict | None) -> None:
+    """Jedna spread karta SHFE vs LME."""
+    ccy = get_display_currency()
+    lme_usd, _, _ = resolve_metal_price(metal_key, wm_data)
+    china_usd, _, cny_price = get_shfe_china_usd(metal_key)
+
+    if china_usd is not None and lme_usd is not None:
+        spread_usd = china_usd - lme_usd
+        spread_disp = usd_to_display(spread_usd, ccy)
+        lme_disp = usd_to_display(lme_usd, ccy)
+        china_disp = usd_to_display(china_usd, ccy)
+        if spread_disp is None or lme_disp is None or china_disp is None:
+            st.markdown(
+                f'<div class="spread-card"><div class="spread-label">{metal_name}: SHFE vs LME</div>'
+                f'<div class="error-box" style="margin-top:6px;">N/A — chybí kurz EUR/USD</div></div>',
+                unsafe_allow_html=True,
+            )
+            return
+        s_color = "#10b981" if spread_usd >= 0 else "#ef4444"
+        s_sign = "+" if spread_usd >= 0 else ""
+        st.markdown(
+            f"<div style='margin-bottom:6px;'>{badge_html(True, 'Sina / SHFE')}</div>"
+            f'<div class="spread-card"><div class="spread-label">{metal_name}: SHFE vs LME</div>'
+            f'<div class="spread-value" style="color:{s_color};">{s_sign}{spread_disp:,.0f} {ccy}/t</div>'
+            f'<div class="spread-details">SHFE: {cny_price:,.0f} CNY/t (≈ {china_disp:,.0f} {ccy}/t)<br>'
+            f"LME Cash (Westmetall): {lme_disp:,.0f} {ccy}/t</div></div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    missing = []
+    if lme_usd is None:
+        missing.append("LME Cash (Westmetall)")
+    if china_usd is None:
+        missing.append("SHFE (Sina) nebo kurz CNY (ČNB)")
+    st.markdown(
+        f'<div class="spread-card"><div class="spread-label">{metal_name}: SHFE vs LME</div>'
+        f'<div class="error-box" style="margin-top:6px;">Data nedostupná — {", ".join(missing)}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
 def _render_shfe_spreads(wm_data: dict | None) -> None:
     """SHFE vs LME spread — pouze živá data (Sina + ČNB + Westmetall)."""
     ccy = get_display_currency()
-
     st.markdown(
         f"<div style='margin-bottom:10px;'>"
         f"<span style='font-family:Syne,sans-serif;font-size:0.7rem;font-weight:700;"
@@ -2490,59 +2352,12 @@ def _render_shfe_spreads(wm_data: dict | None) -> None:
         f"SHFE vs LME Spread ({ccy}/t)</span></div>",
         unsafe_allow_html=True,
     )
-
     if not get_usd_per_cny():
         st.warning(
             "Spread: chybí kurz CNY z ČNB — přepočet SHFE (CNY/t) na USD/EUR nelze spočítat."
         )
-
-    for metal_key, metal_name in [("copper", "Měď"), ("aluminum", "Hliník")]:
-        lme_usd, _, _ = resolve_metal_price(metal_key, wm_data)
-        china_usd, shfe_raw, cny_price = get_shfe_china_usd(metal_key)
-
-        if china_usd is not None and lme_usd is not None:
-            spread_usd = china_usd - lme_usd
-            spread_disp = usd_to_display(spread_usd, ccy)
-            lme_disp = usd_to_display(lme_usd, ccy)
-            china_disp = usd_to_display(china_usd, ccy)
-            if spread_disp is None or lme_disp is None or china_disp is None:
-                st.markdown(f"""
-                <div class="spread-card">
-                    <div class="spread-label">{metal_name}: SHFE vs LME</div>
-                    <div class="error-box" style="margin-top:6px;">N/A — chybí kurz EUR/USD</div>
-                </div>
-                """, unsafe_allow_html=True)
-                continue
-            s_color = "#10b981" if spread_usd >= 0 else "#ef4444"
-            s_sign = "+" if spread_usd >= 0 else ""
-            st.markdown(
-                f"<div style='margin-bottom:6px;'>{badge_html(True, 'Sina / SHFE')}</div>"
-                f"""
-            <div class="spread-card">
-                <div class="spread-label">{metal_name}: SHFE vs LME</div>
-                <div class="spread-value" style="color:{s_color};">
-                    {s_sign}{spread_disp:,.0f} {ccy}/t
-                </div>
-                <div class="spread-details">
-                    SHFE: {cny_price:,.0f} CNY/t (≈ {china_disp:,.0f} {ccy}/t)<br>
-                    LME Cash (Westmetall): {lme_disp:,.0f} {ccy}/t
-                </div>
-            </div>
-            """,
-                unsafe_allow_html=True,
-            )
-        else:
-            missing = []
-            if lme_usd is None:
-                missing.append("LME Cash (Westmetall)")
-            if china_usd is None:
-                missing.append("SHFE (Sina) nebo kurz CNY (ČNB)")
-            st.markdown(f"""
-            <div class="spread-card">
-                <div class="spread-label">{metal_name}: SHFE vs LME</div>
-                <div class="error-box" style="margin-top:6px;">Data nedostupná — {", ".join(missing)}</div>
-            </div>
-            """, unsafe_allow_html=True)
+    for metal_key, metal_name in _SHFE_SPREAD_METALS:
+        _render_shfe_spread_item(metal_key, metal_name, wm_data)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2581,29 +2396,15 @@ def render_fx() -> None:
         unsafe_allow_html=True,
     )
 
-    cnb_cards = [
-        ("USD", "USD/CZK", "Americký dolar", "card-usd"),
-        ("EUR", "EUR/CZK", "Euro",           "card-eur"),
-        ("CNY", "CNY/CZK", "Čínský jüan",    "card-cny"),
-    ]
     eur_usd_spot = fetch_yf_spot("EURUSD=X")
     cols = st.columns(5)
 
-    for code, pair, subtitle, cls, col in zip(
-        [c[0] for c in cnb_cards],
-        [c[1] for c in cnb_cards],
-        [c[2] for c in cnb_cards],
-        [c[3] for c in cnb_cards],
-        cols[:3],
-    ):
+    for (code, pair, subtitle, cls), col in zip(_CNB_METRIC_CARDS, cols[:3]):
         with col:
             info = (cnb or {}).get(code)
             if info:
                 st.markdown(
-                    metric_card(
-                        pair, f"{info['rate']:.4f}", subtitle,
-                        card_class=cls,
-                    ),
+                    metric_card(pair, f"{info['rate']:.4f}", subtitle, card_class=cls),
                     unsafe_allow_html=True,
                 )
             else:
@@ -2664,9 +2465,7 @@ def render_fx() -> None:
                 sub = " · odvozeno USDCZK×CNYUSD" if kind == "cny" and derived else ""
                 fig = interactive_line_chart(hist, f"{pair} — {period_lbl}{sub}", color, unit)
                 if fig:
-                    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
-                    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
-                    st.markdown("</div>", unsafe_allow_html=True)
+                    _show_plotly(fig)
             else:
                 st.markdown(
                     f'<div class="error-box">Graf {pair} — data nedostupná (Yahoo)</div>',
@@ -2681,9 +2480,7 @@ def render_fx() -> None:
         hist_ue["Close"] = 1.0 / hist_ue["Close"]
         fig_ue = interactive_line_chart(hist_ue, f"USD/EUR — {period_lbl}", "#22c55e", "EUR")
         if fig_ue:
-            st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
-            st.plotly_chart(fig_ue, use_container_width=True, config={"displayModeBar": True})
-            st.markdown("</div>", unsafe_allow_html=True)
+            _show_plotly(fig_ue)
 
     # ── Kalkulátor přepočtu (ČNB kurzy) ───────────────────────────────────────
     with st.expander("🧮  Kalkulátor přepočtu – nákupní ekvivalenty", expanded=False):
@@ -2838,9 +2635,7 @@ def render_oil_plastics() -> None:
             320,
         )
         if fig_oil:
-            st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
-            st.plotly_chart(fig_oil, use_container_width=True, config={"displayModeBar": True})
-            st.markdown("</div>", unsafe_allow_html=True)
+            _show_plotly(fig_oil)
     else:
         st.markdown('<div class="error-box">Graf ropy momentálně nedostupný</div>',
                     unsafe_allow_html=True)
@@ -3056,18 +2851,17 @@ def render_summary_table() -> None:
                 })
 
     # Křížové kurzy — Yahoo
-    eur_usd_row = fetch_yf_spot("EURUSD=X")
-    if eur_usd_row:
-        dp = eur_usd_row.get("delta_pct", 0) or 0
+    eur_usd = fetch_yf_spot("EURUSD=X")
+    if eur_usd:
+        dp = eur_usd.get("delta_pct", 0) or 0
         rows.append({
             "Kategorie": "💱 Měna",
             "Indikátor": "EUR/USD",
-            "Hodnota":   f"{eur_usd_row['price']:.4f}",
+            "Hodnota":   f"{eur_usd['price']:.4f}",
             "Δ %":       f"{dp:+.3f}%",
             "Trend":     "▲" if dp > 0 else ("▼" if dp < 0 else "—"),
             "Zdroj":     "Yahoo Finance",
         })
-    eur_usd = fetch_yf_spot("EURUSD=X")
     if eur_usd and eur_usd["price"]:
         ue = 1.0 / eur_usd["price"]
         rows.append({
@@ -3155,7 +2949,7 @@ def render_footer() -> None:
         </div>
         <div>
             Generováno: {now.strftime("%d.%m.%Y %H:%M:%S")} &nbsp;·&nbsp;
-            Cache TTL: 900 s &nbsp;·&nbsp;
+            Cache TTL: 3600 s &nbsp;·&nbsp;
             Bez placených API klíčů &nbsp;·&nbsp; Bez SQL databází
         </div>
         <div style="margin-top:6px;">
