@@ -1259,8 +1259,9 @@ def filter_history_by_period(df: pd.DataFrame | None, date_col: str = "Date") ->
     days = _WM_PERIOD_DAYS.get(get_chart_period(), 92)
     out = df.copy()
     if date_col in out.columns:
-        out[date_col] = pd.to_datetime(out[date_col])
-    cutoff = pd.Timestamp(now_prague().replace(tzinfo=None)).normalize() - pd.Timedelta(days=days)
+        out[date_col] = pd.to_datetime(out[date_col], utc=True).dt.tz_localize(None)
+    prague_now = now_prague()
+    cutoff = pd.Timestamp(prague_now.replace(tzinfo=None)).normalize() - pd.Timedelta(days=days)
     filtered = out[out[date_col] >= cutoff]
     return filtered.reset_index(drop=True) if not filtered.empty else None
 
