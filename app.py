@@ -61,7 +61,7 @@ with col1:
     except Exception:
         pass
 with col2:
-    st.title("pbcable - Nákupní terminál")
+    st.title("pbcable s.r.o.")
 
 # ==============================================================================
 # CSS INJEKCE — Veškeré styly přímo v kódu
@@ -2207,7 +2207,7 @@ def render_header() -> None:
         <div class="dash-header-content">
             <div>
                 <div class="dash-title">
-                    <span>⚡</span> Kabelářský Nákupní Dashboard
+                    <span>⚡</span> Kabelářský dashboard
                 </div>
                 <div class="dash-subtitle">
                     Cable Industry Procurement Intelligence Platform
