@@ -1580,6 +1580,104 @@ def fetch_yf_spot(ticker: str) -> dict | None:
         return None
 
 
+# ==============================================================================
+#  RSI — Smart signály (pandas ewm, bez nových knihoven)
+# ==============================================================================
+
+_RSI_PERIOD = 14
+
+
+def calculate_rsi(df: pd.DataFrame, column: str, period: int = 14) -> float | None:
+    """
+    Relative Strength Index (Wilder) — průměrné zisky/ztráty přes pandas ewm.
+    Vrátí poslední RSI (0–100) nebo None při nedostatku dat.
+    """
+    if df is None or df.empty or column not in df.columns:
+        return None
+    prices = pd.to_numeric(df[column], errors="coerce").dropna()
+    if len(prices) < period + 1:
+        return None
+    delta = prices.diff()
+    gain = delta.clip(lower=0)
+    loss = (-delta).clip(lower=0)
+    avg_gain = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    rs = avg_gain / avg_loss.replace(0, pd.NA)
+    rsi = 100 - (100 / (1 + rs))
+    rsi = rsi.where(avg_loss > 0, 100.0)
+    last = rsi.iloc[-1]
+    if pd.isna(last):
+        return None
+    return float(last)
+
+
+def interpret_rsi(rsi: float) -> tuple[str, str]:
+    """Textová interpretace RSI a typ Streamlit upozornění (success / warning / info)."""
+    if rsi < 30:
+        return "🟢 Přeprodáno (Silný potenciál k růstu / Zvážit nákup)", "success"
+    if rsi > 70:
+        return "🔴 Překoupeno (Riziko korekce / Vyčkat)", "warning"
+    return "⚪ Neutrální zóna", "info"
+
+
+def _rsi_from_history(df: pd.DataFrame | None, column: str = "Close") -> float | None:
+    """Bezpečný výpočet RSI z historického DataFrame."""
+    try:
+        return calculate_rsi(df, column, period=_RSI_PERIOD)
+    except Exception:
+        return None
+
+
+def _metal_rsi_value(metal_key: str, steel_data: dict | None) -> float | None:
+    """Aktuální RSI pro měď, hliník (Westmetall) nebo ocel (Yahoo)."""
+    try:
+        if metal_key == "copper":
+            return _rsi_from_history(fetch_westmetall_history(WM_HISTORY_URLS["copper"]))
+        if metal_key == "aluminum":
+            return _rsi_from_history(fetch_westmetall_history(WM_HISTORY_URLS["aluminum"]))
+        if metal_key == "steel":
+            if not steel_data:
+                return None
+            ticker = steel_data.get("ticker", "HRC=F")
+            return _rsi_from_history(_yf_history(ticker))
+    except Exception:
+        return None
+    return None
+
+
+def render_rsi_signals(steel_data: dict | None) -> None:
+    """Sekce Smart signály — RSI pro měď, hliník a ocel."""
+    section_header("💡", "Tržní signály (RSI)")
+    st.markdown(
+        '<div class="info-box" style="margin-bottom:12px;">'
+        "RSI (14) z historických cen · Měď &amp; Hliník: <strong>Westmetall</strong> · "
+        "Ocel: <strong>Yahoo Finance</strong> · Orientační signál, nikoli investiční radu."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    rsi_metals = [
+        ("copper", "Měď (Cu)"),
+        ("aluminum", "Hliník (Al)"),
+        ("steel", "Ocel (HRC)"),
+    ]
+    cols = st.columns(3)
+    for (metal_key, label), col in zip(rsi_metals, cols):
+        with col:
+            rsi = _metal_rsi_value(metal_key, steel_data)
+            if rsi is not None:
+                st.metric(f"RSI — {label}", f"{rsi:.1f}", help="Relative Strength Index (14)")
+                msg, alert_type = interpret_rsi(rsi)
+                if alert_type == "success":
+                    st.success(msg)
+                elif alert_type == "warning":
+                    st.warning(msg)
+                else:
+                    st.info(msg)
+            else:
+                st.metric(f"RSI — {label}", "N/A")
+                st.info("Nedostatek historických dat pro výpočet RSI (min. 15 bodů).")
+
+
 # Globální přepínač období grafů → yfinance period
 CHART_PERIODS: dict[str, str] = {
     "1W": "5d",
@@ -2237,6 +2335,8 @@ def render_metals() -> None:
     with cols[2]:
         _render_steel_metric_card(steel_data)
 
+    st.markdown("<br>", unsafe_allow_html=True)
+    render_rsi_signals(steel_data)
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Historické grafy — měď & hliník (Westmetall), ocel (Yahoo) ────────────
