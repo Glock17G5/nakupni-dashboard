@@ -68,94 +68,57 @@ with col2:
 # ==============================================================================
 CUSTOM_CSS = """
 <style>
-/* ── Google Fonts import ────────────────────────────────────────────────── */
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap');
 
-/* ── Globální reset a základní typografie ────────────────────────────────── */
-*, *::before, *::after {
-    box-sizing: border-box;
-}
+*, *::before, *::after { box-sizing: border-box; }
 
-/* ── Hlavní pozadí aplikace ─────────────────────────────────────────────── */
 .stApp,
 [data-testid="stAppViewContainer"],
 [data-testid="stMain"],
 section[data-testid="stMain"] > div:first-child {
-    background-color: #050d1a !important;
+    background-color: #F8F9FA !important;
+    color: #212529 !important;
     font-family: 'Syne', sans-serif !important;
 }
 
-/* ── Skrytí výchozích Streamlit elementů ────────────────────────────────── */
+p, span, label, .stMarkdown { color: #212529; }
+
 #MainMenu { visibility: hidden; }
 header[data-testid="stHeader"] { visibility: hidden; height: 0; }
 footer { visibility: hidden; }
 [data-testid="stDecoration"] { display: none; }
 [data-testid="stStatusWidget"] { display: none; }
 
-/* ── Sidebar ─────────────────────────────────────────────────────────────── */
 [data-testid="stSidebar"],
 [data-testid="stSidebarContent"] {
-    background-color: #060e1c !important;
-    border-right: 1px solid #0f1f35 !important;
+    background-color: #FFFFFF !important;
+    border-right: 2px solid #CED4DA !important;
 }
 
-/* ── Scrollbar ───────────────────────────────────────────────────────────── */
-::-webkit-scrollbar { width: 5px; height: 5px; }
-::-webkit-scrollbar-track { background: #050d1a; }
-::-webkit-scrollbar-thumb { background: #0f1f35; border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: #1a2f50; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #F8F9FA; }
+::-webkit-scrollbar-thumb { background: #ADB5BD; border-radius: 4px; }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   ZÁHLAVÍ DASHBOARDU
-   ══════════════════════════════════════════════════════════════════════════ */
 .dash-header {
+    background: #FFFFFF;
+    border: 2px solid #343A40;
+    border-radius: 14px;
+    padding: 24px 32px 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
     position: relative;
-    background: linear-gradient(135deg, #070e1e 0%, #0a1525 40%, #07101d 100%);
-    border: 1px solid #0f2040;
-    border-radius: 18px;
-    padding: 28px 36px 24px 36px;
-    margin-bottom: 24px;
-    overflow: hidden;
 }
 
-/* Animated gradient top border */
 .dash-header::before {
     content: '';
     position: absolute;
     top: 0; left: 0; right: 0;
-    height: 2px;
-    background: linear-gradient(90deg,
-        #f59e0b 0%,
-        #ef4444 20%,
-        #3b82f6 45%,
-        #10b981 65%,
-        #8b5cf6 85%,
-        #f59e0b 100%
-    );
-    background-size: 200% 100%;
-    animation: borderSlide 6s linear infinite;
-}
-
-/* Subtle grid texture */
-.dash-header::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background-image:
-        linear-gradient(rgba(15, 32, 64, 0.4) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(15, 32, 64, 0.4) 1px, transparent 1px);
-    background-size: 40px 40px;
-    pointer-events: none;
-}
-
-@keyframes borderSlide {
-    0%   { background-position: 0% 0%; }
-    100% { background-position: 200% 0%; }
+    height: 4px;
+    background: linear-gradient(90deg, #0D6EFD, #198754, #FD7E14);
+    border-radius: 14px 14px 0 0;
 }
 
 .dash-header-content {
-    position: relative;
-    z-index: 1;
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
@@ -167,763 +130,346 @@ footer { visibility: hidden; }
     font-family: 'Syne', sans-serif;
     font-size: 2rem;
     font-weight: 800;
-    color: #e8f4ff;
-    letter-spacing: -0.5px;
-    line-height: 1.1;
+    color: #000000;
     margin: 0 0 6px 0;
 }
 
-.dash-title span {
-    background: linear-gradient(90deg, #f59e0b, #fbbf24);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-}
+.dash-title span { color: #0D6EFD; }
 
 .dash-subtitle {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.72rem;
-    color: #2a4a7a;
-    letter-spacing: 2px;
+    color: #495057;
+    letter-spacing: 1.5px;
     text-transform: uppercase;
-}
-
-.dash-meta {
-    text-align: right;
 }
 
 .dash-timestamp {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.73rem;
-    color: #1e3a60;
-    line-height: 1.8;
+    font-size: 0.75rem;
+    color: #212529;
+    line-height: 1.7;
 }
 
-.dash-timestamp strong {
-    color: #2a5080;
-}
+.dash-timestamp strong { color: #000000; }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   STATUS BADGES
-   ══════════════════════════════════════════════════════════════════════════ */
 .badge {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.65rem;
-    font-weight: 500;
-    padding: 3px 10px;
+    font-weight: 600;
+    padding: 4px 10px;
     border-radius: 100px;
-    letter-spacing: 0.5px;
-    white-space: nowrap;
 }
 
-.badge-live {
-    background: rgba(16, 185, 129, 0.1);
-    color: #10b981;
-    border: 1px solid rgba(16, 185, 129, 0.25);
-}
+.badge-live { background: #D1E7DD; color: #0F5132; border: 1px solid #198754; }
+.badge-offline { background: #F8D7DA; color: #842029; border: 1px solid #DC3545; }
+.badge-model { background: #FFF3CD; color: #664D03; border: 1px solid #FFC107; }
 
-.badge-live::before {
-    content: '●';
-    font-size: 0.5rem;
-    animation: pulse-green 1.5s infinite;
-}
-
-.badge-offline {
-    background: rgba(239, 68, 68, 0.08);
-    color: #ef4444;
-    border: 1px solid rgba(239, 68, 68, 0.2);
-}
-
-.badge-offline::before { content: '●'; font-size: 0.5rem; }
-
-.badge-model {
-    background: rgba(245, 158, 11, 0.08);
-    color: #f59e0b;
-    border: 1px solid rgba(245, 158, 11, 0.2);
-}
-
-.badge-model::before { content: '◆'; font-size: 0.5rem; }
-
-@keyframes pulse-green {
-    0%, 100% { opacity: 1; }
-    50%       { opacity: 0.3; }
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   SEKČNÍ NADPISY
-   ══════════════════════════════════════════════════════════════════════════ */
 .section-header {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: 10px 12px;
-    margin: 28px 0 20px 0;
-    padding-bottom: 14px;
-    border-bottom: 1px solid #0a1830;
-    line-height: 1.4;
-}
-
-.section-icon {
-    font-size: 1.1rem;
-    line-height: 1.3;
-    flex-shrink: 0;
+    margin: 24px 0 16px 0;
+    padding-bottom: 12px;
+    border-bottom: 2px solid #343A40;
 }
 
 .section-title {
     font-family: 'Syne', sans-serif;
-    font-size: 0.95rem;
+    font-size: 1rem;
     font-weight: 700;
-    color: #8ab0d4;
+    color: #000000;
     text-transform: uppercase;
-    letter-spacing: 1.5px;
-    flex: 1 1 auto;
-    line-height: 1.45;
-    min-width: 0;
+    letter-spacing: 1.2px;
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   METRICKÉ KARTY
-   ══════════════════════════════════════════════════════════════════════════ */
 .metric-card {
     position: relative;
-    background: linear-gradient(145deg, #090f1e 0%, #060c18 60%, #05090f 100%);
-    border: 1px solid #0d1d35;
-    border-radius: 14px;
-    padding: 18px 18px 16px 18px;
-    overflow: visible;
-    transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
-    min-height: auto;
-    cursor: default;
+    background: #FFFFFF;
+    border: 2px solid #495057;
+    border-radius: 12px;
+    padding: 16px;
     margin-bottom: 10px;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);
 }
 
-.metric-card:hover {
-    transform: translateY(-3px);
-    border-color: #1a2f50;
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
-}
-
-/* Levý barevný pruh místo top border – elegantnější */
 .metric-card::before {
     content: '';
     position: absolute;
     top: 0; left: 0;
-    width: 3px;
+    width: 4px;
     height: 100%;
-    border-radius: 14px 0 0 14px;
+    border-radius: 12px 0 0 12px;
 }
 
-/* Jemný lesk v levém horním rohu */
-.metric-card::after {
-    content: '';
-    position: absolute;
-    top: 0; left: 3px; right: 0;
-    height: 1px;
-    background: linear-gradient(90deg, rgba(255,255,255,0.04), transparent);
-}
+.card-copper::before { background: #FD7E14; }
+.card-aluminum::before { background: #198754; }
+.card-steel::before { background: #6C757D; }
+.card-usd::before { background: #198754; }
+.card-eur::before { background: #0D6EFD; }
+.card-cny::before { background: #DC3545; }
+.card-oil::before { background: #FFC107; }
+.card-plastic::before { background: #20C997; }
+.card-logistics::before { background: #6F42C1; }
+.card-neutral::before { background: #495057; }
+.card-lead::before { background: #6F42C1; }
+.card-zinc::before { background: #6610F2; }
+.card-tin::before { background: #D63384; }
+.card-nickel::before { background: #0DCAF0; }
 
-/* ── Barevné varianty karet ─────────────────────────────────────────────── */
-.card-copper   ::before, .card-copper   { --accent: #f97316; }
-.card-copper::before   { background: linear-gradient(180deg, #f97316, #c2440a); }
-
-.card-aluminum ::before, .card-aluminum { --accent: #10b981; }
-.card-aluminum::before { background: linear-gradient(180deg, #10b981, #047857); }
-
-.card-lead     ::before, .card-lead     { --accent: #8b5cf6; }
-.card-lead::before     { background: linear-gradient(180deg, #8b5cf6, #5b21b6); }
-
-.card-zinc     ::before, .card-zinc     { --accent: #6366f1; }
-.card-zinc::before     { background: linear-gradient(180deg, #6366f1, #3730a3); }
-
-.card-tin      ::before, .card-tin      { --accent: #ec4899; }
-.card-tin::before      { background: linear-gradient(180deg, #ec4899, #9d174d); }
-
-.card-nickel   ::before, .card-nickel   { --accent: #06b6d4; }
-.card-nickel::before   { background: linear-gradient(180deg, #06b6d4, #0e7490); }
-
-.card-steel    ::before, .card-steel    { --accent: #64748b; }
-.card-steel::before    { background: linear-gradient(180deg, #94a3b8, #475569); }
-
-.card-usd      ::before, .card-usd      { --accent: #22c55e; }
-.card-usd::before      { background: linear-gradient(180deg, #22c55e, #166534); }
-
-.card-eur      ::before, .card-eur      { --accent: #3b82f6; }
-.card-eur::before      { background: linear-gradient(180deg, #3b82f6, #1d4ed8); }
-
-.card-cny      ::before, .card-cny      { --accent: #ef4444; }
-.card-cny::before      { background: linear-gradient(180deg, #ef4444, #991b1b); }
-
-.card-oil      ::before, .card-oil      { --accent: #f59e0b; }
-.card-oil::before      { background: linear-gradient(180deg, #f59e0b, #b45309); }
-
-.card-plastic  ::before, .card-plastic  { --accent: #14b8a6; }
-.card-plastic::before  { background: linear-gradient(180deg, #14b8a6, #0d9488); }
-
-.card-logistics::before, .card-logistics { --accent: #a78bfa; }
-.card-logistics::before{ background: linear-gradient(180deg, #a78bfa, #6d28d9); }
-
-.card-neutral  ::before, .card-neutral  { --accent: #475569; }
-.card-neutral::before  { background: linear-gradient(180deg, #475569, #1e293b); }
-
-/* ── Obsah metrické karty ───────────────────────────────────────────────── */
 .card-label {
-    font-family: 'Syne', sans-serif;
-    font-size: 0.66rem;
-    font-weight: 600;
-    color: #2a4a78;
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: #495057;
     text-transform: uppercase;
-    letter-spacing: 1.2px;
-    margin-bottom: 10px;
-    line-height: 1.4;
-    white-space: normal;
-    overflow: visible;
-    word-wrap: break-word;
+    margin-bottom: 8px;
 }
 
 .card-value {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 1.5rem;
-    font-weight: 600;
-    color: #dceeff;
-    line-height: 1.3;
-    letter-spacing: -0.5px;
-    margin-bottom: 8px;
-    word-wrap: break-word;
-}
-
-.card-value-sm {
-    font-size: 1.15rem;
-}
-
-.card-unit {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.67rem;
-    color: #1e3a5a;
-    margin-bottom: 12px;
-    line-height: 1.45;
-    white-space: normal;
-    word-wrap: break-word;
-}
-
-.card-delta-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-    margin-top: 4px;
+    font-size: 1.45rem;
+    font-weight: 700;
+    color: #000000;
     margin-bottom: 6px;
-    line-height: 1.4;
 }
+
+.card-value-sm { font-size: 1.1rem; }
+.card-unit { font-size: 0.7rem; color: #495057; }
+.card-extra { font-size: 0.65rem; color: #6C757D; }
+.card-delta-row { margin-top: 4px; }
 
 .delta-chip {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.72rem;
-    font-weight: 500;
     padding: 2px 8px;
     border-radius: 6px;
-    display: inline-block;
 }
 
-.delta-up   { background: rgba(16, 185, 129, 0.12); color: #10b981; }
-.delta-down { background: rgba(239, 68, 68, 0.12);  color: #ef4444; }
-.delta-flat { background: rgba(100, 116, 139, 0.12); color: #475569; }
+.delta-up { background: #D1E7DD; color: #0F5132; }
+.delta-down { background: #F8D7DA; color: #842029; }
+.delta-flat { background: #E9ECEF; color: #495057; }
 
-.card-extra {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.62rem;
-    color: #1e3a5a;
-    margin-top: 8px;
-    margin-bottom: 2px;
-    line-height: 1.5;
-    font-style: italic;
-    word-wrap: break-word;
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   SPREAD KARTA
-   ══════════════════════════════════════════════════════════════════════════ */
 .spread-card {
-    background: linear-gradient(145deg, #080f1f 0%, #060c18 100%);
-    border: 1px solid #0d1d35;
-    border-radius: 12px;
-    padding: 14px 16px;
+    background: #FFFFFF;
+    border: 2px solid #ADB5BD;
+    border-radius: 10px;
+    padding: 12px 14px;
     margin-bottom: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
-.spread-label {
-    font-family: 'Syne', sans-serif;
-    font-size: 0.63rem;
-    font-weight: 700;
-    color: #2a4a78;
-    text-transform: uppercase;
-    letter-spacing: 1.2px;
-    margin-bottom: 8px;
-    line-height: 1.4;
-}
+.spread-label { font-size: 0.65rem; font-weight: 700; color: #495057; text-transform: uppercase; }
+.spread-value { font-family: 'IBM Plex Mono', monospace; font-size: 1.2rem; font-weight: 700; color: #000000; }
+.spread-details { font-size: 0.68rem; color: #495057; }
 
-.spread-value {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 1.25rem;
-    font-weight: 600;
-    letter-spacing: -0.5px;
-    line-height: 1.35;
-    margin-bottom: 6px;
-}
-
-.spread-details {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.65rem;
-    color: #1e3a5a;
-    margin-top: 4px;
-    line-height: 1.6;
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   GRAFY
-   ══════════════════════════════════════════════════════════════════════════ */
 .chart-wrap {
-    background: linear-gradient(145deg, #070e1e 0%, #050c18 100%);
-    border: 1px solid #0a1830;
-    border-radius: 14px;
-    padding: 18px 14px 14px 14px;
-    overflow: visible;
-    margin-bottom: 14px;
+    background: #FFFFFF;
+    border: 2px solid #CED4DA;
+    border-radius: 12px;
+    padding: 16px 12px;
+    margin-bottom: 12px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
 }
 
-.chart-wrap .js-plotly-plot {
-    overflow: visible !important;
-}
-
-/* Mezery mezi sloupci (PC) */
-[data-testid="stHorizontalBlock"] {
-    gap: 0.65rem !important;
-    align-items: stretch !important;
-}
-
-div[data-testid="column"] {
-    padding-left: 6px !important;
-    padding-right: 6px !important;
-    margin-bottom: 10px !important;
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   MOBILNÍ REŽIM (max-width: 768px)
-   ══════════════════════════════════════════════════════════════════════════ */
 @media (max-width: 768px) {
-    /* Hlavní kontejner – menší vnitřní okraje */
-    section[data-testid="stMain"] > div:first-child {
-        padding-left: 0.4rem !important;
-        padding-right: 0.4rem !important;
-    }
-
-    .dash-header {
-        padding: 16px 14px 14px 14px;
-        margin-bottom: 14px;
-        border-radius: 14px;
-    }
-
-    .dash-title {
-        font-size: 1.35rem;
-    }
-
-    .dash-subtitle {
-        font-size: 0.62rem;
-        letter-spacing: 1.4px;
-    }
-
-    .dash-timestamp {
-        font-size: 0.62rem;
-        line-height: 1.5;
-    }
-
-    .section-header {
-        margin: 18px 0 8px 0;
-        padding-bottom: 6px;
-    }
-
-    .section-title {
-        font-size: 0.8rem;
-        letter-spacing: 1.1px;
-    }
-
-    .metric-card {
-        padding: 14px 12px 12px 12px;
-        min-height: auto;
-        margin-bottom: 10px;
-    }
-
-    .card-label {
-        font-size: 0.6rem;
-        margin-bottom: 8px;
-        line-height: 1.45;
-    }
-
-    .card-value {
-        font-size: 1.25rem;
-        margin-bottom: 8px;
-        line-height: 1.3;
-    }
-
-    .card-value-sm {
-        font-size: 1rem;
-        line-height: 1.3;
-    }
-
-    .card-unit {
-        font-size: 0.6rem;
-        margin-bottom: 10px;
-        line-height: 1.45;
-    }
-
-    .card-extra {
-        font-size: 0.58rem;
-        margin-top: 6px;
-        line-height: 1.5;
-    }
-
-    .spread-card {
-        padding: 10px 10px;
-        margin-bottom: 6px;
-    }
-
-    .spread-value {
-        font-size: 1.05rem;
-    }
-
-    .spread-details {
-        font-size: 0.6rem;
-    }
-
-    .info-box,
-    .warning-box,
-    .error-box {
-        font-size: 0.65rem;
-        padding: 8px 10px;
-        margin: 6px 0;
-    }
-
-    .chart-wrap {
-        padding: 14px 10px 12px 10px;
-        border-radius: 10px;
-        margin-bottom: 12px;
-    }
-
-    /* Sloupce – na mobilu stack vertikálně */
-    [data-testid="stHorizontalBlock"] {
-        flex-direction: column !important;
-        gap: 0.5rem !important;
-    }
-
-    [data-testid="stHorizontalBlock"] > div {
-        width: 100% !important;
-    }
+    .dash-title { font-size: 1.35rem; }
+    .metric-card { padding: 12px; }
+    .card-value { font-size: 1.2rem; }
+    [data-testid="stHorizontalBlock"] { flex-direction: column !important; }
+    [data-testid="stHorizontalBlock"] > div { width: 100% !important; }
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   INFO / WARNING / ERROR BOXY
-   ══════════════════════════════════════════════════════════════════════════ */
 .info-box {
-    background: rgba(59, 130, 246, 0.05);
-    border: 1px solid rgba(59, 130, 246, 0.15);
-    border-left: 3px solid #3b82f6;
+    background: #E7F1FF;
+    border: 1px solid #0D6EFD;
+    border-left: 4px solid #0D6EFD;
     border-radius: 8px;
     padding: 10px 14px;
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.73rem;
-    color: #3a6a9a;
-    line-height: 1.5;
+    font-size: 0.78rem;
+    color: #212529;
+    line-height: 1.55;
     margin: 8px 0;
 }
 
 .warning-box {
-    background: rgba(245, 158, 11, 0.05);
-    border: 1px solid rgba(245, 158, 11, 0.15);
-    border-left: 3px solid #f59e0b;
+    background: #FFF3CD;
+    border: 1px solid #FFC107;
+    border-left: 4px solid #FFC107;
     border-radius: 8px;
     padding: 10px 14px;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.73rem;
-    color: #7a5a20;
-    line-height: 1.5;
-    margin: 8px 0;
+    font-size: 0.78rem;
+    color: #664D03;
 }
 
 .error-box {
-    background: rgba(239, 68, 68, 0.05);
-    border: 1px solid rgba(239, 68, 68, 0.12);
+    background: #F8D7DA;
+    border: 1px solid #DC3545;
     border-radius: 8px;
     padding: 10px 14px;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.7rem;
-    color: #5a2a2a;
+    font-size: 0.75rem;
+    color: #842029;
     text-align: center;
-    line-height: 1.5;
-    margin: 6px 0;
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   TABULKY
-   ══════════════════════════════════════════════════════════════════════════ */
 .data-table-wrap {
-    background: linear-gradient(145deg, #070e1e 0%, #050c18 100%);
-    border: 1px solid #0a1830;
-    border-radius: 14px;
-    padding: 18px 20px;
-    overflow-x: auto;
+    background: #FFFFFF;
+    border: 2px solid #CED4DA;
+    border-radius: 12px;
+    padding: 16px;
 }
 
-.data-table-wrap table {
-    width: 100%;
-    border-collapse: collapse;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.78rem;
-}
+.data-table-wrap table { width: 100%; border-collapse: collapse; }
+.data-table-wrap th { color: #000000; border-bottom: 2px solid #343A40; padding: 8px 12px; }
+.data-table-wrap td { color: #212529; border-bottom: 1px solid #DEE2E6; padding: 9px 12px; }
+.data-table-wrap tr:hover td { background: #F1F3F5; }
 
-.data-table-wrap th {
-    font-family: 'Syne', sans-serif;
-    font-size: 0.63rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1.2px;
-    color: #2a4a78;
-    padding: 8px 12px;
-    border-bottom: 1px solid #0a1830;
-    text-align: left;
-    white-space: nowrap;
-}
-
-.data-table-wrap td {
-    color: #6a9ac0;
-    padding: 9px 12px;
-    border-bottom: 1px solid #050d1a;
-    white-space: nowrap;
-}
-
-.data-table-wrap tr:last-child td { border-bottom: none; }
-.data-table-wrap tr:hover td { background: rgba(15, 30, 60, 0.4); }
-
-/* ══════════════════════════════════════════════════════════════════════════
-   KALKULÁTOR
-   ══════════════════════════════════════════════════════════════════════════ */
 .calc-result {
-    background: linear-gradient(145deg, #070e1e 0%, #050c18 100%);
-    border: 1px solid #0a1830;
+    background: #FFFFFF;
+    border: 2px solid #495057;
     border-radius: 10px;
-    padding: 14px 16px;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.85rem;
-    color: #5a9ad4;
+    padding: 14px;
     text-align: center;
-    margin: 4px 0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
 .calc-result-label {
-    font-family: 'Syne', sans-serif;
-    font-size: 0.63rem;
+    font-size: 0.65rem;
     font-weight: 700;
+    color: #495057;
     text-transform: uppercase;
-    letter-spacing: 1px;
-    color: #2a4a78;
-    margin-bottom: 4px;
 }
 
 .calc-result-value {
+    font-family: 'IBM Plex Mono', monospace;
     font-size: 1.2rem;
-    font-weight: 600;
-    color: #a0d4f0;
-    letter-spacing: -0.3px;
+    font-weight: 700;
+    color: #000000;
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   ODDĚLOVAČ
-   ══════════════════════════════════════════════════════════════════════════ */
-.section-divider {
-    height: 1px;
-    background: linear-gradient(90deg, transparent 0%, #0a1830 20%, #0f2040 50%, #0a1830 80%, transparent 100%);
-    margin: 28px 0;
-}
+.section-divider { height: 2px; background: #CED4DA; margin: 24px 0; }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   FOOTER
-   ══════════════════════════════════════════════════════════════════════════ */
 .dash-footer {
     text-align: center;
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.65rem;
-    color: #0f2040;
-    padding: 24px 0 12px 0;
-    border-top: 1px solid #080e1c;
-    margin-top: 40px;
-    line-height: 2;
+    font-size: 0.68rem;
+    color: #495057;
+    padding: 20px 0;
+    border-top: 2px solid #CED4DA;
+    margin-top: 32px;
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   STREAMLIT PŘEPISY
-   ══════════════════════════════════════════════════════════════════════════ */
-
-/* Sloupce – mezery definovány výše u .chart-wrap bloku */
-
-/* Streamlit tlačítka */
-button[kind="secondary"] {
-    font-family: 'Syne', sans-serif !important;
-    font-size: 0.78rem !important;
-    background: #080f1e !important;
-    border: 1px solid #0f2040 !important;
-    color: #4a7ab5 !important;
+button[kind="primary"],
+button[data-testid="baseButton-primary"] {
+    background: #0D6EFD !important;
+    color: #FFFFFF !important;
+    border: 2px solid #0A58CA !important;
+    font-weight: 700 !important;
     border-radius: 8px !important;
 }
 
-button[kind="secondary"]:hover {
-    background: #0d1a30 !important;
-    border-color: #1a3060 !important;
-    color: #6a9ad4 !important;
+button[kind="secondary"],
+.stButton > button {
+    background: #FFFFFF !important;
+    border: 2px solid #0D6EFD !important;
+    color: #0D6EFD !important;
+    font-weight: 600 !important;
+    border-radius: 8px !important;
 }
 
-/* Expander */
+button[kind="secondary"]:hover { background: #E7F1FF !important; }
+
 [data-testid="stExpander"] {
-    border: 1px solid #0a1830 !important;
+    background: #FFFFFF !important;
+    border: 2px solid #495057 !important;
     border-radius: 10px !important;
-    background: #060c18 !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06) !important;
 }
-
-[data-testid="stExpanderToggleIcon"] { color: #2a4a78 !important; }
 
 details summary {
     font-family: 'Syne', sans-serif !important;
-    font-size: 0.82rem !important;
-    color: #4a7ab5 !important;
+    font-weight: 700 !important;
+    color: #000000 !important;
 }
 
-/* Number input */
-[data-testid="stNumberInput"] input {
+[data-testid="stNumberInput"] input,
+[data-testid="stDateInput"] input {
+    background: #FFFFFF !important;
+    border: 2px solid #495057 !important;
+    color: #000000 !important;
     font-family: 'IBM Plex Mono', monospace !important;
-    font-size: 0.9rem !important;
-    background: #070e1e !important;
-    border: 1px solid #0f2040 !important;
-    color: #a0c8e8 !important;
-    border-radius: 8px !important;
 }
 
-/* Dataframe */
-[data-testid="stDataFrame"] {
-    border: 1px solid #0a1830 !important;
-    border-radius: 12px !important;
-    overflow: hidden !important;
-}
-
-/* Selectbox */
 [data-testid="stSelectbox"] > div > div {
-    background: #070e1e !important;
-    border: 1px solid #0f2040 !important;
-    border-radius: 8px !important;
-    color: #6a9ad4 !important;
-    font-family: 'IBM Plex Mono', monospace !important;
-    font-size: 0.82rem !important;
+    background: #FFFFFF !important;
+    border: 2px solid #495057 !important;
+    color: #000000 !important;
 }
 
-/* Plotly grafy – průhledné pozadí */
-.js-plotly-plot .plotly .main-svg {
-    background-color: transparent !important;
+[data-testid="stDataFrame"] {
+    border: 2px solid #CED4DA !important;
+    border-radius: 10px !important;
 }
 
-/* Přepínač období grafu (1M / 3M / 6M / 1Y) */
-[data-testid="stRadio"] > div {
-    gap: 6px !important;
-    flex-wrap: wrap !important;
-}
 [data-testid="stRadio"] label {
-    background: #070e1e !important;
-    border: 1px solid #0f2040 !important;
-    border-radius: 8px !important;
+    background: #FFFFFF !important;
+    border: 2px solid #ADB5BD !important;
+    color: #212529 !important;
+    font-weight: 600 !important;
     padding: 4px 14px !important;
-    font-family: 'IBM Plex Mono', monospace !important;
-    font-size: 0.72rem !important;
-    color: #2a5080 !important;
-    transition: all 0.15s ease !important;
 }
-[data-testid="stRadio"] label:hover {
-    border-color: #1a3a6a !important;
-    color: #6a9ad4 !important;
-}
+
 [data-testid="stRadio"] label[data-checked="true"],
 [data-testid="stRadio"] div[aria-checked="true"] label {
-    border-color: #f59e0b !important;
-    color: #fbbf24 !important;
-    background: rgba(245, 158, 11, 0.08) !important;
+    border-color: #0D6EFD !important;
+    color: #FFFFFF !important;
+    background: #0D6EFD !important;
 }
 
-/* Progress bar logistiky */
-.stProgress > div > div > div > div {
-    background: linear-gradient(90deg, #f59e0b, #3b82f6) !important;
-}
-.stProgress > div > div > div {
-    background-color: #0a1525 !important;
-    border-radius: 6px !important;
-}
-
-/* Date input */
-[data-testid="stDateInput"] input {
-    font-family: 'IBM Plex Mono', monospace !important;
-    background: #070e1e !important;
-    border: 1px solid #0f2040 !important;
-    color: #a0c8e8 !important;
-    border-radius: 8px !important;
-}
-
-/* Globální přepínač měny (USD / EUR) */
-.currency-bar {
-    background: linear-gradient(135deg, #070e1e 0%, #0a1525 100%);
-    border: 1px solid #0f2040;
-    border-radius: 14px;
-    padding: 14px 20px;
-    margin-bottom: 20px;
-}
-.currency-bar-label {
-    font-family: 'Syne', sans-serif;
-    font-size: 0.78rem;
-    font-weight: 700;
-    color: #3a6a9a;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin-bottom: 8px;
-    line-height: 1.4;
-}
-.currency-bar-hint {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.68rem;
-    color: #1e3a60;
-    line-height: 1.65;
-    padding-top: 8px;
-}
 [data-testid="stSegmentedControl"] {
-    background: #050d1a !important;
+    background: #E9ECEF !important;
+    border: 2px solid #495057 !important;
     border-radius: 10px !important;
-    padding: 3px !important;
-    border: 1px solid #0f2040 !important;
 }
 
-/* Metric widget přepis */
-[data-testid="stMetric"] {
-    background: transparent !important;
-    padding: 0 !important;
+.currency-bar {
+    background: #FFFFFF;
+    border: 2px solid #343A40;
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin-bottom: 16px;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.08);
 }
 
-[data-testid="stMetricLabel"] {
-    font-family: 'Syne', sans-serif !important;
-    font-size: 0.72rem !important;
-    color: #2a4a78 !important;
+.currency-bar-label {
+    font-weight: 700;
+    color: #000000;
+    text-transform: uppercase;
 }
 
-[data-testid="stMetricValue"] {
-    font-family: 'IBM Plex Mono', monospace !important;
-    color: #a0c8e8 !important;
+.currency-bar-hint { color: #495057; }
+
+[data-testid="stMetricLabel"] { color: #495057 !important; font-weight: 700 !important; }
+[data-testid="stMetricValue"] { color: #000000 !important; font-weight: 700 !important; }
+
+.stProgress > div > div > div > div {
+    background: linear-gradient(90deg, #0D6EFD, #198754) !important;
+}
+.stProgress > div > div > div { background-color: #E9ECEF !important; }
+
+[data-testid="stHorizontalBlock"] { gap: 0.65rem !important; }
+div[data-testid="column"] {
+    padding-left: 6px !important;
+    padding-right: 6px !important;
+    margin-bottom: 8px !important;
 }
 
 </style>
 """
+
 
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
@@ -1997,7 +1543,7 @@ def render_metal_surcharge_calculator(cnb: dict | None) -> None:
 
     st.markdown(
         "<div style='font-family:Syne,sans-serif;font-size:0.72rem;font-weight:700;"
-        "color:#2a4a78;text-transform:uppercase;letter-spacing:1px;margin:12px 0 8px 0;'>"
+        "color:#495057;text-transform:uppercase;letter-spacing:1px;margin:12px 0 8px 0;'>"
         "Burzovní data kovu (za tunu)</div>",
         unsafe_allow_html=True,
     )
@@ -2095,12 +1641,6 @@ def render_metal_surcharge_calculator(cnb: dict | None) -> None:
     orig_metal_per_m_usd = _metal_value_per_meter_usd(orig_metal_usd, kg_per_km)
     curr_metal_per_m_usd = _metal_value_per_meter_usd(curr_metal_usd, kg_per_km)
     hollow_usd = orig_total_usd - orig_metal_per_m_usd
-    if hollow_usd < 0:
-        st.warning(
-            "Původní hodnota kovu v 1 m převyšuje celkovou cenu — dutá cena by byla záporná. "
-            "Zkontrolujte vstupy (hmotnost / burzovní cenu / nabídku)."
-        )
-        hollow_usd = 0.0
 
     fair_usd = hollow_usd + curr_metal_per_m_usd
     orig_metal_ex_usd = _to_usd(orig_metal_ex, exchange_currency, rates)
@@ -2140,7 +1680,7 @@ def render_metal_surcharge_calculator(cnb: dict | None) -> None:
                 f'<div class="calc-result-label">{title}</div>'
                 f'<div class="calc-result-value">{val:,.4f} {sym}</div>'
                 f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.65rem;'
-                f'color:#1e3a60;margin-top:4px;">{hint}</div></div>',
+                f'color:#6C757D;margin-top:4px;">{hint}</div></div>',
                 unsafe_allow_html=True,
             )
 
@@ -2168,7 +1708,7 @@ def render_metal_surcharge_calculator(cnb: dict | None) -> None:
             f'<div class="calc-result-value" style="color:{color};">'
             f'{sign}{diff_out:,.4f} {sym}/m</div>'
             f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.65rem;'
-            f'color:#1e3a60;margin-top:4px;">'
+            f'color:#6C757D;margin-top:4px;">'
             f'Kladné = férový model dražší než plošné zdražení celé nabídky</div></div>',
             unsafe_allow_html=True,
         )
@@ -2294,18 +1834,25 @@ def fetch_oil_history(period: str = "6mo") -> pd.DataFrame | None:
 # ─────────────────────────────────────────────────────────────────────────────
 # ==============================================================================
 
+_PLOT_PAPER = "#FFFFFF"
+_PLOT_BG = "#F8F9FA"
+_PLOT_TITLE_COLOR = "#212529"
+_PLOT_TICK_COLOR = "#000000"
+_PLOT_GRID = "#DEE2E6"
+
 _TICK_AXIS = dict(
-    gridcolor="#070e1e",
-    tickfont=dict(family="IBM Plex Mono, monospace", size=9, color="#1e3a60"),
+    gridcolor=_PLOT_GRID,
+    tickfont=dict(family="IBM Plex Mono, monospace", size=10, color=_PLOT_TICK_COLOR),
     showgrid=True,
     zeroline=False,
-    showline=False,
+    showline=True,
+    linecolor="#ADB5BD",
 )
 
 _HOVER_LABEL = dict(
-    bgcolor="#070e1e",
-    bordercolor="#0f2040",
-    font=dict(family="IBM Plex Mono, monospace", size=11, color="#8ab0d4"),
+    bgcolor="#FFFFFF",
+    bordercolor="#495057",
+    font=dict(family="IBM Plex Mono, monospace", size=11, color="#212529"),
 )
 
 
@@ -2357,11 +1904,11 @@ def interactive_line_chart(
             ))
 
     fig.update_layout(
-        title=dict(text=title, font=dict(family="Syne, sans-serif", size=12, color="#3a6a9a"), y=0.97),
+        title=dict(text=title, font=dict(family="Syne, sans-serif", size=13, color=_PLOT_TITLE_COLOR), y=0.97),
         height=height,
         margin=dict(l=10, r=10, t=42 if show_legend else 36, b=12),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor=_PLOT_PAPER,
+        plot_bgcolor=_PLOT_BG,
         showlegend=show_legend,
         legend=dict(
             orientation="h",
@@ -2369,8 +1916,8 @@ def interactive_line_chart(
             y=1.08,
             xanchor="right",
             x=1,
-            font=dict(family="IBM Plex Mono, monospace", size=9, color="#4a7ab5"),
-            bgcolor="rgba(0,0,0,0)",
+            font=dict(family="IBM Plex Mono, monospace", size=10, color=_PLOT_TICK_COLOR),
+            bgcolor=_PLOT_PAPER,
         ) if show_legend else None,
         xaxis=dict(**_TICK_AXIS, tickformat="%b %y"),
         yaxis=dict(**_TICK_AXIS, tickformat=",.2f"),
@@ -2424,20 +1971,20 @@ def interactive_metal_dual_chart(
         ))
 
     y2_axis = dict(
-        title=dict(text="Zásoby (t)", font=dict(size=9, color="#64748b")),
+        title=dict(text="Zásoby (t)", font=dict(size=10, color=_PLOT_TITLE_COLOR)),
         overlaying="y",
         side="right",
         showgrid=False,
-        tickfont=dict(family="IBM Plex Mono, monospace", size=9, color="#64748b"),
+        tickfont=dict(family="IBM Plex Mono, monospace", size=10, color=_PLOT_TICK_COLOR),
         tickformat=",.0f",
     ) if has_stock else None
 
     fig.update_layout(
-        title=dict(text=title, font=dict(family="Syne, sans-serif", size=12, color="#3a6a9a"), y=0.98),
+        title=dict(text=title, font=dict(family="Syne, sans-serif", size=13, color=_PLOT_TITLE_COLOR), y=0.98),
         height=height,
         margin=dict(l=10, r=10, t=48, b=12),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor=_PLOT_PAPER,
+        plot_bgcolor=_PLOT_BG,
         showlegend=True,
         legend=dict(
             orientation="h",
@@ -2445,8 +1992,8 @@ def interactive_metal_dual_chart(
             y=1.1,
             xanchor="right",
             x=1,
-            font=dict(family="IBM Plex Mono, monospace", size=9, color="#4a7ab5"),
-            bgcolor="rgba(0,0,0,0)",
+            font=dict(family="IBM Plex Mono, monospace", size=10, color=_PLOT_TICK_COLOR),
+            bgcolor=_PLOT_PAPER,
         ),
         xaxis=dict(**_TICK_AXIS, tickformat="%b %y"),
         yaxis=dict(**_TICK_AXIS, tickformat=",.0f", title=dict(text=y_price_label, standoff=8)),
@@ -2572,33 +2119,29 @@ def bar_metals(
         marker=dict(color=colors, line_width=0),
         text=[f" {p:,.0f} {currency}/t" for p in prices],
         textposition="outside",
-        textfont=dict(family="IBM Plex Mono, monospace", size=9.5, color="#3a6a9a"),
+        textfont=dict(family="IBM Plex Mono, monospace", size=9.5, color=_PLOT_TITLE_COLOR),
         hovertemplate=f"<b>%{{y}}</b><br>%{{x:,.0f}} {currency}/t<extra></extra>",
     ))
     fig.update_layout(
-        title=dict(text=title, font=dict(family="Syne, sans-serif", size=12, color="#3a6a9a")),
+        title=dict(text=title, font=dict(family="Syne, sans-serif", size=13, color=_PLOT_TITLE_COLOR)),
         height=220,
         margin=dict(l=10, r=10, t=36, b=12),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor=_PLOT_PAPER,
+        plot_bgcolor=_PLOT_BG,
         showlegend=False,
         xaxis=dict(
-            gridcolor="#060d1a",
-            tickfont=dict(family="IBM Plex Mono, monospace", size=9, color="#1e3a60"),
+            gridcolor=_PLOT_GRID,
+            tickfont=dict(family="IBM Plex Mono, monospace", size=10, color=_PLOT_TICK_COLOR),
             tickformat=",.0f",
             showgrid=True,
             zeroline=False,
         ),
         yaxis=dict(
-            tickfont=dict(family="Syne, sans-serif", size=10, color="#4a7ab5"),
+            tickfont=dict(family="Syne, sans-serif", size=10, color=_PLOT_TICK_COLOR),
             showgrid=False,
         ),
         bargap=0.35,
-        hoverlabel=dict(
-            bgcolor="#070e1e",
-            bordercolor="#0f2040",
-            font=dict(family="IBM Plex Mono, monospace", size=11, color="#8ab0d4"),
-        ),
+        hoverlabel=_HOVER_LABEL,
     )
     return fig
 
@@ -2643,7 +2186,7 @@ def render_header() -> None:
     with c2:
         st.markdown(
             '<div style="padding:8px 0;font-family:\'IBM Plex Mono\',monospace;'
-            'font-size:0.7rem;color:#1a3050;">'
+            'font-size:0.7rem;color:#495057;">'
             'Data se automaticky obnovují každou hodinu · '
             'Všechny ceny jsou orientační · Žádné placené API</div>',
             unsafe_allow_html=True,
@@ -2699,7 +2242,7 @@ def render_global_controls() -> tuple[str, str]:
             st.session_state.chart_period_yf = CHART_PERIODS[p_choice]
     with c_info:
         rate_txt = (
-            f"EUR/USD (Yahoo): <strong style='color:#4a7ab5;'>{eurusd:.4f}</strong>"
+            f"EUR/USD (Yahoo): <strong style='color:#0D6EFD;'>{eurusd:.4f}</strong>"
             if eurusd
             else "EUR/USD: <strong style='color:#ef4444;'>nedostupný</strong>"
         )
@@ -2758,7 +2301,7 @@ def render_metals() -> None:
     # ── Historické grafy — měď & hliník (Westmetall), ocel (Yahoo) ────────────
     st.markdown(
         "<div style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
-        "color:#2a4a78;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
+        "color:#495057;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
         f"Historické grafy — Měď & Hliník (Westmetall, {period_lbl}) · "
         f"Ocel (Yahoo, {ccy}/t)</div>",
         unsafe_allow_html=True,
@@ -2873,7 +2416,7 @@ def _render_shfe_spreads(wm_data: dict | None) -> None:
     st.markdown(
         f"<div style='margin-bottom:10px;'>"
         f"<span style='font-family:Syne,sans-serif;font-size:0.7rem;font-weight:700;"
-        f"color:#2a4a78;text-transform:uppercase;letter-spacing:1px;'>"
+        f"color:#495057;text-transform:uppercase;letter-spacing:1px;'>"
         f"SHFE vs LME Spread ({ccy}/t)</span></div>",
         unsafe_allow_html=True,
     )
@@ -3104,7 +2647,7 @@ def render_oil_plastics() -> None:
     # ── Brent graf (BZ=F) + SMA 30d trend + přepínač období ─────────────────
     st.markdown(
         "<div style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
-        "color:#2a4a78;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
+        "color:#495057;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
         "Brent Crude (BZ=F) — historie &amp; SMA 30d</div>",
         unsafe_allow_html=True,
     )
@@ -3158,9 +2701,9 @@ def render_oil_plastics() -> None:
                     </tbody>
                 </table>
                 <div style="margin-top:12px;font-family:'IBM Plex Mono',monospace;
-                            font-size:0.65rem;color:#1e3a60;line-height:1.7;">
+                            font-size:0.65rem;color:#6C757D;line-height:1.7;">
                     Základ (Brent):<br>
-                    <strong style="color:#2a5080;">${plastics['_brent']:.2f}/bbl</strong><br><br>
+                    <strong style="color:#212529;">${plastics['_brent']:.2f}/bbl</strong><br><br>
                     Model: lineární proxy<br>
                     Zdroj: Yahoo Finance
                 </div>
@@ -3251,7 +2794,7 @@ def render_logistics() -> None:
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown(
         f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-        f"color:#2a5080;margin-bottom:6px;'>"
+        f"color:#212529;margin-bottom:6px;'>"
         f"Průběh cesty · odesláno {ship_date.strftime('%d.%m.%Y')} → "
         f"doručení {delivery_date.strftime('%d.%m.%Y')} · dnes {today.strftime('%d.%m.%Y')}"
         f"</div>",
