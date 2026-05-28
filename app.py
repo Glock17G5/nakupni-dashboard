@@ -1938,94 +1938,138 @@ def render_metal_surcharge_calculator(cnb: dict | None) -> None:
     rates = _build_fx_rates(cnb)
     wm_data = fetch_westmetall()
 
-    with st.expander(
-        "🔌 Profesionální kabelářská kalkulačka (Metal Surcharge)",
-        expanded=False,
-    ):
-        st.markdown(
-            '<div class="info-box">'
-            "Cena za 1 m = <strong>dutá cena</strong> (práce + plasty, fixní) + "
-            "<strong>přirážka za kov</strong> (dle burzy a hmotnosti v kabelu). "
-            "Převody měn: kurzy <strong>ČNB</strong> + <strong>EUR/USD</strong> (Yahoo)."
-            "</div>",
-            unsafe_allow_html=True,
+    st.markdown(
+        '<div class="info-box">'
+        "Cena za 1 m = <strong>dutá cena</strong> (práce + plasty, fixní) + "
+        "<strong>přirážka za kov</strong> (dle burzy a hmotnosti v kabelu). "
+        "Převody měn: kurzy <strong>ČNB</strong> + <strong>EUR/USD</strong> (Yahoo)."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    if not rates:
+        st.warning(
+            "Kalkulačka vyžaduje kurzy ČNB (USD/CZK, EUR/CZK) a ideálně EUR/USD z Yahoo."
+        )
+        return
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        metal_label = st.selectbox(
+            "Výběr kovu",
+            options=list(_SURCHARGE_METAL_OPTIONS.keys()),
+            key="surcharge_metal",
+        )
+        metal_key = _SURCHARGE_METAL_OPTIONS[metal_label]
+        kg_per_km = st.number_input(
+            "Hmotnost kovu v kabelu (kg/km)",
+            min_value=0.0,
+            value=500.0,
+            step=10.0,
+            format="%.1f",
+            key="surcharge_kg_km",
+        )
+    with c2:
+        orig_total = st.number_input(
+            "Původní celková cena za 1 m",
+            min_value=0.0,
+            value=2.50,
+            step=0.01,
+            format="%.4f",
+            key="surcharge_orig_total",
+        )
+        offer_currency = st.selectbox(
+            "Měna původní nabídky",
+            options=_CALC_CURRENCIES,
+            index=0,
+            key="surcharge_offer_ccy",
+        )
+    with c3:
+        output_currency = st.selectbox(
+            "Výstupní měna výsledku",
+            options=_CALC_CURRENCIES,
+            index=0,
+            key="surcharge_output_ccy",
         )
 
-        if not rates:
+    lme_live = _live_metal_price_in_currency(metal_key, "USD", wm_data, rates)
+    shfe_live = _live_metal_price_in_currency(metal_key, "CNY", wm_data, rates)
+
+    st.markdown(
+        "<div style='font-family:Syne,sans-serif;font-size:0.72rem;font-weight:700;"
+        "color:#2a4a78;text-transform:uppercase;letter-spacing:1px;margin:12px 0 8px 0;'>"
+        "Burzovní data kovu (za tunu)</div>",
+        unsafe_allow_html=True,
+    )
+
+    price_source = st.radio(
+        "Zdroj aktuální ceny:",
+        options=["LME (Live)", "SHFE (Live)", "Manuální (Predikce)"],
+        horizontal=True,
+        key="surcharge_price_source",
+    )
+
+    if price_source == "LME (Live)":
+        _orig_ccy_hint = "USD"
+        _default_orig = (lme_live * 0.92) if lme_live else 8000.0
+    elif price_source == "SHFE (Live)":
+        _orig_ccy_hint = "CNY"
+        _default_orig = (shfe_live * 0.92) if shfe_live else 70000.0
+    else:
+        _orig_ccy_hint = "dle měny burzy"
+        _default_orig = (lme_live * 0.92) if lme_live else 8000.0
+
+    orig_metal_ex = st.number_input(
+        f"Původní cena kovu na burze ({_orig_ccy_hint}/t)",
+        min_value=0.0,
+        value=float(_default_orig),
+        step=50.0,
+        format="%.2f",
+        key="surcharge_orig_metal_ex",
+        help="Referenční cena v měně odpovídající zvolenému zdroji aktuální ceny.",
+    )
+
+    curr_metal_ex: float | None = None
+    exchange_currency: str = "USD"
+
+    if price_source == "LME (Live)":
+        exchange_currency = "USD"
+        curr_metal_ex = lme_live
+        if curr_metal_ex is not None:
+            st.metric(
+                "Aktuální cena LME (live)",
+                f"{curr_metal_ex:,.2f} USD/t",
+                help="Westmetall LME Cash — automaticky v výpočtu",
+            )
+        else:
             st.warning(
-                "Kalkulačka vyžaduje kurzy ČNB (USD/CZK, EUR/CZK) a ideálně EUR/USD z Yahoo."
+                f"LME live cena pro {metal_label} není k dispozici (Westmetall)."
             )
-            return
-
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            metal_label = st.selectbox(
-                "Výběr kovu",
-                options=list(_SURCHARGE_METAL_OPTIONS.keys()),
-                key="surcharge_metal",
+    elif price_source == "SHFE (Live)":
+        exchange_currency = "CNY"
+        curr_metal_ex = shfe_live
+        if curr_metal_ex is not None:
+            st.metric(
+                "Aktuální cena SHFE (live)",
+                f"{curr_metal_ex:,.2f} CNY/t",
+                help="Sina Finance / SHFE — automaticky v výpočtu",
             )
-            metal_key = _SURCHARGE_METAL_OPTIONS[metal_label]
-            kg_per_km = st.number_input(
-                "Hmotnost kovu v kabelu (kg/km)",
-                min_value=0.0,
-                value=500.0,
-                step=10.0,
-                format="%.1f",
-                key="surcharge_kg_km",
+        else:
+            st.warning(
+                f"SHFE live cena pro {metal_label} není k dispozici (Sina / kurz CNY)."
             )
-        with c2:
-            orig_total = st.number_input(
-                "Původní celková cena za 1 m",
-                min_value=0.0,
-                value=2.50,
-                step=0.01,
-                format="%.4f",
-                key="surcharge_orig_total",
-            )
-            offer_currency = st.selectbox(
-                "Měna původní nabídky",
-                options=_CALC_CURRENCIES,
-                index=0,
-                key="surcharge_offer_ccy",
-            )
-        with c3:
-            output_currency = st.selectbox(
-                "Výstupní měna výsledku",
-                options=_CALC_CURRENCIES,
-                index=0,
-                key="surcharge_output_ccy",
-            )
-
-        live_current = _live_metal_price_in_currency(metal_key, "USD", wm_data, rates)
-        default_current = live_current if live_current else 9000.0
-        default_orig = default_current * 0.92 if default_current else 8000.0
-
-        st.markdown(
-            "<div style='font-family:Syne,sans-serif;font-size:0.72rem;font-weight:700;"
-            "color:#2a4a78;text-transform:uppercase;letter-spacing:1px;margin:12px 0 8px 0;'>"
-            "Burzovní data kovu (za tunu)</div>",
-            unsafe_allow_html=True,
-        )
-        b1, b2, b3 = st.columns(3)
-        with b1:
-            orig_metal_ex = st.number_input(
-                "Původní cena kovu na burze",
-                min_value=0.0,
-                value=float(default_orig),
-                step=50.0,
-                format="%.2f",
-                key="surcharge_orig_metal_ex",
-            )
-        with b2:
+    else:
+        m1, m2 = st.columns(2)
+        with m1:
             curr_metal_ex = st.number_input(
-                "Aktuální cena kovu na burze",
+                "Aktuální cena kovu na burze (manuální)",
                 min_value=0.0,
-                value=float(default_current),
+                value=float(lme_live or shfe_live or 9000.0),
                 step=50.0,
                 format="%.2f",
-                key="surcharge_curr_metal_ex",
+                key="surcharge_curr_metal_manual",
             )
-        with b3:
+        with m2:
             exchange_currency = st.selectbox(
                 "Měna burzy",
                 options=_EXCHANGE_CURRENCIES,
@@ -2033,106 +2077,101 @@ def render_metal_surcharge_calculator(cnb: dict | None) -> None:
                 key="surcharge_exchange_ccy",
             )
 
-        if st.button("📥 Načíst aktuální burzovní cenu", key="surcharge_load_live"):
-            live = _live_metal_price_in_currency(
-                metal_key, exchange_currency, wm_data, rates
+    if curr_metal_ex is None:
+        st.info("Pro výpočet zvolte dostupný live zdroj nebo přepněte na manuální predikci.")
+        return
+
+    if kg_per_km <= 0 or orig_total <= 0 or orig_metal_ex <= 0 or curr_metal_ex <= 0:
+        st.info("Vyplňte kladné hodnoty ceny, hmotnosti a burzovních cen.")
+        return
+
+    orig_metal_usd = _to_usd(orig_metal_ex, exchange_currency, rates)
+    curr_metal_usd = _to_usd(curr_metal_ex, exchange_currency, rates)
+    orig_total_usd = _to_usd(orig_total, offer_currency, rates)
+    if orig_metal_usd is None or curr_metal_usd is None or orig_total_usd is None:
+        st.error("Chybí kurz pro zvolenou kombinaci měn (zkontrolujte ČNB / EUR/USD / CNY).")
+        return
+
+    orig_metal_per_m_usd = _metal_value_per_meter_usd(orig_metal_usd, kg_per_km)
+    curr_metal_per_m_usd = _metal_value_per_meter_usd(curr_metal_usd, kg_per_km)
+    hollow_usd = orig_total_usd - orig_metal_per_m_usd
+    if hollow_usd < 0:
+        st.warning(
+            "Původní hodnota kovu v 1 m převyšuje celkovou cenu — dutá cena by byla záporná. "
+            "Zkontrolujte vstupy (hmotnost / burzovní cenu / nabídku)."
+        )
+        hollow_usd = 0.0
+
+    fair_usd = hollow_usd + curr_metal_per_m_usd
+    orig_metal_ex_usd = _to_usd(orig_metal_ex, exchange_currency, rates)
+    if not orig_metal_ex_usd:
+        st.error("Nelze převést původní burzovní cenu do USD pro výpočet růstu.")
+        return
+    metal_change_pct = (curr_metal_usd - orig_metal_ex_usd) / orig_metal_ex_usd
+    simple_total_usd = orig_total_usd * (1.0 + metal_change_pct)
+    diff_usd = fair_usd - simple_total_usd
+
+    def _out(usd_val: float) -> float | None:
+        return _from_usd(usd_val, output_currency, rates)
+
+    hollow_out = _out(hollow_usd)
+    new_metal_out = _out(curr_metal_per_m_usd)
+    fair_out = _out(fair_usd)
+    simple_out = _out(simple_total_usd)
+    diff_out = _out(diff_usd)
+    orig_total_out = _out(orig_total_usd)
+
+    if any(v is None for v in (hollow_out, new_metal_out, fair_out, simple_out, diff_out)):
+        st.error("Nelze převést výsledek do výstupní měny — chybí kurz.")
+        return
+
+    sym = output_currency
+    st.markdown("<br>", unsafe_allow_html=True)
+    r1, r2, r3 = st.columns(3)
+    results = [
+        (r1, "1. Dutá cena (fixní)", hollow_out, "Práce + plasty — nemění se"),
+        (r2, "2. Nová přirážka za kov", new_metal_out, f"Aktuální burza ({exchange_currency}/t)"),
+        (r3, "3. Férová cena za 1 m", fair_out, "Dutá + nový kov"),
+    ]
+    for col, title, val, hint in results:
+        with col:
+            st.markdown(
+                f'<div class="calc-result">'
+                f'<div class="calc-result-label">{title}</div>'
+                f'<div class="calc-result-value">{val:,.4f} {sym}</div>'
+                f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.65rem;'
+                f'color:#1e3a60;margin-top:4px;">{hint}</div></div>',
+                unsafe_allow_html=True,
             )
-            if live is not None:
-                st.session_state.surcharge_curr_metal_ex = float(live)
-                st.rerun()
-            else:
-                st.warning(
-                    f"Aktuální cena pro {metal_label} v {exchange_currency} není k dispozici "
-                    "(LME / SHFE / kurzy)."
-                )
 
-        if kg_per_km <= 0 or orig_total <= 0 or orig_metal_ex <= 0 or curr_metal_ex <= 0:
-            st.info("Vyplňte kladné hodnoty ceny, hmotnosti a burzovních cen.")
-            return
-
-        orig_metal_usd = _to_usd(orig_metal_ex, exchange_currency, rates)
-        curr_metal_usd = _to_usd(curr_metal_ex, exchange_currency, rates)
-        orig_total_usd = _to_usd(orig_total, offer_currency, rates)
-        if orig_metal_usd is None or curr_metal_usd is None or orig_total_usd is None:
-            st.error("Chybí kurz pro zvolenou kombinaci měn (zkontrolujte ČNB / EUR/USD / CNY).")
-            return
-
-        orig_metal_per_m_usd = _metal_value_per_meter_usd(orig_metal_usd, kg_per_km)
-        curr_metal_per_m_usd = _metal_value_per_meter_usd(curr_metal_usd, kg_per_km)
-        hollow_usd = orig_total_usd - orig_metal_per_m_usd
-        if hollow_usd < 0:
-            st.warning(
-                "Původní hodnota kovu v 1 m převyšuje celkovou cenu — dutá cena by byla záporná. "
-                "Zkontrolujte vstupy (hmotnost / burzovní cenu / nabídku)."
-            )
-            hollow_usd = 0.0
-
-        fair_usd = hollow_usd + curr_metal_per_m_usd
-        metal_change_pct = (curr_metal_ex - orig_metal_ex) / orig_metal_ex
-        simple_total_usd = orig_total_usd * (1.0 + metal_change_pct)
-        diff_usd = fair_usd - simple_total_usd
-
-        def _out(usd_val: float) -> float | None:
-            return _from_usd(usd_val, output_currency, rates)
-
-        hollow_out = _out(hollow_usd)
-        new_metal_out = _out(curr_metal_per_m_usd)
-        fair_out = _out(fair_usd)
-        simple_out = _out(simple_total_usd)
-        diff_out = _out(diff_usd)
-        orig_total_out = _out(orig_total_usd)
-
-        if any(v is None for v in (hollow_out, new_metal_out, fair_out, simple_out, diff_out)):
-            st.error("Nelze převést výsledek do výstupní měny — chybí kurz.")
-            return
-
-        sym = output_currency
-        st.markdown("<br>", unsafe_allow_html=True)
-        r1, r2, r3 = st.columns(3)
-        results = [
-            (r1, "1. Dutá cena (fixní)", hollow_out, "Práce + plasty — nemění se"),
-            (r2, "2. Nová přirážka za kov", new_metal_out, f"Aktuální burza ({exchange_currency}/t)"),
-            (r3, "3. Férová cena za 1 m", fair_out, "Dutá + nový kov"),
-        ]
-        for col, title, val, hint in results:
-            with col:
-                st.markdown(
-                    f'<div class="calc-result">'
-                    f'<div class="calc-result-label">{title}</div>'
-                    f'<div class="calc-result-value">{val:,.4f} {sym}</div>'
-                    f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.65rem;'
-                    f'color:#1e3a60;margin-top:4px;">{hint}</div></div>',
-                    unsafe_allow_html=True,
-                )
-
-        st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="info-box">'
+        f'<strong>Původní nabídka:</strong> {orig_total_out:,.4f} {sym}/m · '
+        f'<strong>Růst burzy kovu:</strong> {metal_change_pct * 100:+.2f} %</div>',
+        unsafe_allow_html=True,
+    )
+    c_simp, c_diff = st.columns(2)
+    with c_simp:
         st.markdown(
-            f'<div class="info-box">'
-            f'<strong>Původní nabídka:</strong> {orig_total_out:,.4f} {sym}/m · '
-            f'<strong>Růst burzy kovu:</strong> {metal_change_pct * 100:+.2f} %</div>',
+            f'<div class="calc-result">'
+            f'<div class="calc-result-label">Prostá přímá úměra (celá cena × růst burzy)</div>'
+            f'<div class="calc-result-value">{simple_out:,.4f} {sym}/m</div></div>',
             unsafe_allow_html=True,
         )
-        c_simp, c_diff = st.columns(2)
-        with c_simp:
-            st.markdown(
-                f'<div class="calc-result">'
-                f'<div class="calc-result-label">Prostá přímá úměra (celá cena × růst burzy)</div>'
-                f'<div class="calc-result-value">{simple_out:,.4f} {sym}/m</div></div>',
-                unsafe_allow_html=True,
-            )
-        with c_diff:
-            color = "#10b981" if diff_out >= 0 else "#ef4444"
-            sign = "+" if diff_out >= 0 else ""
-            st.markdown(
-                f'<div class="calc-result">'
-                f'<div class="calc-result-label">Rozdíl: férová vs. prostá úměra</div>'
-                f'<div class="calc-result-value" style="color:{color};">'
-                f'{sign}{diff_out:,.4f} {sym}/m</div>'
-                f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.65rem;'
-                f'color:#1e3a60;margin-top:4px;">'
-                f'Kladné = férový model dražší než plošné zdražení celé nabídky</div></div>',
-                unsafe_allow_html=True,
-            )
+    with c_diff:
+        color = "#10b981" if diff_out >= 0 else "#ef4444"
+        sign = "+" if diff_out >= 0 else ""
+        st.markdown(
+            f'<div class="calc-result">'
+            f'<div class="calc-result-label">Rozdíl: férová vs. prostá úměra</div>'
+            f'<div class="calc-result-value" style="color:{color};">'
+            f'{sign}{diff_out:,.4f} {sym}/m</div>'
+            f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.65rem;'
+            f'color:#1e3a60;margin-top:4px;">'
+            f'Kladné = férový model dražší než plošné zdražení celé nabídky</div></div>',
+            unsafe_allow_html=True,
+        )
 
 
 def get_chart_period() -> str:
@@ -2706,6 +2745,12 @@ def render_metals() -> None:
     with cols[2]:
         _render_steel_metric_card(steel_data)
 
+    with st.expander(
+        "🧮 Profesionální kabelářská kalkulačka (Metal Surcharge)",
+        expanded=False,
+    ):
+        render_metal_surcharge_calculator(fetch_cnb_rates())
+
     st.markdown("<br>", unsafe_allow_html=True)
     render_rsi_signals(steel_data)
     st.markdown("<br>", unsafe_allow_html=True)
@@ -2961,8 +3006,6 @@ def render_fx() -> None:
         fig_ue = interactive_line_chart(hist_ue, f"USD/EUR — {period_lbl}", "#22c55e", "EUR")
         if fig_ue:
             _show_plotly(fig_ue)
-
-    render_metal_surcharge_calculator(cnb)
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
