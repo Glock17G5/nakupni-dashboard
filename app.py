@@ -3470,13 +3470,7 @@ def render_logistics() -> None:
 # ── Vnitrostátní logistika (ČR) ────────────────────────────────────────────────
 
 _DOMESTIC_ROAD_FACTOR = 1.3
-_DOMESTIC_DEFAULT_FTL_CZK_KM = 42.0
-_DOMESTIC_FIX_FEE_CZK = 800
-_DOMESTIC_MIN_PRICE_CZK = 1200
-_DOMESTIC_MAX_WEIGHT_KG = 23500
-_DOMESTIC_MAX_LDM = 13.6
 _DOMESTIC_LDM_PER_EUR_PALLET = 0.4
-_DOMESTIC_MAX_EUR_PALLETS = 34
 
 _NOMINATIM_HEADERS = {"User-Agent": "pbcable-dashboard"}
 
@@ -3580,33 +3574,6 @@ def _render_location_search(
     return hits[idx]
 
 
-def _domestic_transport_quote(
-    road_km: float,
-    weight_kg: float,
-    ldm: float,
-    ftl_rate_czk_km: float,
-    max_weight_kg: float,
-    max_ldm: float,
-) -> tuple[float, float, float]:
-    """
-    Vrátí (využití kapacity 0–1, využití %, finální cena CZK).
-    LTL koeficient ^0.55; limity dle zvoleného vozidla.
-    """
-    max_w = max(float(max_weight_kg), 1.0)
-    max_l = max(float(max_ldm), 0.1)
-    cap_share = min(
-        1.0,
-        max(weight_kg / max_w, ldm / max_l),
-    )
-    ltl_coef = cap_share ** 0.55
-    base_rate = road_km * ftl_rate_czk_km * ltl_coef
-    final_price = max(
-        _DOMESTIC_MIN_PRICE_CZK,
-        base_rate + _DOMESTIC_FIX_FEE_CZK,
-    )
-    return cap_share, cap_share * 100.0, final_price
-
-
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_driving_distance(
     lat1: float, lon1: float, lat2: float, lon2: float
@@ -3676,15 +3643,14 @@ def render_domestic_logistics() -> None:
                 "Plachtová dodávka (do 1.2t)",
             ],
             help="Výběr vozidla ovlivní výchozí cenu za km a maximální limity váhy/prostoru.",
-            key="domestic_vehicle_type",
         )
 
         if "Dodávka" in v_type:
-            max_w, max_l, def_rate = 1200.0, 4.0, 20.0
+            max_w, max_l, def_rate, fix_fee = 1200.0, 4.0, 18.0, 0
         elif "Sólo" in v_type:
-            max_w, max_l, def_rate = 5500.0, 7.2, 30.0
+            max_w, max_l, def_rate, fix_fee = 5500.0, 7.2, 30.0, 400
         else:
-            max_w, max_l, def_rate = 24000.0, 13.6, 42.0
+            max_w, max_l, def_rate, fix_fee = 24000.0, 13.6, 45.0, 800
 
         weight_kg = st.number_input(
             "Váha (kg)",
@@ -3718,19 +3684,12 @@ def render_domestic_logistics() -> None:
                 format="%.1f",
             )
 
-        if weight_kg > max_w or ldm > max_l:
-            st.warning(
-                f"⚠️ Pozor: Zadaný náklad přesahuje kapacitu zvoleného vozidla "
-                f"(Max {max_w:,.0f} kg / {max_l} LDM)."
-            )
-
-        ftl_rate_czk_km = st.number_input(
-            "Sazba za celý kamion (CZK/km)",
-            min_value=0.5,
-            value=def_rate,
+        sazba = st.number_input(
+            "Sazba za celé auto (CZK/km)",
+            min_value=0.0,
+            value=float(def_rate),
             step=0.5,
-            format="%.1f",
-            key=f"domestic_ftl_rate_{v_type}",
+            key=f"sazba_{v_type}",
         )
 
         with st.expander("ℹ️ Tahák: Počet EUR palet vs. Ložné metry (LDM)"):
@@ -3774,14 +3733,33 @@ def render_domestic_logistics() -> None:
                 if used_osrm
                 else "Záložní odhad: vzdušná vzdálenost × 1,3 (OSRM nedostupné)"
             )
-            _, cap_pct, price_czk = _domestic_transport_quote(
-                road_km,
-                weight_kg,
-                ldm,
-                ftl_rate_czk_km,
-                max_w,
-                max_l,
-            )
+            dist = road_km
+            vaha = weight_kg
+
+            cap_w = vaha / max_w
+            cap_l = ldm / max_l
+            podil_kapacity = max(cap_w, cap_l)
+
+            if podil_kapacity > 1.0:
+                st.error(
+                    f"❌ **POZOR: Náklad se do zvoleného auta nevejde!**  \n"
+                    f"Překročena kapacita vozidla (Váha: {cap_w * 100:.0f} %, "
+                    f"LDM: {cap_l * 100:.0f} %). Musíte vybrat větší auto.",
+                    icon="🚨",
+                )
+                podil_kapacity = 1.0
+
+            if "Dodávka" in v_type:
+                ltl_koef = 1.0
+            elif "Sólo" in v_type:
+                ltl_koef = podil_kapacity ** 0.4
+            else:
+                ltl_koef = podil_kapacity ** 0.55
+
+            zakladni_sazba = (dist * sazba) * ltl_koef
+            navrhovana_cena = max(800.0, zakladni_sazba + fix_fee)
+            cap_pct = max(cap_w, cap_l) * 100.0
+            price_czk = navrhovana_cena
 
             m1, m2, m3 = st.columns(3)
             m1.metric(
@@ -3799,7 +3777,8 @@ def render_domestic_logistics() -> None:
             )
             st.caption(
                 f"{v_type} · max {max_w:,.0f} kg / {max_l} LDM · "
-                f"vzdálenost: {route_note} · sazba {ftl_rate_czk_km:.1f} CZK/km · "
+                f"vzdálenost: {route_note} · sazba {sazba:.1f} CZK/km · "
+                f"fix {fix_fee:,.0f} CZK · LTL koef. {ltl_koef:.3f} · "
                 f"start: {start_loc['display_name']} · "
                 f"cíl: {dest_loc['display_name']}"
             )
