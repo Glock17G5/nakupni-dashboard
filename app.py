@@ -54,14 +54,78 @@ st.set_page_config(
     },
 )
 
-col1, col2 = st.columns([1, 4])
-with col1:
+_SESSION_AUTH = "app_authenticated"
+
+
+def _load_app_key() -> str | None:
+    """Načte APP_KEY ze Streamlit secrets; při chybě vrátí None."""
     try:
-        st.image("logo.png", width=150)
+        key = st.secrets["APP_KEY"]
+        if key is None:
+            return None
+        key_str = str(key).strip()
+        return key_str if key_str else None
     except Exception:
-        pass
-with col2:
-    st.title("pbcable s.r.o.")
+        return None
+
+
+def _query_param_key() -> str | None:
+    """Hodnota parametru ?key= z URL."""
+    raw = st.query_params.get("key")
+    if raw is None:
+        return None
+    if isinstance(raw, list):
+        return str(raw[0]).strip() if raw else None
+    return str(raw).strip()
+
+
+def require_app_authentication() -> None:
+    """
+    Ověření přístupu: tajný klíč v URL (?key=) nebo heslo.
+    Bez úspěšného ověření zastaví běh skriptu (st.stop).
+    """
+    app_key = _load_app_key()
+    if not app_key:
+        st.error(
+            "Chybí nebo je neplatné nastavení **APP_KEY** v Streamlit secrets "
+            "(soubor `.streamlit/secrets.toml` lokálně nebo Secrets ve Streamlit Cloud)."
+        )
+        st.stop()
+
+    if st.session_state.get(_SESSION_AUTH):
+        return
+
+    url_key = _query_param_key()
+    if url_key and url_key == app_key:
+        st.session_state[_SESSION_AUTH] = True
+        return
+
+    _left, _center, _right = st.columns([1, 1.2, 1])
+    with _center:
+        st.markdown("### 🔒 Přístup k dashboardu")
+        st.caption(
+            "Přihlaste se tajným odkazem (`?key=…`) nebo zadejte přístupové heslo."
+        )
+        manual_key = st.text_input(
+            "Heslo / přístupový klíč",
+            type="password",
+            key="app_manual_key",
+            placeholder="Zadejte APP_KEY",
+        )
+        if st.button("Přihlásit se", type="primary", use_container_width=True):
+            if manual_key.strip() == app_key:
+                st.session_state[_SESSION_AUTH] = True
+                st.query_params["key"] = app_key
+                st.rerun()
+            else:
+                st.error("Neplatné heslo. Přístup odepřen.")
+        if url_key and url_key != app_key:
+            st.warning("Parametr `key` v adrese URL není platný.")
+
+    st.stop()
+
+
+require_app_authentication()
 
 # ==============================================================================
 # CSS INJEKCE — Veškeré styly přímo v kódu
@@ -471,7 +535,17 @@ div[data-testid="column"] {
 """
 
 
-st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+def _render_app_branding() -> None:
+    """Logo a titulek + globální CSS (až po ověření přístupu)."""
+    st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        try:
+            st.image("logo.png", width=150)
+        except Exception:
+            pass
+    with col2:
+        st.title("pbcable s.r.o.")
 
 
 # ==============================================================================
@@ -3322,6 +3396,7 @@ def render_footer() -> None:
 
 def main() -> None:
     """Hlavní funkce – sestaví celý dashboard voláním dílčích render funkcí."""
+    _render_app_branding()
     render_data_export()
     render_header()
     render_global_controls()
