@@ -3973,8 +3973,12 @@ def _format_domestic_transport_request(
 ) -> str:
     """Sestaví text poptávky dopravy k odeslání dopravci."""
     lines = [
-        "POPTÁVKA DOPRAVY — pbcable",
-        f"Vygenerováno: {now_prague().strftime('%d.%m.%Y %H:%M')} (Praha)",
+        "POPTÁVKA DOPRAVY — pbcable s.r.o.",
+        f"Vygenerováno: {now_prague().strftime('%d.%m.%Y %H:%M')}",
+        "",
+        "Dobrý den,",
+        "poptáváme přepravu níže uvedené zásilky. Prosíme o zaslání cenové nabídky "
+        "a potvrzení volné kapacity vozidla.",
         "",
         "── Trasa ──",
         f"Nakládka: {start_loc['display_name']} ({start_loc.get('country', 'CZ')})",
@@ -4025,7 +4029,9 @@ def _format_domestic_transport_request(
         lines.append("Cena: nutno přepočítat (přetížení nebo chybějící data).")
 
     lines.append("")
-    lines.append("Prosíme o nabídku dopravy dle výše uvedených parametrů.")
+    lines.append("Předem děkujeme za Vaši nabídku a zprávu o dostupnosti.")
+    lines.append("S pozdravem,")
+    lines.append("Nákupní a logistické oddělení pbcable s.r.o.")
     return "\n".join(lines)
 
 
@@ -4237,16 +4243,10 @@ def render_domestic_logistics() -> None:
                 eur_czk=eur_czk,
             )
             st.markdown("---")
-            st.markdown("**📋 Text poptávky pro dopravce**")
-            st.text_area(
-                "Zkopírujte nebo stáhněte",
-                value=request_text,
-                height=320,
-                key="domestic_request_preview",
-                label_visibility="collapsed",
-            )
+            st.markdown("**📋 Text poptávky pro dopravce (generováno automaticky)**")
+            st.code(request_text, language="text")
             st.download_button(
-                label="⬇️ Stáhnout poptávku (.txt)",
+                label="⬇️ Stáhnout poptávku jako textový soubor (.txt)",
                 data=request_text.encode("utf-8-sig"),
                 file_name=f"poptavka_dopravy_{now_prague().strftime('%Y-%m-%d')}.txt",
                 mime="text/plain",
