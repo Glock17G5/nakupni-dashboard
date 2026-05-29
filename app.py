@@ -454,6 +454,19 @@ button[kind="secondary"]:hover { background: #E7F1FF !important; }
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06) !important;
 }
 
+[data-testid="stTabs"] {
+    background: #FFFFFF;
+    padding: 10px 20px 20px 20px;
+    border-radius: 12px;
+    border: 2px solid #CED4DA;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+}
+[data-testid="stTabs"] button {
+    font-family: 'Syne', sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 1.05rem !important;
+}
+
 details summary {
     font-family: 'Syne', sans-serif !important;
     font-weight: 700 !important;
@@ -3601,12 +3614,33 @@ def main() -> None:
     render_data_export()
     render_header()
     render_global_controls()
-    render_metals()
-    render_fx()
-    render_oil_plastics()
-    render_logistics()
-    render_landed_cost_pricing()
-    render_summary_table()
+
+    # Vytvoření hlavních záložek pro rozdělení obsahu
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "🔩 Kovy & Trh",
+        "💱 Měnové kurzy",
+        "🛢️ Plasty & Ropa",
+        "🚢 Nákup & Logistika",
+        "📊 Souhrnný přehled",
+    ])
+
+    with tab1:
+        render_metals()
+
+    with tab2:
+        render_fx()
+
+    with tab3:
+        render_oil_plastics()
+
+    with tab4:
+        # Cenotvorbu a logistiku dáme do jedné záložky, protože spolu úzce souvisí
+        render_landed_cost_pricing()
+        render_logistics()
+
+    with tab5:
+        render_summary_table()
+
     render_footer()
 
 
