@@ -58,6 +58,7 @@ st.set_page_config(
 )
 
 _SESSION_AUTH = "app_authenticated"
+_SESSION_ROLE = "user_role"
 
 
 def _load_app_key() -> str | None:
@@ -70,6 +71,35 @@ def _load_app_key() -> str | None:
         return key_str if key_str else None
     except Exception:
         return None
+
+
+def _load_supplier_key() -> str | None:
+    """Načte SUPPLIER_KEY ze Streamlit secrets (přístup dodavatele)."""
+    try:
+        key = st.secrets["SUPPLIER_KEY"]
+        if key is None:
+            return None
+        key_str = str(key).strip()
+        return key_str if key_str else None
+    except Exception:
+        return None
+
+
+def _authenticate_user(access_key: str) -> bool:
+    """Ověří klíč a nastaví roli v session_state. Vrací True při úspěchu."""
+    app_key = _load_app_key()
+    supplier_key = _load_supplier_key()
+    key = access_key.strip()
+
+    if app_key and key == app_key:
+        st.session_state[_SESSION_AUTH] = True
+        st.session_state[_SESSION_ROLE] = "admin"
+        return True
+    if supplier_key and key == supplier_key:
+        st.session_state[_SESSION_AUTH] = True
+        st.session_state[_SESSION_ROLE] = "supplier"
+        return True
+    return False
 
 
 def _query_param_key() -> str | None:
@@ -96,11 +126,11 @@ def require_app_authentication() -> None:
         st.stop()
 
     if st.session_state.get(_SESSION_AUTH):
+        st.session_state.setdefault(_SESSION_ROLE, "admin")
         return
 
     url_key = _query_param_key()
-    if url_key and url_key == app_key:
-        st.session_state[_SESSION_AUTH] = True
+    if url_key and _authenticate_user(url_key):
         return
 
     _left, _center, _right = st.columns([1, 1.2, 1])
@@ -116,13 +146,12 @@ def require_app_authentication() -> None:
             placeholder="Zadejte APP_KEY",
         )
         if st.button("Přihlásit se", type="primary", use_container_width=True):
-            if manual_key.strip() == app_key:
-                st.session_state[_SESSION_AUTH] = True
-                st.query_params["key"] = app_key
+            if _authenticate_user(manual_key):
+                st.query_params["key"] = manual_key.strip()
                 st.rerun()
             else:
                 st.error("Neplatné heslo. Přístup odepřen.")
-        if url_key and url_key != app_key:
+        if url_key and not _authenticate_user(url_key):
             st.warning("Parametr `key` v adrese URL není platný.")
 
     st.stop()
@@ -3918,35 +3947,43 @@ def main() -> None:
     render_header()
     render_global_controls()
 
-    # Vytvoření hlavních záložek pro rozdělení obsahu
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    is_supplier = st.session_state.get("user_role") == "supplier"
+
+    tabs_list = [
         "🔩 Kovy & Trh",
         "💱 Měnové kurzy",
         "🛢️ Plasty & Ropa",
-        "🚢 Nákup & Logistika",
         "🚛 Vnitrostátní logistika",
         "📊 Souhrnný přehled",
-    ])
+    ]
 
-    with tab1:
+    if not is_supplier:
+        tabs_list.insert(3, "🚢 Nákup & Logistika")
+
+    tabs = st.tabs(tabs_list)
+
+    with tabs[0]:
         render_metals()
 
-    with tab2:
+    with tabs[1]:
         render_fx()
 
-    with tab3:
+    with tabs[2]:
         render_oil_plastics()
 
-    with tab4:
-        # Cenotvorbu a logistiku dáme do jedné záložky, protože spolu úzce souvisí
-        render_landed_cost_pricing()
-        render_logistics()
-
-    with tab5:
-        render_domestic_logistics()
-
-    with tab6:
-        render_summary_table()
+    if not is_supplier:
+        with tabs[3]:
+            render_landed_cost_pricing()
+            render_logistics()
+        with tabs[4]:
+            render_domestic_logistics()
+        with tabs[5]:
+            render_summary_table()
+    else:
+        with tabs[3]:
+            render_domestic_logistics()
+        with tabs[4]:
+            render_summary_table()
 
     render_footer()
 
