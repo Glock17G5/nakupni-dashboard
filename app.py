@@ -3441,7 +3441,7 @@ def render_logistics() -> None:
 # ── Vnitrostátní logistika (ČR) ────────────────────────────────────────────────
 
 _DOMESTIC_ROAD_FACTOR = 1.3
-_DOMESTIC_FTL_CZK_KM = 42
+_DOMESTIC_DEFAULT_FTL_CZK_KM = 42.0
 _DOMESTIC_FIX_FEE_CZK = 800
 _DOMESTIC_MIN_PRICE_CZK = 1200
 _DOMESTIC_MAX_WEIGHT_KG = 23500
@@ -3553,22 +3553,53 @@ def _domestic_transport_quote(
     road_km: float,
     weight_kg: float,
     ldm: float,
+    ftl_rate_czk_km: float,
 ) -> tuple[float, float, float]:
     """
     Vrátí (využití kapacity 0–1, využití %, finální cena CZK).
-    Model: 23,5 t / 13,6 LDM, FTL 42 CZK/km, LTL koeficient ^0.55.
+    Model: 23,5 t / 13,6 LDM, LTL koeficient ^0.55.
     """
     cap_share = min(
         1.0,
         max(weight_kg / _DOMESTIC_MAX_WEIGHT_KG, ldm / _DOMESTIC_MAX_LDM),
     )
     ltl_coef = cap_share ** 0.55
-    base_rate = road_km * _DOMESTIC_FTL_CZK_KM * ltl_coef
+    base_rate = road_km * ftl_rate_czk_km * ltl_coef
     final_price = max(
         _DOMESTIC_MIN_PRICE_CZK,
         base_rate + _DOMESTIC_FIX_FEE_CZK,
     )
     return cap_share, cap_share * 100.0, final_price
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def get_driving_distance(
+    lat1: float, lon1: float, lat2: float, lon2: float
+) -> tuple[float, bool]:
+    """
+    Silniční vzdálenost v km (OSRM). Vrací (km, použito_osrm).
+    Při selhání API: haversine × 1,3 a druhá hodnota False.
+    """
+    url = (
+        "http://router.project-osrm.org/route/v1/driving/"
+        f"{lon1},{lat1};{lon2},{lat2}?overview=false"
+    )
+    try:
+        resp = requests.get(url, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("code") != "Ok":
+            raise ValueError(str(data.get("message", "OSRM error")))
+        routes = data.get("routes") or []
+        if not routes:
+            raise ValueError("OSRM: no routes")
+        dist_km = float(routes[0]["distance"]) / 1000.0
+        if dist_km <= 0:
+            raise ValueError("OSRM: invalid distance")
+        return dist_km, True
+    except (requests.RequestException, ValueError, KeyError, TypeError, IndexError):
+        fallback_km = haversine_distance(lat1, lon1, lat2, lon2) * _DOMESTIC_ROAD_FACTOR
+        return fallback_km, False
 
 
 def render_domestic_logistics() -> None:
@@ -3578,7 +3609,7 @@ def render_domestic_logistics() -> None:
     st.markdown(
         '<div class="info-box">'
         'Vyhledejte <strong>start</strong> a <strong>cíl</strong> v ČR (město, ulice, PSČ) · '
-        'Silniční vzdálenost = vzdušná × 1,3 · FTL sazba 42 CZK/km · '
+        'Silniční trasa přes OSRM (záloha: vzdušná × 1,3) · '
         'Kapacita nákladního vozu 23,5 t / 13,6 LDM'
         '</div>',
         unsafe_allow_html=True,
@@ -3615,6 +3646,13 @@ def render_domestic_logistics() -> None:
             step=0.1,
             format="%.1f",
         )
+        ftl_rate_czk_km = st.number_input(
+            "Sazba za celý kamion (CZK/km)",
+            min_value=0.5,
+            value=_DOMESTIC_DEFAULT_FTL_CZK_KM,
+            step=0.5,
+            format="%.1f",
+        )
 
     with col_result:
         if not start_loc or not dest_loc:
@@ -3622,17 +3660,37 @@ def render_domestic_logistics() -> None:
         else:
             start_lat, start_lon = start_loc["lat"], start_loc["lon"]
             dest_lat, dest_lon = dest_loc["lat"], dest_loc["lon"]
-            air_km = haversine_distance(start_lat, start_lon, dest_lat, dest_lon)
-            road_km = air_km * _DOMESTIC_ROAD_FACTOR
-            _, cap_pct, price_czk = _domestic_transport_quote(road_km, weight_kg, ldm)
+
+            with st.spinner("Počítám silniční trasu (OSRM)…"):
+                road_km, used_osrm = get_driving_distance(
+                    start_lat, start_lon, dest_lat, dest_lon
+                )
+
+            dist_help = (
+                "Reálná silniční trasa (OSRM)"
+                if used_osrm
+                else "Záložní odhad: vzdušná vzdálenost × 1,3 (OSRM nedostupné)"
+            )
+            _, cap_pct, price_czk = _domestic_transport_quote(
+                road_km, weight_kg, ldm, ftl_rate_czk_km
+            )
 
             m1, m2, m3 = st.columns(3)
-            m1.metric("Vzdálenost silniční", f"{road_km:,.0f} km")
+            m1.metric(
+                "Vzdálenost silniční",
+                f"{road_km:,.0f} km",
+                help=dist_help,
+            )
             m2.metric("Využití kapacity kamionu", f"{cap_pct:.1f} %")
             m3.metric("Odhadovaná cena k jednání", f"{price_czk:,.0f} CZK")
 
+            route_note = (
+                "reálná silniční trasa (OSRM)"
+                if used_osrm
+                else "záložní odhad (vzdušná × 1,3)"
+            )
             st.caption(
-                f"Vzdušná vzdálenost {air_km:,.1f} km · "
+                f"Vzdálenost: {route_note} · sazba {ftl_rate_czk_km:.1f} CZK/km · "
                 f"start: {start_loc['display_name']} · "
                 f"cíl: {dest_loc['display_name']}"
             )
