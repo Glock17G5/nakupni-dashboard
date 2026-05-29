@@ -23,6 +23,7 @@ from bs4 import BeautifulSoup
 import yfinance as yf
 
 # ── Vizualizace ────────────────────────────────────────────────────────────────
+import plotly.express as px
 import plotly.graph_objects as go
 
 # ── Streamlit ─────────────────────────────────────────────────────────────────
@@ -1930,6 +1931,170 @@ _HOVER_LABEL = dict(
 )
 
 
+def _apply_financial_y_axis(fig: go.Figure, df: pd.DataFrame, y_col: str) -> go.Figure:
+    """Osa Y bez nuly — dynamický rozsah dle min/max zobrazených dat (+ malá rezerva)."""
+    if df is None or df.empty or y_col not in df.columns:
+        return fig
+    series = pd.to_numeric(df[y_col], errors="coerce").dropna()
+    if series.empty:
+        return fig
+    y_min, y_max = float(series.min()), float(series.max())
+    if y_min == y_max:
+        pad = max(abs(y_min) * 0.02, 1.0)
+        y_min -= pad
+        y_max += pad
+    else:
+        span = y_max - y_min
+        pad = span * 0.06
+        y_min -= pad
+        y_max += pad
+    fig.update_yaxes(
+        autorange=False,
+        range=[y_min, y_max],
+        rangemode="normal",
+        showgrid=True,
+        zeroline=False,
+        tickformat=",.2f",
+    )
+    return fig
+
+
+def metal_price_history_figure(
+    df: pd.DataFrame,
+    title: str,
+    color: str,
+    y_col: str = "Close",
+    y_label: str = "USD/t",
+    height: int = 320,
+) -> go.Figure | None:
+    """Profesionální čárový graf ceny kovu (Plotly Express) s dynamickou osou Y."""
+    if df is None or df.empty or y_col not in df.columns:
+        return None
+
+    plot_df = df.copy()
+    if "Date" in plot_df.columns:
+        plot_df["Date"] = pd.to_datetime(plot_df["Date"])
+    plot_df = plot_df.sort_values("Date").reset_index(drop=True)
+
+    fig = px.line(
+        plot_df,
+        x="Date",
+        y=y_col,
+        title=title,
+        labels={"Date": "Datum", y_col: y_label},
+    )
+    fig.update_traces(
+        line_color=color,
+        line_width=2.5,
+        hovertemplate=(
+            f"<b>%{{x|%d.%m.%Y}}</b><br>{y_label}: %{{y:,.2f}}<extra></extra>"
+        ),
+    )
+    fig.update_layout(
+        height=height,
+        margin=dict(l=12, r=12, t=44, b=12),
+        paper_bgcolor=_PLOT_PAPER,
+        plot_bgcolor=_PLOT_BG,
+        title=dict(
+            text=title,
+            font=dict(family="Syne, sans-serif", size=13, color=_PLOT_TITLE_COLOR),
+            x=0.02,
+            xanchor="left",
+        ),
+        showlegend=False,
+        hovermode="x unified",
+        hoverlabel=_HOVER_LABEL,
+        xaxis=dict(**_TICK_AXIS, tickformat="%d.%m.%Y", title=None),
+    )
+    _apply_financial_y_axis(fig, plot_df, y_col)
+    return fig
+
+
+def _metal_history_table_df(
+    df: pd.DataFrame,
+    price_col: str = "Close",
+    y_unit: str = "USD/t",
+) -> pd.DataFrame:
+    """Tabulka historie — nejnovější záznamy nahoře."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.copy()
+    if "Date" in out.columns:
+        out["Date"] = pd.to_datetime(out["Date"])
+        out = out.sort_values("Date", ascending=False)
+    rename: dict[str, str] = {
+        "Date": "Datum",
+        price_col: f"Cena ({y_unit})",
+    }
+    if "Stock" in out.columns:
+        rename["Stock"] = "Zásoby (t)"
+    keep = [c for c in ["Date", "Stock", price_col] if c in out.columns]
+    out = out[keep].rename(columns=rename)
+    if "Datum" in out.columns:
+        out["Datum"] = out["Datum"].dt.strftime("%d.%m.%Y")
+    return out.reset_index(drop=True)
+
+
+def _render_metal_history_with_tabs(
+    df: pd.DataFrame | None,
+    chart_title: str,
+    color: str,
+    y_unit: str,
+    price_col: str = "Close",
+    source_note: str = "",
+) -> None:
+    """Graf + surová data v záložkách pro jeden kov."""
+    if df is None or df.empty:
+        st.markdown(
+            '<div class="error-box">Historická data nejsou k dispozici</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    period_lbl = get_chart_period_label()
+    graph_title = f"{chart_title} — {period_lbl}"
+    if source_note:
+        graph_title += f" · {source_note}"
+
+    tab_chart, tab_table = st.tabs(["📈 Graf", "🗄️ Tabulka dat"])
+
+    with tab_chart:
+        fig = metal_price_history_figure(
+            df,
+            graph_title,
+            color,
+            price_col,
+            y_unit,
+        )
+        if fig:
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
+        else:
+            st.markdown('<div class="error-box">Graf nelze vykreslit</div>', unsafe_allow_html=True)
+
+    with tab_table:
+        table_df = _metal_history_table_df(df, price_col, y_unit)
+        price_label = f"Cena ({y_unit})"
+        col_config = {
+            "Datum": st.column_config.TextColumn("Datum", width="medium"),
+        }
+        if price_label in table_df.columns:
+            col_config[price_label] = st.column_config.NumberColumn(
+                price_label,
+                format="%.2f",
+            )
+        if "Zásoby (t)" in table_df.columns:
+            col_config["Zásoby (t)"] = st.column_config.NumberColumn(
+                "Zásoby (t)",
+                format="%,.0f",
+            )
+        st.dataframe(
+            table_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config=col_config,
+        )
+
+
 def interactive_line_chart(
     df: pd.DataFrame,
     title: str,
@@ -2116,20 +2281,14 @@ def _render_wm_metal_history_chart(
         return
 
     plot = apply_currency_to_df(hist.copy())
-    fig = interactive_metal_dual_chart(
+    _render_metal_history_with_tabs(
         plot,
-        f"{chart_title} — {period_lbl} · Westmetall",
+        chart_title,
         color,
         y_unit,
+        price_col="Close",
+        source_note="Westmetall",
     )
-    if fig:
-        _show_plotly(fig)
-    else:
-        st.warning("Chyba načítání dat z Westmetallu")
-        st.markdown(
-            '<div class="error-box">Chyba načítání dat z Westmetallu</div>',
-            unsafe_allow_html=True,
-        )
 
 
 def interactive_oil_chart(
@@ -2391,21 +2550,30 @@ def render_metals() -> None:
         _render_wm_metal_history_chart("aluminum", "Hliník (Al)", "#10b981")
 
     with col_st:
-        st_hist = fetch_metal_history(steel_ticker, period) if steel_data else None
-        if st_hist is not None:
-            st_plot = st_hist.copy()
-            st_plot["Close"] = st_plot["Close"] * _ST_TON_FACTOR
-            st_plot = apply_currency_to_df(st_plot)
-            fig_st = interactive_line_chart(
-                st_plot,
-                f"Ocel (HRC) — {period_lbl}",
-                "#64748b",
-                y_unit,
-            )
-            if fig_st:
-                _show_plotly(fig_st)
+        if steel_data:
+            st_hist = fetch_metal_history(steel_ticker, period)
+            if st_hist is not None:
+                st_plot = st_hist.copy()
+                st_plot["Close"] = st_plot["Close"] * _ST_TON_FACTOR
+                st_plot = apply_currency_to_df(st_plot)
+                _render_metal_history_with_tabs(
+                    st_plot,
+                    "Ocel (HRC)",
+                    "#64748b",
+                    y_unit,
+                    price_col="Close",
+                    source_note="Yahoo",
+                )
+            else:
+                st.markdown(
+                    '<div class="error-box">Graf oceli momentálně nedostupný</div>',
+                    unsafe_allow_html=True,
+                )
         else:
-            st.markdown('<div class="error-box">Graf oceli momentálně nedostupný</div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="error-box">Graf oceli momentálně nedostupný</div>',
+                unsafe_allow_html=True,
+            )
 
     st.markdown("<br>", unsafe_allow_html=True)
 
