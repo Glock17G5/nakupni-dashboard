@@ -3446,6 +3446,8 @@ _DOMESTIC_FIX_FEE_CZK = 800
 _DOMESTIC_MIN_PRICE_CZK = 1200
 _DOMESTIC_MAX_WEIGHT_KG = 23500
 _DOMESTIC_MAX_LDM = 13.6
+_DOMESTIC_LDM_PER_EUR_PALLET = 0.4
+_DOMESTIC_MAX_EUR_PALLETS = 34
 
 _NOMINATIM_HEADERS = {"User-Agent": "pbcable-dashboard"}
 
@@ -3638,14 +3640,34 @@ def render_domestic_logistics() -> None:
             value=1500.0,
             step=50.0,
         )
-        ldm = st.number_input(
-            "Ložné metry (LDM)",
-            min_value=0.1,
-            max_value=_DOMESTIC_MAX_LDM,
-            value=1.0,
-            step=0.1,
-            format="%.1f",
+        eur_pallets = st.number_input(
+            "Počet EUR palet (volitelně)",
+            min_value=0,
+            max_value=_DOMESTIC_MAX_EUR_PALLETS,
+            value=0,
+            step=1,
         )
+        if eur_pallets > 0:
+            ldm_auto = float(eur_pallets) * _DOMESTIC_LDM_PER_EUR_PALLET
+            ldm = st.number_input(
+                "Ložné metry (LDM)",
+                min_value=0.1,
+                max_value=_DOMESTIC_MAX_LDM,
+                value=ldm_auto,
+                step=0.1,
+                format="%.1f",
+                disabled=True,
+                help=f"Automaticky: {eur_pallets} palet × 0,4 LDM = {ldm_auto:.1f} LDM",
+            )
+        else:
+            ldm = st.number_input(
+                "Ložné metry (LDM)",
+                min_value=0.1,
+                max_value=_DOMESTIC_MAX_LDM,
+                value=1.0,
+                step=0.1,
+                format="%.1f",
+            )
         ftl_rate_czk_km = st.number_input(
             "Sazba za celý kamion (CZK/km)",
             min_value=0.5,
@@ -3653,6 +3675,25 @@ def render_domestic_logistics() -> None:
             step=0.5,
             format="%.1f",
         )
+
+        with st.expander("ℹ️ Tahák: Počet EUR palet vs. Ložné metry (LDM)"):
+            st.markdown(
+                "Standardní návěs (šířka **2,48 m**) pojme **34 nestohovatelných EUR palet** "
+                "(1,2 × 0,8 m), což odpovídá **13,6 LDM**. "
+                "Pro výpočet kapacity: **1 EUR paleta = 0,4 LDM**."
+            )
+            st.markdown(
+                """
+| Počet palet | LDM |
+|-------------|-----|
+| 1 | 0,4 |
+| 2 | 0,8 |
+| 5 | 2,0 |
+| 10 | 4,0 |
+| 33 | 13,2 |
+| 34 | 13,6 |
+                """
+            )
 
     with col_result:
         if not start_loc or not dest_loc:
