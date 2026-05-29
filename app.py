@@ -3585,14 +3585,18 @@ def _domestic_transport_quote(
     weight_kg: float,
     ldm: float,
     ftl_rate_czk_km: float,
+    max_weight_kg: float,
+    max_ldm: float,
 ) -> tuple[float, float, float]:
     """
     Vrátí (využití kapacity 0–1, využití %, finální cena CZK).
-    Model: 23,5 t / 13,6 LDM, LTL koeficient ^0.55.
+    LTL koeficient ^0.55; limity dle zvoleného vozidla.
     """
+    max_w = max(float(max_weight_kg), 1.0)
+    max_l = max(float(max_ldm), 0.1)
     cap_share = min(
         1.0,
-        max(weight_kg / _DOMESTIC_MAX_WEIGHT_KG, ldm / _DOMESTIC_MAX_LDM),
+        max(weight_kg / max_w, ldm / max_l),
     )
     ltl_coef = cap_share ** 0.55
     base_rate = road_km * ftl_rate_czk_km * ltl_coef
@@ -3639,9 +3643,9 @@ def render_domestic_logistics() -> None:
 
     st.markdown(
         '<div class="info-box">'
-        'Vyhledejte <strong>start</strong> a <strong>cíl</strong> v ČR (město, ulice, PSČ) · '
+        'Vyhledejte <strong>start</strong> a <strong>cíl</strong> v ČR · '
         'Silniční trasa přes OSRM (záloha: vzdušná × 1,3) · '
-        'Kapacita nákladního vozu 23,5 t / 13,6 LDM'
+        'Kamion / sólo / dodávka — limity a sazba dle vozidla'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -3662,17 +3666,35 @@ def render_domestic_logistics() -> None:
             "domestic_dest_select",
         )
         st.markdown("<br>", unsafe_allow_html=True)
+
+        st.markdown("#### Parametry nákladu a vozidla")
+        v_type = st.selectbox(
+            "Druh vozidla",
+            [
+                "Kamion (návěs 24t)",
+                "Sólo náklaďák (do 5.5t)",
+                "Plachtová dodávka (do 1.2t)",
+            ],
+            help="Výběr vozidla ovlivní výchozí cenu za km a maximální limity váhy/prostoru.",
+            key="domestic_vehicle_type",
+        )
+
+        if "Dodávka" in v_type:
+            max_w, max_l, def_rate = 1200.0, 4.0, 20.0
+        elif "Sólo" in v_type:
+            max_w, max_l, def_rate = 5500.0, 7.2, 30.0
+        else:
+            max_w, max_l, def_rate = 24000.0, 13.6, 42.0
+
         weight_kg = st.number_input(
             "Váha (kg)",
             min_value=1.0,
-            max_value=float(_DOMESTIC_MAX_WEIGHT_KG),
             value=1500.0,
             step=50.0,
         )
         eur_pallets = st.number_input(
             "Počet EUR palet (volitelně)",
             min_value=0,
-            max_value=_DOMESTIC_MAX_EUR_PALLETS,
             value=0,
             step=1,
         )
@@ -3681,7 +3703,6 @@ def render_domestic_logistics() -> None:
             ldm = st.number_input(
                 "Ložné metry (LDM)",
                 min_value=0.1,
-                max_value=_DOMESTIC_MAX_LDM,
                 value=ldm_auto,
                 step=0.1,
                 format="%.1f",
@@ -3692,24 +3713,41 @@ def render_domestic_logistics() -> None:
             ldm = st.number_input(
                 "Ložné metry (LDM)",
                 min_value=0.1,
-                max_value=_DOMESTIC_MAX_LDM,
                 value=1.0,
                 step=0.1,
                 format="%.1f",
             )
+
+        if weight_kg > max_w or ldm > max_l:
+            st.warning(
+                f"⚠️ Pozor: Zadaný náklad přesahuje kapacitu zvoleného vozidla "
+                f"(Max {max_w:,.0f} kg / {max_l} LDM)."
+            )
+
         ftl_rate_czk_km = st.number_input(
             "Sazba za celý kamion (CZK/km)",
             min_value=0.5,
-            value=_DOMESTIC_DEFAULT_FTL_CZK_KM,
+            value=def_rate,
             step=0.5,
             format="%.1f",
+            key=f"domestic_ftl_rate_{v_type}",
         )
 
         with st.expander("ℹ️ Tahák: Počet EUR palet vs. Ložné metry (LDM)"):
             st.markdown(
+                "**🚚 Typy vozidel a jejich rozměry:**<br>"
+                "• **Kamion (Plachtový návěs):** Délka 13,6 m | Šířka 2,48 m | "
+                "Výška 2,7 - 3,0 m | <b>34 palet / 24 tun</b><br>"
+                "• **Sólo (Náklaďák 7,5t - 12t):** Délka cca 7,2 m | Šířka 2,48 m | "
+                "Výška cca 2,7 m | <b>18 palet / 3,5 - 5,5 tuny</b><br>"
+                "• **Plachtová dodávka:** Délka 4,2 - 4,8 m | Šířka 2,2 m | "
+                "Výška 2,0 - 2,3 m | <b>8 - 10 palet / max 1,2 tuny!</b><br><br>"
+                "Matematický vzorec: `1 EUR paleta = 0,4 LDM`.",
+                unsafe_allow_html=True,
+            )
+            st.markdown(
                 "Standardní návěs (šířka **2,48 m**) pojme **34 nestohovatelných EUR palet** "
-                "(1,2 × 0,8 m), což odpovídá **13,6 LDM**. "
-                "Pro výpočet kapacity: **1 EUR paleta = 0,4 LDM**."
+                "(1,2 × 0,8 m), což odpovídá **13,6 LDM**."
             )
             st.markdown(
                 """
@@ -3742,7 +3780,12 @@ def render_domestic_logistics() -> None:
                 else "Záložní odhad: vzdušná vzdálenost × 1,3 (OSRM nedostupné)"
             )
             _, cap_pct, price_czk = _domestic_transport_quote(
-                road_km, weight_kg, ldm, ftl_rate_czk_km
+                road_km,
+                weight_kg,
+                ldm,
+                ftl_rate_czk_km,
+                max_w,
+                max_l,
             )
 
             m1, m2, m3 = st.columns(3)
@@ -3751,7 +3794,7 @@ def render_domestic_logistics() -> None:
                 f"{road_km:,.0f} km",
                 help=dist_help,
             )
-            m2.metric("Využití kapacity kamionu", f"{cap_pct:.1f} %")
+            m2.metric("Využití kapacity vozidla", f"{cap_pct:.1f} %")
             m3.metric("Odhadovaná cena k jednání", f"{price_czk:,.0f} CZK")
 
             route_note = (
@@ -3760,7 +3803,8 @@ def render_domestic_logistics() -> None:
                 else "záložní odhad (vzdušná × 1,3)"
             )
             st.caption(
-                f"Vzdálenost: {route_note} · sazba {ftl_rate_czk_km:.1f} CZK/km · "
+                f"{v_type} · max {max_w:,.0f} kg / {max_l} LDM · "
+                f"vzdálenost: {route_note} · sazba {ftl_rate_czk_km:.1f} CZK/km · "
                 f"start: {start_loc['display_name']} · "
                 f"cíl: {dest_loc['display_name']}"
             )
