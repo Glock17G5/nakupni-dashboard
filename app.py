@@ -3487,6 +3487,9 @@ _DOMESTIC_VEHICLE_PROFILES: dict[str, dict[str, float]] = {
         "fix_fee": 800.0,
         "default_w": 15000.0,
         "default_l": 6.0,
+        "ltl_exp": 0.55,
+        "ltl_floor": 0.48,
+        "min_price": 1200.0,
     },
     "Sólo náklaďák (5.5t)": {
         "max_w": 5500.0,
@@ -3495,6 +3498,9 @@ _DOMESTIC_VEHICLE_PROFILES: dict[str, dict[str, float]] = {
         "fix_fee": 400.0,
         "default_w": 3000.0,
         "default_l": 2.0,
+        "ltl_exp": 0.42,
+        "ltl_floor": 0.55,
+        "min_price": 1200.0,
     },
     "Plachtová dodávka (1.2t)": {
         "max_w": 1200.0,
@@ -3503,6 +3509,8 @@ _DOMESTIC_VEHICLE_PROFILES: dict[str, dict[str, float]] = {
         "fix_fee": 0.0,
         "default_w": 800.0,
         "default_l": 0.8,
+        "ltl_floor": 0.88,
+        "min_price": 900.0,
     },
 }
 
@@ -3638,30 +3646,101 @@ def get_driving_distance(
         return fallback_km, False
 
 
+def _domestic_vehicle_key(v_type: str) -> str:
+    if "Dodávka" in v_type:
+        return "van"
+    if "Sólo" in v_type:
+        return "solo"
+    return "truck"
+
+
+def _domestic_capacity_info(
+    weight_kg: float,
+    ldm: float,
+    profile: dict[str, float],
+) -> dict[str, float | bool | str]:
+    """Vytížení vozu — váha vs. LDM, včetně přetížení."""
+    max_w, max_l = profile["max_w"], profile["max_l"]
+    cap_w = weight_kg / max_w
+    cap_l = ldm / max_l
+    podil_kapacity = max(cap_w, cap_l)
+    return {
+        "podil_kapacity": podil_kapacity,
+        "cap_pct": podil_kapacity * 100.0,
+        "cap_w_pct": cap_w * 100.0,
+        "cap_l_pct": cap_l * 100.0,
+        "binding": "váha" if cap_w >= cap_l else "LDM",
+        "overload": podil_kapacity > 1.0,
+        "progress": min(1.0, podil_kapacity),
+    }
+
+
+def _domestic_ltl_coefficient(
+    podil_for_ltl: float,
+    profile: dict[str, float],
+    vehicle_key: str,
+) -> float:
+    """
+    LTL koeficient dle typu vozidla (orientační tržní model CZ).
+    Kamion: dokládka ^0,55 · sólo: ^0,42 · dodávka: min. 88 % km sazby (celý vůz).
+    """
+    floor = profile.get("ltl_floor", 0.5)
+    if vehicle_key == "van":
+        return max(floor, podil_for_ltl)
+    exp = profile.get("ltl_exp", 0.55)
+    return max(floor, podil_for_ltl ** exp)
+
+
+def _render_domestic_capacity_bar(cap: dict[str, float | bool | str]) -> None:
+    """Vizuální ukazatel vytížení vozidla."""
+    pct = cap["cap_pct"]
+    progress_val = cap["progress"]
+    binding = cap["binding"]
+    if cap["overload"]:
+        st.progress(
+            1.0,
+            text=f"Vytížení vozu: {pct:.0f} % — PŘETÍŽENÍ",
+        )
+    else:
+        st.progress(
+            float(progress_val),
+            text=f"Vytížení vozu: {pct:.0f} %",
+        )
+    st.caption(
+        f"Váha {cap['cap_w_pct']:.0f} % · LDM {cap['cap_l_pct']:.0f} % · "
+        f"limituje: **{binding}**"
+    )
+
+
 def _domestic_compute_quote(
     dist_km: float,
     weight_kg: float,
     ldm: float,
     profile: dict[str, float],
     rate_czk_km: float,
-    is_van: bool,
-) -> dict[str, float | bool]:
-    """Výpočet kapacity, LTL koeficientu a ceny dle tržního modelu."""
-    max_w, max_l = profile["max_w"], profile["max_l"]
-    podil_kapacity = max(weight_kg / max_w, ldm / max_l)
-    overload = podil_kapacity > 1.0
-    podil_for_ltl = min(1.0, podil_kapacity)
-    ltl_koef = 1.0 if is_van else (podil_for_ltl ** 0.5)
-    price_czk = max(
-        _DOMESTIC_MIN_PRICE_CZK,
-        (dist_km * rate_czk_km * ltl_koef) + profile["fix_fee"],
-    )
+    vehicle_key: str,
+) -> dict[str, float | bool | str | None]:
+    """Kapacita + cena k jednání; při přetížení cena None."""
+    cap = _domestic_capacity_info(weight_kg, ldm, profile)
+    overload = cap["overload"]
+    podil_for_ltl = min(1.0, cap["podil_kapacity"])
+    ltl_koef = _domestic_ltl_coefficient(podil_for_ltl, profile, vehicle_key)
+
+    km_part = dist_km * rate_czk_km * ltl_koef
+    fix_fee = profile["fix_fee"]
+    min_price = profile.get("min_price", _DOMESTIC_MIN_PRICE_CZK)
+
+    price_czk: float | None = None
+    if not overload:
+        price_czk = max(min_price, km_part + fix_fee)
+
     return {
-        "podil_kapacity": podil_kapacity,
-        "cap_pct": podil_kapacity * 100.0,
+        **cap,
         "ltl_koef": ltl_koef,
+        "km_part": km_part,
+        "fix_fee": fix_fee,
         "price_czk": price_czk,
-        "overload": overload,
+        "price_valid": not overload,
     }
 
 
@@ -3709,7 +3788,7 @@ def render_domestic_logistics() -> None:
         '<div class="info-box">'
         'Vyhledejte <strong>start</strong> a <strong>cíl</strong> v ČR · '
         'Silniční trasa přes OSRM (záloha: vzdušná × 1,3) · '
-        'Kamion / sólo / dodávka — limity a sazba dle vozidla'
+        'Kamion / sólo / dodávka — orientační tržní model · vytížení vozu v %'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -3744,7 +3823,7 @@ def render_domestic_logistics() -> None:
         fix_fee = profile["fix_fee"]
         default_w = profile["default_w"]
         default_l = profile["default_l"]
-        is_van = "Dodávka" in v_type
+        vehicle_key = _domestic_vehicle_key(v_type)
         v_idx = _DOMESTIC_VEHICLE_ORDER.index(v_type)
 
         waha = st.number_input(
@@ -3794,6 +3873,11 @@ def render_domestic_logistics() -> None:
             key=f"domestic_sazba_{v_idx}",
         )
 
+        st.markdown("**Vytížení vozidla (náklad)**")
+        _render_domestic_capacity_bar(
+            _domestic_capacity_info(waha, ldm, profile)
+        )
+
         _render_domestic_pallet_cheat_sheet()
 
     with col_result:
@@ -3815,14 +3899,18 @@ def render_domestic_logistics() -> None:
             )
             dist = road_km
             quote = _domestic_compute_quote(
-                dist, waha, ldm, profile, sazba, is_van
+                dist, waha, ldm, profile, sazba, vehicle_key
             )
+
+            st.markdown("**Vytížení vozidla (trasa + náklad)**")
+            _render_domestic_capacity_bar(quote)
 
             if quote["overload"]:
                 st.error(
                     f"🚨 POZOR: Náklad přesahuje kapacitu vozidla **{v_type}**! "
                     f"(Využití {quote['cap_pct']:.0f} % · max {max_w:,.0f} kg / {max_l} LDM). "
-                    f"Zvolte větší vozidlo nebo snižte náklad.",
+                    f"Zvolte větší vozidlo nebo snižte náklad. **Cenu nelze spočítat.**",
+                    icon="🚨",
                 )
 
             ltl_koef = quote["ltl_koef"]
@@ -3835,8 +3923,20 @@ def render_domestic_logistics() -> None:
                 f"{road_km:,.0f} km",
                 help=dist_help,
             )
-            m2.metric("Využití kapacity vozidla", f"{cap_pct:.1f} %")
-            m3.metric("Odhadovaná cena k jednání", f"{price_czk:,.0f} CZK")
+            m2.metric(
+                "Využití kapacity",
+                f"{cap_pct:.1f} %",
+                help=f"Limituje {quote['binding']} · LTL koef. {ltl_koef:.2f}",
+            )
+            if quote["price_valid"] and price_czk is not None:
+                m3.metric("Odhadovaná cena k jednání", f"{price_czk:,.0f} CZK")
+                st.caption(
+                    f"Rozpad: jízda {quote['km_part']:,.0f} CZK + fix {quote['fix_fee']:,.0f} CZK "
+                    f"(min. {profile.get('min_price', _DOMESTIC_MIN_PRICE_CZK):,.0f} CZK)"
+                )
+            else:
+                m3.metric("Odhadovaná cena k jednání", "—")
+                st.caption("Cena není k dispozici — přetížení vozidla.")
 
             route_note = (
                 "reálná silniční trasa (OSRM)"
@@ -3846,7 +3946,6 @@ def render_domestic_logistics() -> None:
             st.caption(
                 f"{v_type} · max {max_w:,.0f} kg / {max_l} LDM · "
                 f"vzdálenost: {route_note} · sazba {sazba:.1f} CZK/km · "
-                f"fix {fix_fee:,.0f} CZK · LTL koef. {ltl_koef:.3f} · "
                 f"start: {start_loc['display_name']} · "
                 f"cíl: {dest_loc['display_name']}"
             )
