@@ -3471,6 +3471,40 @@ def render_logistics() -> None:
 
 _DOMESTIC_ROAD_FACTOR = 1.3
 _DOMESTIC_LDM_PER_EUR_PALLET = 0.4
+_DOMESTIC_MIN_PRICE_CZK = 1200.0
+
+_DOMESTIC_VEHICLE_ORDER = [
+    "Kamion (návěs 24t)",
+    "Sólo náklaďák (5.5t)",
+    "Plachtová dodávka (1.2t)",
+]
+
+_DOMESTIC_VEHICLE_PROFILES: dict[str, dict[str, float]] = {
+    "Kamion (návěs 24t)": {
+        "max_w": 24000.0,
+        "max_l": 13.6,
+        "def_rate": 45.0,
+        "fix_fee": 800.0,
+        "default_w": 15000.0,
+        "default_l": 6.0,
+    },
+    "Sólo náklaďák (5.5t)": {
+        "max_w": 5500.0,
+        "max_l": 7.2,
+        "def_rate": 30.0,
+        "fix_fee": 400.0,
+        "default_w": 3000.0,
+        "default_l": 2.0,
+    },
+    "Plachtová dodávka (1.2t)": {
+        "max_w": 1200.0,
+        "max_l": 4.0,
+        "def_rate": 18.0,
+        "fix_fee": 0.0,
+        "default_w": 800.0,
+        "default_l": 0.8,
+    },
+}
 
 _NOMINATIM_HEADERS = {"User-Agent": "pbcable-dashboard"}
 
@@ -3604,6 +3638,69 @@ def get_driving_distance(
         return fallback_km, False
 
 
+def _domestic_compute_quote(
+    dist_km: float,
+    weight_kg: float,
+    ldm: float,
+    profile: dict[str, float],
+    rate_czk_km: float,
+    is_van: bool,
+) -> dict[str, float | bool]:
+    """Výpočet kapacity, LTL koeficientu a ceny dle tržního modelu."""
+    max_w, max_l = profile["max_w"], profile["max_l"]
+    podil_kapacity = max(weight_kg / max_w, ldm / max_l)
+    overload = podil_kapacity > 1.0
+    podil_for_ltl = min(1.0, podil_kapacity)
+    ltl_koef = 1.0 if is_van else (podil_for_ltl ** 0.5)
+    price_czk = max(
+        _DOMESTIC_MIN_PRICE_CZK,
+        (dist_km * rate_czk_km * ltl_koef) + profile["fix_fee"],
+    )
+    return {
+        "podil_kapacity": podil_kapacity,
+        "cap_pct": podil_kapacity * 100.0,
+        "ltl_koef": ltl_koef,
+        "price_czk": price_czk,
+        "overload": overload,
+    }
+
+
+def _render_domestic_pallet_cheat_sheet() -> None:
+    """Tahák — specifikace vozidel a tabulka palet 1–34."""
+    with st.expander("ℹ️ Tahák: Počet EUR palet vs. Ložné metry (LDM)"):
+        st.markdown(
+            "**🚚 Typy vozidel a technické specifikace:**<br>"
+            "• **Kamion (plachtový návěs 24 t):** délka 13,6 m · šířka 2,48 m · "
+            "výška 2,7–3,0 m · **max 24 t / 13,6 LDM** · až 34 EUR palet<br>"
+            "• **Sólo náklaďák (5,5 t):** délka cca 7,2 m · šířka 2,48 m · "
+            "výška cca 2,7 m · **max 5,5 t / 7,2 LDM** · cca 18 EUR palet<br>"
+            "• **Plachtová dodávka (1,2 t):** délka 4,2–4,8 m · šířka 2,2 m · "
+            "výška 2,0–2,3 m · **max 1,2 t / 4,0 LDM** · 8–10 EUR palet<br><br>"
+            "Vzorec: **`1 EUR paleta = 0,4 LDM`**. "
+            "Návěs 2,48 m pojme **34 nestohovatelných palet** (1,2 × 0,8 m) = **13,6 LDM**.",
+            unsafe_allow_html=True,
+        )
+
+        pallets = list(range(1, 35))
+        ldms = [round(p * _DOMESTIC_LDM_PER_EUR_PALLET, 1) for p in pallets]
+        tc1, tc2, tc3 = st.columns(3)
+        tc1.dataframe(
+            pd.DataFrame({"Počet palet": pallets[:12], "LDM": ldms[:12]}),
+            hide_index=True,
+            use_container_width=True,
+        )
+        tc2.dataframe(
+            pd.DataFrame({"Počet palet": pallets[12:24], "LDM": ldms[12:24]}),
+            hide_index=True,
+            use_container_width=True,
+        )
+        tc3.dataframe(
+            pd.DataFrame({"Počet palet": pallets[24:], "LDM": ldms[24:]}),
+            hide_index=True,
+            use_container_width=True,
+        )
+
+
 def render_domestic_logistics() -> None:
     """Kalkulačka rozvozu po ČR — start a cíl z Nominatim vyhledávání."""
     section_header("🚛", "Vnitrostátní logistika — Kalkulačka přepravy")
@@ -3637,32 +3734,34 @@ def render_domestic_logistics() -> None:
         st.markdown("#### Parametry nákladu a vozidla")
         v_type = st.selectbox(
             "Druh vozidla",
-            [
-                "Kamion (návěs 24t)",
-                "Sólo náklaďák (do 5.5t)",
-                "Plachtová dodávka (do 1.2t)",
-            ],
-            help="Výběr vozidla ovlivní výchozí cenu za km a maximální limity váhy/prostoru.",
+            _DOMESTIC_VEHICLE_ORDER,
+            key="domestic_v_type_selector",
         )
+        profile = _DOMESTIC_VEHICLE_PROFILES[v_type]
+        max_w = profile["max_w"]
+        max_l = profile["max_l"]
+        def_rate = profile["def_rate"]
+        fix_fee = profile["fix_fee"]
+        default_w = profile["default_w"]
+        default_l = profile["default_l"]
+        is_van = "Dodávka" in v_type
+        v_idx = _DOMESTIC_VEHICLE_ORDER.index(v_type)
 
-        if "Dodávka" in v_type:
-            max_w, max_l, def_rate, fix_fee = 1200.0, 4.0, 18.0, 0
-        elif "Sólo" in v_type:
-            max_w, max_l, def_rate, fix_fee = 5500.0, 7.2, 30.0, 400
-        else:
-            max_w, max_l, def_rate, fix_fee = 24000.0, 13.6, 45.0, 800
-
-        weight_kg = st.number_input(
+        waha = st.number_input(
             "Váha (kg)",
             min_value=1.0,
-            value=1500.0,
+            value=float(default_w),
             step=50.0,
+            key=f"domestic_weight_{v_idx}",
         )
+
         eur_pallets = st.number_input(
             "Počet EUR palet (volitelně)",
             min_value=0,
+            max_value=34,
             value=0,
             step=1,
+            key=f"domestic_pallets_{v_idx}",
         )
         if eur_pallets > 0:
             ldm_auto = float(eur_pallets) * _DOMESTIC_LDM_PER_EUR_PALLET
@@ -3673,15 +3772,17 @@ def render_domestic_logistics() -> None:
                 step=0.1,
                 format="%.1f",
                 disabled=True,
+                key=f"domestic_ldm_pallet_{v_idx}",
                 help=f"Automaticky: {eur_pallets} palet × 0,4 LDM = {ldm_auto:.1f} LDM",
             )
         else:
             ldm = st.number_input(
                 "Ložné metry (LDM)",
                 min_value=0.1,
-                value=1.0,
+                value=float(default_l),
                 step=0.1,
                 format="%.1f",
+                key=f"domestic_ldm_{v_idx}",
             )
 
         sazba = st.number_input(
@@ -3689,32 +3790,11 @@ def render_domestic_logistics() -> None:
             min_value=0.0,
             value=float(def_rate),
             step=0.5,
-            key=f"sazba_{v_type}",
+            format="%.1f",
+            key=f"domestic_sazba_{v_idx}",
         )
 
-        with st.expander("ℹ️ Tahák: Počet EUR palet vs. Ložné metry (LDM)"):
-            st.markdown(
-                "**🚚 Typy vozidel a jejich rozměry:**<br>"
-                "• **Kamion (Plachtový návěs):** Délka 13,6 m | Šířka 2,48 m | Výška 2,7 - 3,0 m | <b>34 palet / 24 tun</b><br>"
-                "• **Sólo (Náklaďák 7,5t - 12t):** Délka cca 7,2 m | Šířka 2,48 m | Výška cca 2,7 m | <b>18 palet / 3,5 - 5,5 tuny</b><br>"
-                "• **Plachtová dodávka:** Délka 4,2 - 4,8 m | Šířka 2,2 m | Výška 2,0 - 2,3 m | <b>8 - 10 palet / max 1,2 tuny!</b><br><br>"
-                "Matematický vzorec: `1 EUR paleta = 0,4 LDM`.<br>"
-                "Standardní návěs (šířka 2,48 m) pojme **34 nestohovatelných EUR palet** (1,2 × 0,8 m), což odpovídá **13,6 LDM**.",
-                unsafe_allow_html=True,
-            )
-
-            pallets = list(range(1, 35))
-            ldms = [float(f"{p * 0.4:.1f}") for p in pallets]
-
-            c1, c2, c3 = st.columns(3)
-
-            df1 = pd.DataFrame({"Počet palet": pallets[:12], "LDM": ldms[:12]})
-            df2 = pd.DataFrame({"Počet palet": pallets[12:24], "LDM": ldms[12:24]})
-            df3 = pd.DataFrame({"Počet palet": pallets[24:], "LDM": ldms[24:]})
-
-            c1.dataframe(df1, hide_index=True, use_container_width=True)
-            c2.dataframe(df2, hide_index=True, use_container_width=True)
-            c3.dataframe(df3, hide_index=True, use_container_width=True)
+        _render_domestic_pallet_cheat_sheet()
 
     with col_result:
         if not start_loc or not dest_loc:
@@ -3734,32 +3814,20 @@ def render_domestic_logistics() -> None:
                 else "Záložní odhad: vzdušná vzdálenost × 1,3 (OSRM nedostupné)"
             )
             dist = road_km
-            vaha = weight_kg
+            quote = _domestic_compute_quote(
+                dist, waha, ldm, profile, sazba, is_van
+            )
 
-            cap_w = vaha / max_w
-            cap_l = ldm / max_l
-            podil_kapacity = max(cap_w, cap_l)
-
-            if podil_kapacity > 1.0:
+            if quote["overload"]:
                 st.error(
-                    f"❌ **POZOR: Náklad se do zvoleného auta nevejde!**  \n"
-                    f"Překročena kapacita vozidla (Váha: {cap_w * 100:.0f} %, "
-                    f"LDM: {cap_l * 100:.0f} %). Musíte vybrat větší auto.",
-                    icon="🚨",
+                    f"🚨 POZOR: Náklad přesahuje kapacitu vozidla **{v_type}**! "
+                    f"(Využití {quote['cap_pct']:.0f} % · max {max_w:,.0f} kg / {max_l} LDM). "
+                    f"Zvolte větší vozidlo nebo snižte náklad.",
                 )
-                podil_kapacity = 1.0
 
-            if "Dodávka" in v_type:
-                ltl_koef = 1.0
-            elif "Sólo" in v_type:
-                ltl_koef = podil_kapacity ** 0.4
-            else:
-                ltl_koef = podil_kapacity ** 0.55
-
-            zakladni_sazba = (dist * sazba) * ltl_koef
-            navrhovana_cena = max(800.0, zakladni_sazba + fix_fee)
-            cap_pct = max(cap_w, cap_l) * 100.0
-            price_czk = navrhovana_cena
+            ltl_koef = quote["ltl_koef"]
+            cap_pct = quote["cap_pct"]
+            price_czk = quote["price_czk"]
 
             m1, m2, m3 = st.columns(3)
             m1.metric(
