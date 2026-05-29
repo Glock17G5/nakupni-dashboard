@@ -2170,6 +2170,19 @@ def interactive_line_chart(
     return fig
 
 
+def _axis_range_with_pad(series: pd.Series, pad_pct: float = 0.02) -> tuple[float, float]:
+    """Min/max série + pad_pct rezerva na obě strany (osa Y bez nuly)."""
+    s = pd.to_numeric(series, errors="coerce").dropna()
+    if s.empty:
+        raise ValueError("empty series")
+    y_min, y_max = float(s.min()), float(s.max())
+    if y_min == y_max:
+        pad = max(abs(y_min) * pad_pct, 1.0)
+    else:
+        pad = (y_max - y_min) * pad_pct
+    return y_min - pad, y_max + pad
+
+
 def interactive_metal_dual_chart(
     df: pd.DataFrame,
     title: str,
@@ -2178,52 +2191,67 @@ def interactive_metal_dual_chart(
     height: int = 320,
 ) -> go.Figure | None:
     """
-    Graf LME Cash (osa Y vlevo) + LME zásoby (osa Y vpravo) z westmetall historie.
+    Westmetall dual graf: LME Cash-Settlement (vlevo) + LME Stock (vpravo).
+    Obě osy Y dynamicky ořezané; tooltipy přes trace name a hovermode x unified.
     """
     if df is None or df.empty or "Close" not in df.columns:
         return None
 
-    x_data = df["Date"]
-    r, g, b = int(price_color[1:3], 16), int(price_color[3:5], 16), int(price_color[5:7], 16)
+    plot_df = df.copy()
+    if "Date" in plot_df.columns:
+        plot_df["Date"] = pd.to_datetime(plot_df["Date"])
+    plot_df = plot_df.sort_values("Date").reset_index(drop=True)
+
+    price_series = pd.to_numeric(plot_df["Close"], errors="coerce").dropna()
+    if price_series.empty:
+        return None
+
+    price_min, price_max = _axis_range_with_pad(price_series, pad_pct=0.02)
+
+    stock_min: float | None = None
+    stock_max: float | None = None
+    has_stock = "Stock" in plot_df.columns and plot_df["Stock"].notna().any()
+    if has_stock:
+        stock_series = pd.to_numeric(plot_df["Stock"], errors="coerce").dropna()
+        if not stock_series.empty:
+            stock_min, stock_max = _axis_range_with_pad(stock_series, pad_pct=0.02)
+        else:
+            has_stock = False
+
+    x_data = plot_df["Date"]
     fig = go.Figure()
 
-    fig.add_trace(go.Scatter(
-        x=x_data,
-        y=df["Close"],
-        mode="lines",
-        name="LME Cash",
-        yaxis="y",
-        line=dict(color=price_color, width=2.2, shape="spline", smoothing=0.8),
-        fill="tozeroy",
-        fillcolor=f"rgba({r},{g},{b},0.08)",
-        hovertemplate=(
-            f"<b>%{{x|%d.%m.%Y}}</b><br>{y_price_label}: %{{y:,.2f}}<extra></extra>"
-        ),
-    ))
-
-    has_stock = "Stock" in df.columns and df["Stock"].notna().any()
-    if has_stock:
-        fig.add_trace(go.Scatter(
+    fig.add_trace(
+        go.Scatter(
             x=x_data,
-            y=df["Stock"],
+            y=plot_df["Close"],
             mode="lines",
-            name="LME zásoby",
-            yaxis="y2",
-            line=dict(color="#94a3b8", width=1.8, dash="dot"),
-            hovertemplate="<b>%{x|%d.%m.%Y}</b><br>Zásoby: %{y:,.0f} t<extra></extra>",
-        ))
+            name="LME Cash-Settlement",
+            yaxis="y",
+            line=dict(color=price_color, width=2.2, shape="spline", smoothing=0.8),
+            hovertemplate="%{y:,.2f}<extra></extra>",
+        )
+    )
 
-    y2_axis = dict(
-        title=dict(text="Zásoby (t)", font=dict(size=10, color=_PLOT_TITLE_COLOR)),
-        overlaying="y",
-        side="right",
-        showgrid=False,
-        tickfont=dict(family="IBM Plex Mono, monospace", size=10, color=_PLOT_TICK_COLOR),
-        tickformat=",.0f",
-    ) if has_stock else None
+    if has_stock and stock_min is not None and stock_max is not None:
+        fig.add_trace(
+            go.Scatter(
+                x=x_data,
+                y=plot_df["Stock"],
+                mode="lines",
+                name="LME Stock",
+                yaxis="y2",
+                line=dict(color="#94a3b8", width=1.8, dash="dot"),
+                hovertemplate="%{y:,.0f}<extra></extra>",
+            )
+        )
 
-    fig.update_layout(
-        title=dict(text=title, font=dict(family="Syne, sans-serif", size=13, color=_PLOT_TITLE_COLOR), y=0.98),
+    layout: dict = dict(
+        title=dict(
+            text=title,
+            font=dict(family="Syne, sans-serif", size=13, color=_PLOT_TITLE_COLOR),
+            y=0.98,
+        ),
         height=height,
         margin=dict(l=10, r=10, t=48, b=12),
         paper_bgcolor=_PLOT_PAPER,
@@ -2238,12 +2266,36 @@ def interactive_metal_dual_chart(
             font=dict(family="IBM Plex Mono, monospace", size=10, color=_PLOT_TICK_COLOR),
             bgcolor=_PLOT_PAPER,
         ),
-        xaxis=dict(**_TICK_AXIS, tickformat="%b %y"),
-        yaxis=dict(**_TICK_AXIS, tickformat=",.0f", title=dict(text=y_price_label, standoff=8)),
-        yaxis2=y2_axis,
+        xaxis=dict(**_TICK_AXIS, tickformat="%d.%m.%Y", title=None),
+        yaxis=dict(
+            **_TICK_AXIS,
+            tickformat=",.2f",
+            title=dict(text=y_price_label, standoff=8),
+            range=[price_min, price_max],
+            autorange=False,
+            rangemode="normal",
+            zeroline=False,
+            showgrid=True,
+        ),
         hoverlabel=_HOVER_LABEL,
         hovermode="x unified",
     )
+
+    if has_stock and stock_min is not None and stock_max is not None:
+        layout["yaxis2"] = dict(
+            title=dict(text="Zásoby (t)", font=dict(size=10, color=_PLOT_TITLE_COLOR)),
+            overlaying="y",
+            side="right",
+            showgrid=False,
+            tickfont=dict(family="IBM Plex Mono, monospace", size=10, color=_PLOT_TICK_COLOR),
+            tickformat=",.0f",
+            range=[stock_min, stock_max],
+            autorange=False,
+            rangemode="normal",
+            zeroline=False,
+        )
+
+    fig.update_layout(**layout)
     return fig
 
 
