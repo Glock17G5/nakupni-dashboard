@@ -1383,8 +1383,8 @@ def render_data_export() -> None:
                 mime="text/csv",
                 use_container_width=True,
             )
-        except Exception:
-            st.warning("Export se nepodařilo připravit. Zkuste obnovit data.")
+        except Exception as e:
+            st.error(f"Export se nepodařilo připravit. Detail chyby: {e}")
 
 
 # Globální přepínač období grafů → yfinance period
@@ -2042,6 +2042,7 @@ def _render_metal_history_with_tabs(
     y_unit: str,
     price_col: str = "Close",
     source_note: str = "",
+    is_dual: bool = False,
 ) -> None:
     """Graf + surová data v záložkách pro jeden kov."""
     if df is None or df.empty:
@@ -2059,13 +2060,16 @@ def _render_metal_history_with_tabs(
     tab_chart, tab_table = st.tabs(["📈 Graf", "🗄️ Tabulka dat"])
 
     with tab_chart:
-        fig = metal_price_history_figure(
-            df,
-            graph_title,
-            color,
-            price_col,
-            y_unit,
-        )
+        if is_dual:
+            fig = interactive_metal_dual_chart(df, graph_title, color, y_unit)
+        else:
+            fig = metal_price_history_figure(
+                df,
+                graph_title,
+                color,
+                price_col,
+                y_unit,
+            )
         if fig:
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
         else:
@@ -2288,6 +2292,7 @@ def _render_wm_metal_history_chart(
         y_unit,
         price_col="Close",
         source_note="Westmetall",
+        is_dual=True,
     )
 
 
