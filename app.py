@@ -2724,6 +2724,233 @@ TRANSIT_DAYS: dict[str, int] = {
     "Letecká doprava":      5,
 }
 
+_LANDED_ROUTE_OPTIONS: list[tuple[str, float]] = [
+    ("🇨🇳 Čína (FCL Železnice) - Clo 3.6%", 0.036),
+    ("🇹🇷 Turecko (urgent truck) - Clo 0% (A.TR)", 0.0),
+]
+
+
+def _get_eur_czk_rate(cnb: dict | None) -> float | None:
+    """Kurz EUR/CZK z kurzovního lístku ČNB (CZK za 1 EUR)."""
+    if not cnb:
+        return None
+    info = cnb.get("EUR")
+    if info and info.get("rate"):
+        return float(info["rate"])
+    return None
+
+
+def compute_landed_cost(
+    unit_price_eur: float,
+    quantity_m: float,
+    transport_eur: float,
+    customs_czk: float,
+    duty_rate: float,
+    eur_czk: float,
+) -> dict[str, float]:
+    """
+    Landed cost dle firemní excelové logiky (solární kabely).
+    Všechny mezivýpočty v EUR; celní poplatek přepočten z CZK.
+    """
+    goods_total_eur = quantity_m * unit_price_eur
+    duty_base_eur = goods_total_eur + transport_eur
+    duty_eur = duty_base_eur * duty_rate
+    customs_eur = customs_czk / eur_czk
+    total_costs_eur = goods_total_eur + transport_eur + duty_eur + customs_eur
+    landed_eur = total_costs_eur / quantity_m if quantity_m > 0 else 0.0
+    landed_czk = landed_eur * eur_czk
+    return {
+        "goods_total_eur": goods_total_eur,
+        "duty_base_eur": duty_base_eur,
+        "duty_eur": duty_eur,
+        "customs_eur": customs_eur,
+        "total_costs_eur": total_costs_eur,
+        "landed_eur_per_m": landed_eur,
+        "landed_czk_per_m": landed_czk,
+    }
+
+
+def render_landed_cost_pricing() -> None:
+    """Logistika a cenotvorba — landed cost + prodejní ceny (markup / marže)."""
+    st.header("🚢 Logistika a Prodejní ceny")
+
+    cnb = fetch_cnb_rates()
+    eur_czk = _get_eur_czk_rate(cnb)
+    cnb_date = (cnb or {}).get("_date", "N/A")
+
+    st.markdown(
+        f'<div class="info-box">'
+        f'Landed Cost pro solární kabely · přepočet CZK/EUR kurzem <strong>ČNB EUR/CZK</strong>'
+        f'{f" ({cnb_date})" if cnb else ""} · Clo dle trasy (Čína 3.6 % / Turecko A.TR 0 %)'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    if not eur_czk or eur_czk <= 0:
+        st.error("Kurz EUR/CZK z ČNB není k dispozici — landed cost nelze spočítat.")
+        return
+
+    in_left, in_right = st.columns(2)
+
+    with in_left:
+        unit_price_eur = st.number_input(
+            "Základní nákupní cena za 1 m (EUR)",
+            min_value=0.0,
+            value=1.85,
+            step=0.01,
+            format="%.4f",
+            key="landed_unit_eur",
+        )
+        quantity_m = st.number_input(
+            "Celkové množství (m)",
+            min_value=1.0,
+            value=300_000.0,
+            step=1_000.0,
+            format="%.0f",
+            key="landed_qty_m",
+        )
+        route_label = st.radio(
+            "Trasa / režim cla",
+            options=[r[0] for r in _LANDED_ROUTE_OPTIONS],
+            key="landed_route",
+        )
+        duty_rate = next(rate for lbl, rate in _LANDED_ROUTE_OPTIONS if lbl == route_label)
+
+    with in_right:
+        transport_eur = st.number_input(
+            "Cena dopravy (EUR)",
+            min_value=0.0,
+            value=12_000.0,
+            step=100.0,
+            format="%.2f",
+            key="landed_transport_eur",
+            help="Vlak z Číny nebo urgent truck z Turecka — celková částka za zásilku.",
+        )
+        customs_czk = st.number_input(
+            "Poplatek za celní deklaraci a JSD (CZK)",
+            min_value=0.0,
+            value=1_000.0,
+            step=100.0,
+            format="%.2f",
+            key="landed_customs_czk",
+        )
+        st.metric("Kurz EUR/CZK (ČNB)", f"{eur_czk:.4f}")
+
+    if unit_price_eur <= 0 or quantity_m <= 0:
+        st.info("Zadejte kladnou nákupní cenu a množství v metrech.")
+        return
+
+    lc = compute_landed_cost(
+        unit_price_eur,
+        quantity_m,
+        transport_eur,
+        customs_czk,
+        duty_rate,
+        eur_czk,
+    )
+
+    with st.expander("📋 Rozpad nákladů (detail výpočtu)", expanded=False):
+        d1, d2, d3 = st.columns(3)
+        d1.metric("Cena za zboží celkem", f"{lc['goods_total_eur']:,.2f} EUR")
+        d2.metric("Základ pro clo", f"{lc['duty_base_eur']:,.2f} EUR")
+        d3.metric(
+            f"Clo ({duty_rate * 100:.1f} %)",
+            f"{lc['duty_eur']:,.2f} EUR",
+        )
+        d4, d5, d6 = st.columns(3)
+        d4.metric("Doprava", f"{transport_eur:,.2f} EUR")
+        d5.metric("Celní deklarace", f"{customs_czk:,.0f} CZK")
+        d6.metric("Celní deklarace (EUR)", f"{lc['customs_eur']:,.2f} EUR")
+        st.metric("Celkové náklady (landed)", f"{lc['total_costs_eur']:,.2f} EUR")
+
+    st.markdown(
+        "<div style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
+        "color:#000000;text-transform:uppercase;letter-spacing:1px;margin:16px 0 8px 0;'>"
+        "Finální Landed Cost za 1 m</div>",
+        unsafe_allow_html=True,
+    )
+    m_eur, m_czk, m_tot = st.columns(3)
+    m_eur.metric(
+        "Landed Cost",
+        f"{lc['landed_eur_per_m']:.4f} EUR/m",
+        help="Celkové náklady / množství",
+    )
+    m_czk.metric(
+        "Landed Cost",
+        f"{lc['landed_czk_per_m']:.2f} Kč/m",
+        help=f"Přepočet kurzem {eur_czk:.4f} CZK/EUR",
+    )
+    m_tot.metric(
+        "Celkem za zakázku",
+        f"{lc['total_costs_eur']:,.0f} EUR",
+        f"≈ {lc['total_costs_eur'] * eur_czk:,.0f} CZK",
+    )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.subheader("Tvorba prodejní ceny")
+
+    margin_pct = st.number_input(
+        "Požadované procento (%)",
+        min_value=0.0,
+        max_value=99.0,
+        value=30.0,
+        step=1.0,
+        format="%.1f",
+        key="landed_margin_pct",
+        help="Markup = přirážka k ceně · Marže = podíl ze prodejní ceny.",
+    )
+
+    landed_czk = lc["landed_czk_per_m"]
+    pct = margin_pct / 100.0
+
+    price_markup = landed_czk * (1.0 + pct)
+    profit_markup = price_markup - landed_czk
+
+    col_mk, col_mg = st.columns(2)
+
+    with col_mk:
+        st.success("**Cena s přirážkou (Markup)**")
+        st.metric(
+            "Prodejní cena",
+            f"{price_markup:,.2f} Kč/m",
+            delta=f"+{profit_markup:,.2f} Kč/m zisk",
+            delta_color="normal",
+        )
+        st.markdown(
+            f'<div class="calc-result">'
+            f'<div class="calc-result-label">Vzorec</div>'
+            f'<div class="calc-result-value" style="font-size:0.95rem;">'
+            f'{landed_czk:,.2f} × (1 + {margin_pct:.1f} %) = {price_markup:,.2f} Kč/m</div>'
+            f'<div style="font-size:0.7rem;color:#495057;margin-top:6px;">'
+            f'Čistý zisk na metr: <strong>{profit_markup:,.2f} Kč</strong></div></div>',
+            unsafe_allow_html=True,
+        )
+
+    with col_mg:
+        if pct >= 1.0:
+            st.error("Marže 100 % a více není matematicky definovatelná (dělení nulou).")
+        else:
+            price_margin = landed_czk / (1.0 - pct)
+            profit_margin = price_margin - landed_czk
+            st.success("**Cena s marží (Margin)**")
+            st.metric(
+                "Prodejní cena",
+                f"{price_margin:,.2f} Kč/m",
+                delta=f"+{profit_margin:,.2f} Kč/m zisk",
+                delta_color="normal",
+            )
+            st.markdown(
+                f'<div class="calc-result">'
+                f'<div class="calc-result-label">Vzorec</div>'
+                f'<div class="calc-result-value" style="font-size:0.95rem;">'
+                f'{landed_czk:,.2f} ÷ (1 − {margin_pct:.1f} %) = {price_margin:,.2f} Kč/m</div>'
+                f'<div style="font-size:0.7rem;color:#495057;margin-top:6px;">'
+                f'Čistý zisk na metr: <strong>{profit_margin:,.2f} Kč</strong></div></div>',
+                unsafe_allow_html=True,
+            )
+
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
 
 def render_logistics() -> None:
     """Sekce 4 – kalkulačka transitního času Čína → ČR s progress barem."""
@@ -3002,6 +3229,7 @@ def main() -> None:
     render_fx()
     render_oil_plastics()
     render_logistics()
+    render_landed_cost_pricing()
     render_summary_table()
     render_footer()
 
