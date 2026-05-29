@@ -3484,7 +3484,8 @@ _DOMESTIC_VEHICLE_PROFILES: dict[str, dict[str, float]] = {
         "max_w": 24000.0,
         "max_l": 13.6,
         "def_rate": 45.0,
-        "fix_fee": 800.0,
+        "fix_handling": 600.0,
+        "fix_hub_km": 30.0,
         "default_w": 15000.0,
         "default_l": 6.0,
         "ltl_exp": 0.55,
@@ -3495,7 +3496,8 @@ _DOMESTIC_VEHICLE_PROFILES: dict[str, dict[str, float]] = {
         "max_w": 5500.0,
         "max_l": 7.2,
         "def_rate": 30.0,
-        "fix_fee": 400.0,
+        "fix_handling": 350.0,
+        "fix_hub_km": 25.0,
         "default_w": 3000.0,
         "default_l": 2.0,
         "ltl_exp": 0.42,
@@ -3506,7 +3508,8 @@ _DOMESTIC_VEHICLE_PROFILES: dict[str, dict[str, float]] = {
         "max_w": 1200.0,
         "max_l": 4.0,
         "def_rate": 18.0,
-        "fix_fee": 0.0,
+        "fix_handling": 200.0,
+        "fix_hub_km": 15.0,
         "default_w": 800.0,
         "default_l": 0.8,
         "ltl_floor": 0.88,
@@ -3675,6 +3678,25 @@ def _domestic_capacity_info(
     }
 
 
+def _domestic_compute_fix_fee(
+    profile: dict[str, float],
+    rate_czk_km: float,
+) -> dict[str, float]:
+    """
+    Fixní složka = manipulace (nakládka/vykládka) + dojezd k regionálnímu hubu (km × sazba).
+    U kamionu při 45 CZK/km: 600 + 30×45 ≈ 1 950 Kč (Metylovice → aglomerace ~30 km).
+    """
+    handling = profile.get("fix_handling", 0.0)
+    hub_km = profile.get("fix_hub_km", 0.0)
+    positioning = hub_km * rate_czk_km
+    return {
+        "fix_handling": handling,
+        "fix_hub_km": hub_km,
+        "fix_positioning": positioning,
+        "fix_fee": handling + positioning,
+    }
+
+
 def _domestic_ltl_coefficient(
     podil_for_ltl: float,
     profile: dict[str, float],
@@ -3727,7 +3749,8 @@ def _domestic_compute_quote(
     ltl_koef = _domestic_ltl_coefficient(podil_for_ltl, profile, vehicle_key)
 
     km_part = dist_km * rate_czk_km * ltl_koef
-    fix_fee = profile["fix_fee"]
+    fix_parts = _domestic_compute_fix_fee(profile, rate_czk_km)
+    fix_fee = fix_parts["fix_fee"]
     min_price = profile.get("min_price", _DOMESTIC_MIN_PRICE_CZK)
 
     price_czk: float | None = None
@@ -3738,7 +3761,7 @@ def _domestic_compute_quote(
         **cap,
         "ltl_koef": ltl_koef,
         "km_part": km_part,
-        "fix_fee": fix_fee,
+        **fix_parts,
         "price_czk": price_czk,
         "price_valid": not overload,
     }
@@ -3756,7 +3779,10 @@ def _render_domestic_pallet_cheat_sheet() -> None:
             "• **Plachtová dodávka (1,2 t):** délka 4,2–4,8 m · šířka 2,2 m · "
             "výška 2,0–2,3 m · **max 1,2 t / 4,0 LDM** · 8–10 EUR palet<br><br>"
             "Vzorec: **`1 EUR paleta = 0,4 LDM`**. "
-            "Návěs 2,48 m pojme **34 nestohovatelných palet** (1,2 × 0,8 m) = **13,6 LDM**.",
+            "Návěs 2,48 m pojme **34 nestohovatelných palet** (1,2 × 0,8 m) = **13,6 LDM**.<br><br>"
+            "**Fixní složka ceny:** manipulace (nakládka/vykládka) + "
+            "**dojezd k regionálnímu městu** (km × sazba/km). "
+            "Kamion: 600 Kč + 30 km × sazba (např. 30×45 = 1 350 Kč → fix ~1 950 Kč).",
             unsafe_allow_html=True,
         )
 
@@ -3788,7 +3814,7 @@ def render_domestic_logistics() -> None:
         '<div class="info-box">'
         'Vyhledejte <strong>start</strong> a <strong>cíl</strong> v ČR · '
         'Silniční trasa přes OSRM (záloha: vzdušná × 1,3) · '
-        'Kamion / sólo / dodávka — orientační tržní model · vytížení vozu v %'
+        'Fix = manipulace + dojezd k hubu (km × sazba) · orientační model · vytížení v %'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -3820,7 +3846,6 @@ def render_domestic_logistics() -> None:
         max_w = profile["max_w"]
         max_l = profile["max_l"]
         def_rate = profile["def_rate"]
-        fix_fee = profile["fix_fee"]
         default_w = profile["default_w"]
         default_l = profile["default_l"]
         vehicle_key = _domestic_vehicle_key(v_type)
@@ -3871,6 +3896,14 @@ def render_domestic_logistics() -> None:
             step=0.5,
             format="%.1f",
             key=f"domestic_sazba_{v_idx}",
+        )
+
+        fix_preview = _domestic_compute_fix_fee(profile, sazba)
+        st.caption(
+            f"Fixní složka (orientačně): **{fix_preview['fix_fee']:,.0f} CZK** · "
+            f"manipulace {fix_preview['fix_handling']:,.0f} + "
+            f"dojezd {fix_preview['fix_hub_km']:.0f} km × {sazba:.1f} = "
+            f"{fix_preview['fix_positioning']:,.0f} CZK"
         )
 
         st.markdown("**Vytížení vozidla (náklad)**")
@@ -3932,7 +3965,9 @@ def render_domestic_logistics() -> None:
                 m3.metric("Odhadovaná cena k jednání", f"{price_czk:,.0f} CZK")
                 st.caption(
                     f"Rozpad: jízda {quote['km_part']:,.0f} CZK + fix {quote['fix_fee']:,.0f} CZK "
-                    f"(min. {profile.get('min_price', _DOMESTIC_MIN_PRICE_CZK):,.0f} CZK)"
+                    f"(manipulace {quote['fix_handling']:,.0f} + dojezd "
+                    f"{quote['fix_hub_km']:.0f} km × {sazba:.1f} = {quote['fix_positioning']:,.0f}) · "
+                    f"min. cena {profile.get('min_price', _DOMESTIC_MIN_PRICE_CZK):,.0f} CZK"
                 )
             else:
                 m3.metric("Odhadovaná cena k jednání", "—")
