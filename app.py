@@ -3475,8 +3475,8 @@ _DOMESTIC_MIN_PRICE_CZK = 1200.0
 
 _DOMESTIC_VEHICLE_ORDER = [
     "Kamion (návěs 24t)",
-    "Sólo náklaďák (5.5t)",
-    "Plachtová dodávka (1.2t)",
+    "Sólo náklaďák (do 9.5t)",
+    "Plachtová dodávka (do 1.6t)",
 ]
 
 _DOMESTIC_VEHICLE_PROFILES: dict[str, dict[str, float]] = {
@@ -3492,22 +3492,22 @@ _DOMESTIC_VEHICLE_PROFILES: dict[str, dict[str, float]] = {
         "ltl_floor": 0.48,
         "min_price": 1200.0,
     },
-    "Sólo náklaďák (5.5t)": {
-        "max_w": 5500.0,
+    "Sólo náklaďák (do 9.5t)": {
+        "max_w": 9500.0,
         "max_l": 7.2,
         "def_rate": 30.0,
         "fix_handling": 350.0,
         "fix_hub_km": 25.0,
-        "default_w": 3000.0,
+        "default_w": 5000.0,
         "default_l": 2.0,
         "ltl_exp": 0.42,
         "ltl_floor": 0.55,
         "min_price": 1200.0,
     },
-    "Plachtová dodávka (1.2t)": {
-        "max_w": 1200.0,
+    "Plachtová dodávka (do 1.6t)": {
+        "max_w": 1600.0,
         "max_l": 4.0,
-        "def_rate": 18.0,
+        "def_rate": 20.0,
         "fix_handling": 200.0,
         "fix_hub_km": 15.0,
         "default_w": 800.0,
@@ -3787,10 +3787,10 @@ def _render_domestic_pallet_cheat_sheet() -> None:
             "**🚚 Typy vozidel a technické specifikace:**<br>"
             "• **Kamion (plachtový návěs 24 t):** délka 13,6 m · šířka 2,48 m · "
             "výška 2,7–3,0 m · **max 24 t / 13,6 LDM** · až 34 EUR palet<br>"
-            "• **Sólo náklaďák (5,5 t):** délka cca 7,2 m · šířka 2,48 m · "
-            "výška cca 2,7 m · **max 5,5 t / 7,2 LDM** · cca 18 EUR palet<br>"
-            "• **Plachtová dodávka (1,2 t):** délka 4,2–4,8 m · šířka 2,2 m · "
-            "výška 2,0–2,3 m · **max 1,2 t / 4,0 LDM** · 8–10 EUR palet<br><br>"
+            "• **Sólo náklaďák (do 9,5 t):** délka cca 7,2 m · šířka 2,48 m · "
+            "výška cca 2,7 m · **max 9,5 t / 7,2 LDM** · cca 18 EUR palet<br>"
+            "• **Plachtová dodávka (do 1,6 t):** délka 4,2–4,8 m · šířka 2,2 m · "
+            "výška 2,0–2,3 m · **max 1,6 t / 4,0 LDM** · 8–10 EUR palet<br><br>"
             "Vzorec: **`1 EUR paleta = 0,4 LDM`**. "
             "Návěs 2,48 m pojme **34 nestohovatelných palet** (1,2 × 0,8 m) = **13,6 LDM**.<br><br>"
             "**Fixní složka ceny:** manipulace (nakládka/vykládka) + "
@@ -4169,6 +4169,24 @@ def render_domestic_logistics() -> None:
             dist = road_km
             quote = _domestic_compute_quote(
                 dist, waha, ldm, profile, sazba, vehicle_key
+            )
+
+            start_short = start_loc["display_name"].split(",")[0].strip()
+            dest_short = dest_loc["display_name"].split(",")[0].strip()
+            st.markdown(
+                "<div style='background:#E7F1FF; padding:12px; border-radius:8px; "
+                "border-left:4px solid #0D6EFD; margin-bottom:16px;'>"
+                "<span style='font-family:Syne, sans-serif; font-size:1.1rem; "
+                "font-weight:700; color:#000000;'>"
+                f"📍 {start_short} "
+                f"<span style='font-size:0.85rem; color:#495057;'>"
+                f"(PSČ: {start_loc.get('postcode', 'N/A')})</span> "
+                f"&nbsp;➡️&nbsp; "
+                f"{dest_short} "
+                f"<span style='font-size:0.85rem; color:#495057;'>"
+                f"(PSČ: {dest_loc.get('postcode', 'N/A')})</span>"
+                "</span></div>",
+                unsafe_allow_html=True,
             )
 
             st.markdown("**Vytížení vozidla (trasa + náklad)**")
