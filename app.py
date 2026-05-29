@@ -3819,6 +3819,216 @@ def _render_domestic_pallet_cheat_sheet() -> None:
         )
 
 
+_DOMESTIC_CARGO_PRESETS = [
+    "Kabel na dřevěných bubnech",
+    "Kabel na dřevěných bubnech položených na paletách",
+    "Vlastní popis",
+]
+
+_DOMESTIC_LOAD_CONTACT_KEYS = ["bez_kontaktu", "radim_kochan", "lukas_filak"]
+
+_DOMESTIC_LOAD_CONTACTS: dict[str, dict[str, str]] = {
+    "bez_kontaktu": {
+        "label": "Bez kontaktu na nakládce",
+        "name": "",
+        "email": "",
+        "phone": "",
+    },
+    "radim_kochan": {
+        "label": "Radim Kocháň",
+        "name": "Radim Kocháň",
+        "email": "radim.kochan@pbcable.cz",
+        "phone": "+420 605 497 552",
+    },
+    "lukas_filak": {
+        "label": "Lukáš Filák",
+        "name": "Lukáš Filák",
+        "email": "lukas.filak@pbcable.cz",
+        "phone": "+420 734 222 733",
+    },
+}
+
+
+def _domestic_load_contact_display(key: str) -> str:
+    """Text kontaktu na nakládce pro poptávku (prázdný = bez kontaktu)."""
+    if key == "bez_kontaktu":
+        return ""
+    person = _DOMESTIC_LOAD_CONTACTS[key]
+    return (
+        f"{person['name']}\n"
+        f"e-mail: {person['email']}\n"
+        f"telefon: {person['phone']}"
+    )
+
+
+def _domestic_price_eur(price_czk: float | None) -> tuple[float | None, float | None]:
+    """Převod CZK → EUR kurzem ČNB. Vrací (EUR, eur_czk)."""
+    if price_czk is None:
+        return None, None
+    eur_czk = _get_eur_czk_rate(fetch_cnb_rates())
+    if not eur_czk or eur_czk <= 0:
+        return None, eur_czk
+    return price_czk / eur_czk, eur_czk
+
+
+def _render_domestic_shipment_form() -> dict:
+    """Formulář zboží, termínů a kontaktu pro poptávku dopravy."""
+    st.markdown("#### Poptávka dopravy — detaily zásilky")
+    cargo_choice = st.selectbox(
+        "Přepravované zboží",
+        _DOMESTIC_CARGO_PRESETS,
+        key="domestic_cargo_preset",
+    )
+    cargo_custom = ""
+    if cargo_choice == "Vlastní popis":
+        cargo_custom = st.text_area(
+            "Vlastní popis zboží",
+            placeholder="např. měděný drát na cívkách, 12 palet…",
+            key="domestic_cargo_custom",
+        ).strip()
+        if not cargo_custom:
+            st.warning("Doplňte vlastní popis zboží pro kompletní poptávku.")
+    cargo_desc = cargo_custom if cargo_choice == "Vlastní popis" else cargo_choice
+
+    pickup_mode = st.radio(
+        "Termín nakládky",
+        ["Možno hned", "Konkrétní termín"],
+        horizontal=True,
+        key="domestic_pickup_mode",
+    )
+    load_date = None
+    unload_date = None
+    if pickup_mode == "Konkrétní termín":
+        today = now_prague().date()
+        c_load, c_unload = st.columns(2)
+        with c_load:
+            load_date = st.date_input(
+                "Datum nakládky",
+                value=today,
+                key="domestic_load_date",
+            )
+        with c_unload:
+            unload_date = st.date_input(
+                "Datum vykládky",
+                value=today + timedelta(days=1),
+                key="domestic_unload_date",
+            )
+
+    with st.expander("Kontakt na nakládce", expanded=True):
+        load_contact_key = st.selectbox(
+            "Osoba na nakládce",
+            _DOMESTIC_LOAD_CONTACT_KEYS,
+            format_func=lambda k: _DOMESTIC_LOAD_CONTACTS[k]["label"],
+            key="domestic_load_contact_key",
+        )
+        if load_contact_key != "bez_kontaktu":
+            person = _DOMESTIC_LOAD_CONTACTS[load_contact_key]
+            st.caption(
+                f"{person['email']} · {person['phone']}"
+            )
+        else:
+            st.caption("V poptávce nebude uveden kontakt na nakládce.")
+
+    load_contact_text = _domestic_load_contact_display(load_contact_key)
+
+    unload_contact = st.text_input(
+        "Kontakt na vykládce (volitelně)",
+        placeholder="jméno, telefon, e-mail, časové okno…",
+        key="domestic_unload_contact",
+    )
+    request_note = st.text_area(
+        "Poznámka pro dopravce (volitelně)",
+        placeholder="např. vazačná páska, pomoc s vykládkou, rampa…",
+        key="domestic_request_note",
+    )
+
+    return {
+        "cargo_desc": cargo_desc or "—",
+        "pickup_mode": pickup_mode,
+        "load_date": load_date,
+        "unload_date": unload_date,
+        "load_contact_key": load_contact_key,
+        "load_contact_text": load_contact_text,
+        "unload_contact": unload_contact.strip(),
+        "request_note": request_note.strip(),
+    }
+
+
+def _format_domestic_transport_request(
+    *,
+    start_loc: dict,
+    dest_loc: dict,
+    v_type: str,
+    weight_kg: float,
+    ldm: float,
+    eur_pallets: int,
+    road_km: float,
+    used_osrm: bool,
+    quote: dict,
+    sazba: float,
+    shipment: dict,
+    price_czk: float | None,
+    price_eur: float | None,
+    eur_czk: float | None,
+) -> str:
+    """Sestaví text poptávky dopravy k odeslání dopravci."""
+    lines = [
+        "POPTÁVKA DOPRAVY — pbcable",
+        f"Vygenerováno: {now_prague().strftime('%d.%m.%Y %H:%M')} (Praha)",
+        "",
+        "── Trasa ──",
+        f"Nakládka: {start_loc['display_name']} ({start_loc.get('country', 'CZ')})",
+        f"Vykládka: {dest_loc['display_name']} ({dest_loc.get('country', 'CZ')})",
+        f"Vzdálenost: cca {road_km:,.0f} km"
+        + (" (OSRM)" if used_osrm else " (odhad)"),
+        "",
+        "── Vozidlo a náklad ──",
+        f"Vozidlo: {v_type}",
+        f"Zboží: {shipment['cargo_desc']}",
+        f"Hmotnost: {weight_kg:,.0f} kg",
+        f"Ložné metry: {ldm:.1f} LDM",
+    ]
+    if eur_pallets > 0:
+        lines.append(f"EUR palety: {eur_pallets} ks")
+    lines.extend([
+        f"Využití kapacity vozu: {quote['cap_pct']:.0f} % (limituje {quote['binding']})",
+        "",
+        "── Termíny ──",
+    ])
+    if shipment["pickup_mode"] == "Možno hned":
+        lines.append("Nakládka: možno ihned / dle dohody")
+        lines.append("Vykládka: dle dohody")
+    else:
+        if shipment["load_date"]:
+            lines.append(f"Datum nakládky: {shipment['load_date'].strftime('%d.%m.%Y')}")
+        if shipment["unload_date"]:
+            lines.append(f"Datum vykládky: {shipment['unload_date'].strftime('%d.%m.%Y')}")
+    if shipment.get("load_contact_text"):
+        lines.extend(["", "── Kontakt na nakládce ──", shipment["load_contact_text"]])
+    elif shipment.get("load_contact_key") == "bez_kontaktu":
+        lines.extend(["", "── Kontakt na nakládce ──", "Bez uvedeného kontaktu"])
+    if shipment["unload_contact"]:
+        lines.extend(["", "── Kontakt na vykládce ──", shipment["unload_contact"]])
+    if shipment["request_note"]:
+        lines.extend(["", "── Poznámka ──", shipment["request_note"]])
+
+    lines.extend(["", "── Orientační kalkulace (interní) ──"])
+    if price_czk is not None and quote.get("price_valid"):
+        lines.append(f"Odhadovaná cena k jednání: {price_czk:,.0f} CZK")
+        if price_eur is not None and eur_czk:
+            lines.append(f"≈ {price_eur:,.0f} EUR (ČNB {eur_czk:.4f} CZK/EUR)")
+        lines.append(
+            f"Rozpad: jízda {quote['km_part']:,.0f} + fix {quote['fix_fee']:,.0f} CZK "
+            f"(sazba {sazba:.1f} CZK/km, LTL {quote['ltl_koef']:.2f})"
+        )
+    else:
+        lines.append("Cena: nutno přepočítat (přetížení nebo chybějící data).")
+
+    lines.append("")
+    lines.append("Prosíme o nabídku dopravy dle výše uvedených parametrů.")
+    return "\n".join(lines)
+
+
 def render_domestic_logistics() -> None:
     """Kalkulačka přepravy ČR & SK — start a cíl z Nominatim, trasa přes OSRM."""
     section_header("🚛", "Logistika ČR & SK — Kalkulačka přepravy")
@@ -3827,7 +4037,8 @@ def render_domestic_logistics() -> None:
         '<div class="info-box">'
         'Vyhledejte <strong>start</strong> a <strong>cíl</strong> v <strong>ČR nebo na Slovensku</strong> '
         '(Košice, Senec, Bratislava, …) · silniční trasa OSRM včetně přeshraniční · '
-        'záloha vzdálenosti: vzdušná × 1,3 · fix = manipulace + dojezd k hubu · vytížení v %'
+        'záloha vzdálenosti: vzdušná × 1,3 · cena v CZK i EUR (ČNB) · '
+        'poptávka pro dopravce ke stažení'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -3925,10 +4136,16 @@ def render_domestic_logistics() -> None:
         )
 
         _render_domestic_pallet_cheat_sheet()
+        shipment_form = _render_domestic_shipment_form()
 
     with col_result:
         if not start_loc or not dest_loc:
-            st.info("Vyberte startovní a cílovou adresu pro výpočet.")
+            st.info("Vyberte startovní a cílovou adresu pro výpočet a náhled poptávky.")
+            if shipment_form.get("cargo_desc") and shipment_form["cargo_desc"] != "—":
+                st.caption(
+                    f"Zboží připraveno: {shipment_form['cargo_desc']} · "
+                    f"termín: {shipment_form['pickup_mode']}"
+                )
         else:
             start_lat, start_lon = start_loc["lat"], start_loc["lon"]
             dest_lat, dest_lon = dest_loc["lat"], dest_loc["lon"]
@@ -3974,17 +4191,67 @@ def render_domestic_logistics() -> None:
                 f"{cap_pct:.1f} %",
                 help=f"Limituje {quote['binding']} · LTL koef. {ltl_koef:.2f}",
             )
+            price_eur, eur_czk = _domestic_price_eur(price_czk)
             if quote["price_valid"] and price_czk is not None:
-                m3.metric("Odhadovaná cena k jednání", f"{price_czk:,.0f} CZK")
-                st.caption(
-                    f"Rozpad: jízda {quote['km_part']:,.0f} CZK + fix {quote['fix_fee']:,.0f} CZK "
-                    f"(manipulace {quote['fix_handling']:,.0f} + dojezd "
-                    f"{quote['fix_hub_km']:.0f} km × {sazba:.1f} = {quote['fix_positioning']:,.0f}) · "
-                    f"min. cena {profile.get('min_price', _DOMESTIC_MIN_PRICE_CZK):,.0f} CZK"
+                eur_hint = (
+                    f"≈ {price_eur:,.0f} EUR"
+                    if price_eur is not None
+                    else "EUR: kurz ČNB nedostupný"
                 )
+                m3.metric(
+                    "Odhadovaná cena k jednání",
+                    f"{price_czk:,.0f} CZK",
+                    help=eur_hint,
+                )
+                if price_eur is not None and eur_czk:
+                    st.caption(
+                        f"**{price_eur:,.0f} EUR** · kurz ČNB {eur_czk:.4f} CZK/EUR · "
+                        f"rozpad: jízda {quote['km_part']:,.0f} + fix {quote['fix_fee']:,.0f} CZK "
+                        f"(manipulace {quote['fix_handling']:,.0f} + dojezd "
+                        f"{quote['fix_hub_km']:.0f} km × {sazba:.1f} = {quote['fix_positioning']:,.0f}) · "
+                        f"min. {profile.get('min_price', _DOMESTIC_MIN_PRICE_CZK):,.0f} CZK"
+                    )
+                else:
+                    st.caption(
+                        f"Rozpad: jízda {quote['km_part']:,.0f} CZK + fix {quote['fix_fee']:,.0f} CZK · "
+                        f"min. {profile.get('min_price', _DOMESTIC_MIN_PRICE_CZK):,.0f} CZK"
+                    )
             else:
                 m3.metric("Odhadovaná cena k jednání", "—")
                 st.caption("Cena není k dispozici — přetížení vozidla.")
+
+            request_text = _format_domestic_transport_request(
+                start_loc=start_loc,
+                dest_loc=dest_loc,
+                v_type=v_type,
+                weight_kg=waha,
+                ldm=ldm,
+                eur_pallets=int(eur_pallets),
+                road_km=road_km,
+                used_osrm=used_osrm,
+                quote=quote,
+                sazba=sazba,
+                shipment=shipment_form,
+                price_czk=price_czk,
+                price_eur=price_eur,
+                eur_czk=eur_czk,
+            )
+            st.markdown("---")
+            st.markdown("**📋 Text poptávky pro dopravce**")
+            st.text_area(
+                "Zkopírujte nebo stáhněte",
+                value=request_text,
+                height=320,
+                key="domestic_request_preview",
+                label_visibility="collapsed",
+            )
+            st.download_button(
+                label="⬇️ Stáhnout poptávku (.txt)",
+                data=request_text.encode("utf-8-sig"),
+                file_name=f"poptavka_dopravy_{now_prague().strftime('%Y-%m-%d')}.txt",
+                mime="text/plain",
+                use_container_width=True,
+            )
 
             route_note = (
                 "reálná silniční trasa (OSRM)"
