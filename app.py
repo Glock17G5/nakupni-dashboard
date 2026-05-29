@@ -3438,10 +3438,8 @@ def render_logistics() -> None:
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
 
-# ── Vnitrostátní logistika (Metylovice → ČR) ───────────────────────────────────
+# ── Vnitrostátní logistika (ČR) ────────────────────────────────────────────────
 
-_METYLOVICE_LAT = 49.6153
-_METYLOVICE_LON = 18.3375
 _DOMESTIC_ROAD_FACTOR = 1.3
 _DOMESTIC_FTL_CZK_KM = 42
 _DOMESTIC_FIX_FEE_CZK = 800
@@ -3467,33 +3465,88 @@ def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def geocode_cz_postal_code(psc: str) -> tuple[float, float] | None:
-    """Souřadnice cíle dle PSČ (Nominatim, ČR)."""
-    psc_clean = re.sub(r"\D", "", (psc or "").strip())
-    if len(psc_clean) < 5:
-        return None
+def search_cz_location(query: str) -> list[dict]:
+    """
+    Vyhledání míst v ČR přes Nominatim.
+    Vrací list {lat, lon, display_name, postcode}.
+    """
+    q = (query or "").strip()
+    if len(q) < 2:
+        return []
 
-    url = (
-        "https://nominatim.openstreetmap.org/search"
-        f"?postalcode={psc_clean}&country=czechia&format=json"
-    )
     time.sleep(1)
+    url = "https://nominatim.openstreetmap.org/search"
+    params = {
+        "q": q,
+        "countrycodes": "cz",
+        "format": "json",
+        "addressdetails": 1,
+    }
     try:
-        resp = requests.get(url, headers=_NOMINATIM_HEADERS, timeout=15)
+        resp = requests.get(
+            url, params=params, headers=_NOMINATIM_HEADERS, timeout=15
+        )
         resp.raise_for_status()
         data = resp.json()
     except (requests.RequestException, ValueError):
+        return []
+
+    if not isinstance(data, list):
+        return []
+
+    results: list[dict] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        addr = item.get("address") or {}
+        postcode = addr.get("postcode") or addr.get("postal_code") or "N/A"
+        try:
+            results.append({
+                "lat": float(item["lat"]),
+                "lon": float(item["lon"]),
+                "display_name": str(item.get("display_name", q)),
+                "postcode": str(postcode),
+            })
+        except (KeyError, TypeError, ValueError):
+            continue
+    return results
+
+
+def _location_select_label(loc: dict) -> str:
+    return f'{loc["display_name"]} (PSČ: {loc["postcode"]})'
+
+
+def _render_location_search(
+    section_title: str,
+    input_key: str,
+    select_key: str,
+    default_query: str = "",
+) -> dict | None:
+    """Vyhledání a výběr místa v ČR — text_input + selectbox pod ním."""
+    st.markdown(f"**{section_title}**")
+    query = st.text_input(
+        "🔍 Vyhledat město, ulici nebo PSČ",
+        value=default_query,
+        key=input_key,
+        placeholder="např. Metylovice, Praha 1, 739 49",
+    )
+    if not query.strip():
         return None
 
-    if not data:
+    with st.spinner("Vyhledávám…"):
+        hits = search_cz_location(query.strip())
+
+    if not hits:
+        st.caption("Žádné výsledky — upřesněte dotaz.")
         return None
 
-    try:
-        lat = float(data[0]["lat"])
-        lon = float(data[0]["lon"])
-    except (KeyError, TypeError, ValueError):
-        return None
-    return lat, lon
+    idx = st.selectbox(
+        "Vyberte adresu",
+        range(len(hits)),
+        format_func=lambda i: _location_select_label(hits[i]),
+        key=select_key,
+    )
+    return hits[idx]
 
 
 def _domestic_transport_quote(
@@ -3519,27 +3572,34 @@ def _domestic_transport_quote(
 
 
 def render_domestic_logistics() -> None:
-    """Kalkulačka rozvozu po ČR ze skladu Metylovice."""
+    """Kalkulačka rozvozu po ČR — start a cíl z Nominatim vyhledávání."""
     section_header("🚛", "Vnitrostátní logistika — Kalkulačka přepravy")
 
     st.markdown(
         '<div class="info-box">'
-        'Výchozí sklad: <strong>Metylovice</strong> (PSČ 739 49) · '
+        'Vyhledejte <strong>start</strong> a <strong>cíl</strong> v ČR (město, ulice, PSČ) · '
         'Silniční vzdálenost = vzdušná × 1,3 · FTL sazba 42 CZK/km · '
         'Kapacita nákladního vozu 23,5 t / 13,6 LDM'
         '</div>',
         unsafe_allow_html=True,
     )
 
-    col_in, col_out = st.columns([1, 1])
+    col_form, col_result = st.columns([1, 1])
 
-    with col_in:
-        target_psc = st.text_input(
-            "PSČ cíle",
-            value="",
-            placeholder="např. 110 00",
-            help="PSČ místa doručení v České republice",
+    with col_form:
+        start_loc = _render_location_search(
+            "Odkud (Start)",
+            "domestic_start_query",
+            "domestic_start_select",
+            default_query="Metylovice",
         )
+        st.markdown("<br>", unsafe_allow_html=True)
+        dest_loc = _render_location_search(
+            "Kam (Cíl)",
+            "domestic_dest_query",
+            "domestic_dest_select",
+        )
+        st.markdown("<br>", unsafe_allow_html=True)
         weight_kg = st.number_input(
             "Váha (kg)",
             min_value=1.0,
@@ -3556,38 +3616,26 @@ def render_domestic_logistics() -> None:
             format="%.1f",
         )
 
-    with col_out:
-        psc_norm = re.sub(r"\D", "", (target_psc or "").strip())
-        if len(psc_norm) < 5:
-            st.info("Zadejte platné PSČ cíle (5 číslic) pro výpočet vzdálenosti a ceny.")
-            return
+    with col_result:
+        if not start_loc or not dest_loc:
+            st.info("Vyberte startovní a cílovou adresu pro výpočet.")
+        else:
+            start_lat, start_lon = start_loc["lat"], start_loc["lon"]
+            dest_lat, dest_lon = dest_loc["lat"], dest_loc["lon"]
+            air_km = haversine_distance(start_lat, start_lon, dest_lat, dest_lon)
+            road_km = air_km * _DOMESTIC_ROAD_FACTOR
+            _, cap_pct, price_czk = _domestic_transport_quote(road_km, weight_kg, ldm)
 
-        with st.spinner("Načítám souřadnice cíle (Nominatim)…"):
-            dest = geocode_cz_postal_code(target_psc)
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Vzdálenost silniční", f"{road_km:,.0f} km")
+            m2.metric("Využití kapacity kamionu", f"{cap_pct:.1f} %")
+            m3.metric("Odhadovaná cena k jednání", f"{price_czk:,.0f} CZK")
 
-        if dest is None:
-            st.error(
-                f"PSČ {target_psc.strip()} se nepodařilo geokódovat. "
-                "Zkontrolujte formát nebo zkuste později."
+            st.caption(
+                f"Vzdušná vzdálenost {air_km:,.1f} km · "
+                f"start: {start_loc['display_name']} · "
+                f"cíl: {dest_loc['display_name']}"
             )
-            return
-
-        dest_lat, dest_lon = dest
-        air_km = haversine_distance(
-            _METYLOVICE_LAT, _METYLOVICE_LON, dest_lat, dest_lon
-        )
-        road_km = air_km * _DOMESTIC_ROAD_FACTOR
-        _, cap_pct, price_czk = _domestic_transport_quote(road_km, weight_kg, ldm)
-
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Vzdálenost silniční", f"{road_km:,.0f} km")
-        m2.metric("Využití kapacity kamionu", f"{cap_pct:.1f} %")
-        m3.metric("Odhadovaná cena k jednání", f"{price_czk:,.0f} CZK")
-
-        st.caption(
-            f"Vzdušná vzdálenost {air_km:,.1f} km · cíl {dest_lat:.4f}°N, {dest_lon:.4f}°E · "
-            f"sklad Metylovice 739 49"
-        )
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
