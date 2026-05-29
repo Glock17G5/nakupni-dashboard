@@ -9,7 +9,9 @@
 # ==============================================================================
 
 # ── Standardní knihovny ────────────────────────────────────────────────────────
+import math
 import re
+import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -3436,6 +3438,160 @@ def render_logistics() -> None:
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
 
+# ── Vnitrostátní logistika (Metylovice → ČR) ───────────────────────────────────
+
+_METYLOVICE_LAT = 49.6153
+_METYLOVICE_LON = 18.3375
+_DOMESTIC_ROAD_FACTOR = 1.3
+_DOMESTIC_FTL_CZK_KM = 42
+_DOMESTIC_FIX_FEE_CZK = 800
+_DOMESTIC_MIN_PRICE_CZK = 1200
+_DOMESTIC_MAX_WEIGHT_KG = 23500
+_DOMESTIC_MAX_LDM = 13.6
+
+_NOMINATIM_HEADERS = {"User-Agent": "pbcable-dashboard"}
+
+
+def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Vzdušná vzdálenost mezi dvěma body na Zemi (km)."""
+    r_earth_km = 6371.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = (
+        math.sin(dphi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    )
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return r_earth_km * c
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def geocode_cz_postal_code(psc: str) -> tuple[float, float] | None:
+    """Souřadnice cíle dle PSČ (Nominatim, ČR)."""
+    psc_clean = re.sub(r"\D", "", (psc or "").strip())
+    if len(psc_clean) < 5:
+        return None
+
+    url = (
+        "https://nominatim.openstreetmap.org/search"
+        f"?postalcode={psc_clean}&country=czechia&format=json"
+    )
+    time.sleep(1)
+    try:
+        resp = requests.get(url, headers=_NOMINATIM_HEADERS, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+    except (requests.RequestException, ValueError):
+        return None
+
+    if not data:
+        return None
+
+    try:
+        lat = float(data[0]["lat"])
+        lon = float(data[0]["lon"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return lat, lon
+
+
+def _domestic_transport_quote(
+    road_km: float,
+    weight_kg: float,
+    ldm: float,
+) -> tuple[float, float, float]:
+    """
+    Vrátí (využití kapacity 0–1, využití %, finální cena CZK).
+    Model: 23,5 t / 13,6 LDM, FTL 42 CZK/km, LTL koeficient ^0.55.
+    """
+    cap_share = min(
+        1.0,
+        max(weight_kg / _DOMESTIC_MAX_WEIGHT_KG, ldm / _DOMESTIC_MAX_LDM),
+    )
+    ltl_coef = cap_share ** 0.55
+    base_rate = road_km * _DOMESTIC_FTL_CZK_KM * ltl_coef
+    final_price = max(
+        _DOMESTIC_MIN_PRICE_CZK,
+        base_rate + _DOMESTIC_FIX_FEE_CZK,
+    )
+    return cap_share, cap_share * 100.0, final_price
+
+
+def render_domestic_logistics() -> None:
+    """Kalkulačka rozvozu po ČR ze skladu Metylovice."""
+    section_header("🚛", "Vnitrostátní logistika — Kalkulačka přepravy")
+
+    st.markdown(
+        '<div class="info-box">'
+        'Výchozí sklad: <strong>Metylovice</strong> (PSČ 739 49) · '
+        'Silniční vzdálenost = vzdušná × 1,3 · FTL sazba 42 CZK/km · '
+        'Kapacita nákladního vozu 23,5 t / 13,6 LDM'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    col_in, col_out = st.columns([1, 1])
+
+    with col_in:
+        target_psc = st.text_input(
+            "PSČ cíle",
+            value="",
+            placeholder="např. 110 00",
+            help="PSČ místa doručení v České republice",
+        )
+        weight_kg = st.number_input(
+            "Váha (kg)",
+            min_value=1.0,
+            max_value=float(_DOMESTIC_MAX_WEIGHT_KG),
+            value=1500.0,
+            step=50.0,
+        )
+        ldm = st.number_input(
+            "Ložné metry (LDM)",
+            min_value=0.1,
+            max_value=_DOMESTIC_MAX_LDM,
+            value=1.0,
+            step=0.1,
+            format="%.1f",
+        )
+
+    with col_out:
+        psc_norm = re.sub(r"\D", "", (target_psc or "").strip())
+        if len(psc_norm) < 5:
+            st.info("Zadejte platné PSČ cíle (5 číslic) pro výpočet vzdálenosti a ceny.")
+            return
+
+        with st.spinner("Načítám souřadnice cíle (Nominatim)…"):
+            dest = geocode_cz_postal_code(target_psc)
+
+        if dest is None:
+            st.error(
+                f"PSČ {target_psc.strip()} se nepodařilo geokódovat. "
+                "Zkontrolujte formát nebo zkuste později."
+            )
+            return
+
+        dest_lat, dest_lon = dest
+        air_km = haversine_distance(
+            _METYLOVICE_LAT, _METYLOVICE_LON, dest_lat, dest_lon
+        )
+        road_km = air_km * _DOMESTIC_ROAD_FACTOR
+        _, cap_pct, price_czk = _domestic_transport_quote(road_km, weight_kg, ldm)
+
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Vzdálenost silniční", f"{road_km:,.0f} km")
+        m2.metric("Využití kapacity kamionu", f"{cap_pct:.1f} %")
+        m3.metric("Odhadovaná cena k jednání", f"{price_czk:,.0f} CZK")
+
+        st.caption(
+            f"Vzdušná vzdálenost {air_km:,.1f} km · cíl {dest_lat:.4f}°N, {dest_lon:.4f}°E · "
+            f"sklad Metylovice 739 49"
+        )
+
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 #  SEKCE 5: SOUHRNNÁ PŘEHLEDOVÁ TABULKA
 # ──────────────────────────────────────────────────────────────────────────────
@@ -3616,11 +3772,12 @@ def main() -> None:
     render_global_controls()
 
     # Vytvoření hlavních záložek pro rozdělení obsahu
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "🔩 Kovy & Trh",
         "💱 Měnové kurzy",
         "🛢️ Plasty & Ropa",
         "🚢 Nákup & Logistika",
+        "🚛 Vnitrostátní logistika",
         "📊 Souhrnný přehled",
     ])
 
@@ -3639,6 +3796,9 @@ def main() -> None:
         render_logistics()
 
     with tab5:
+        render_domestic_logistics()
+
+    with tab6:
         render_summary_table()
 
     render_footer()
