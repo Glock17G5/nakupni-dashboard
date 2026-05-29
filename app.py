@@ -3467,7 +3467,7 @@ def render_logistics() -> None:
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
 
-# ── Vnitrostátní logistika (ČR) ────────────────────────────────────────────────
+# ── Logistika ČR & SK (přeprava kamionem) ─────────────────────────────────────
 
 _DOMESTIC_ROAD_FACTOR = 1.3
 _DOMESTIC_LDM_PER_EUR_PALLET = 0.4
@@ -3535,10 +3535,10 @@ def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def search_cz_location(query: str) -> list[dict]:
+def search_domestic_location(query: str) -> list[dict]:
     """
-    Vyhledání míst v ČR přes Nominatim.
-    Vrací list {lat, lon, display_name, postcode}.
+    Vyhledání míst v ČR a na Slovensku (Nominatim).
+    Vrací list {lat, lon, display_name, postcode, country}.
     """
     q = (query or "").strip()
     if len(q) < 2:
@@ -3548,9 +3548,10 @@ def search_cz_location(query: str) -> list[dict]:
     url = "https://nominatim.openstreetmap.org/search"
     params = {
         "q": q,
-        "countrycodes": "cz",
+        "countrycodes": "cz,sk",
         "format": "json",
         "addressdetails": 1,
+        "limit": 12,
     }
     try:
         resp = requests.get(
@@ -3569,6 +3570,15 @@ def search_cz_location(query: str) -> list[dict]:
         if not isinstance(item, dict):
             continue
         addr = item.get("address") or {}
+        country = str(addr.get("country_code", "")).upper()
+        if country not in ("CZ", "SK"):
+            country_name = str(addr.get("country", "")).lower()
+            if "slovak" in country_name or "slovensko" in country_name:
+                country = "SK"
+            elif "czech" in country_name or "česko" in country_name or "czechia" in country_name:
+                country = "CZ"
+            else:
+                continue
         postcode = addr.get("postcode") or addr.get("postal_code") or "N/A"
         try:
             results.append({
@@ -3576,6 +3586,7 @@ def search_cz_location(query: str) -> list[dict]:
                 "lon": float(item["lon"]),
                 "display_name": str(item.get("display_name", q)),
                 "postcode": str(postcode),
+                "country": country,
             })
         except (KeyError, TypeError, ValueError):
             continue
@@ -3583,7 +3594,9 @@ def search_cz_location(query: str) -> list[dict]:
 
 
 def _location_select_label(loc: dict) -> str:
-    return f'{loc["display_name"]} (PSČ: {loc["postcode"]})'
+    country = loc.get("country", "CZ")
+    country_lbl = "SK" if country == "SK" else "ČR"
+    return f'{loc["display_name"]} ({country_lbl} · PSČ: {loc["postcode"]})'
 
 
 def _render_location_search(
@@ -3592,19 +3605,19 @@ def _render_location_search(
     select_key: str,
     default_query: str = "",
 ) -> dict | None:
-    """Vyhledání a výběr místa v ČR — text_input + selectbox pod ním."""
+    """Vyhledání a výběr místa v ČR nebo na SK — text_input + selectbox pod ním."""
     st.markdown(f"**{section_title}**")
     query = st.text_input(
-        "🔍 Vyhledat město, ulici nebo PSČ",
+        "🔍 Vyhledat město, ulici nebo PSČ (ČR / SK)",
         value=default_query,
         key=input_key,
-        placeholder="např. Metylovice, Praha 1, 739 49",
+        placeholder="např. Metylovice, Košice, Senec, Praha 1, 040 01",
     )
     if not query.strip():
         return None
 
-    with st.spinner("Vyhledávám…"):
-        hits = search_cz_location(query.strip())
+    with st.spinner("Vyhledávám (ČR & SK)…"):
+        hits = search_domestic_location(query.strip())
 
     if not hits:
         st.caption("Žádné výsledky — upřesněte dotaz.")
@@ -3807,14 +3820,14 @@ def _render_domestic_pallet_cheat_sheet() -> None:
 
 
 def render_domestic_logistics() -> None:
-    """Kalkulačka rozvozu po ČR — start a cíl z Nominatim vyhledávání."""
-    section_header("🚛", "Vnitrostátní logistika — Kalkulačka přepravy")
+    """Kalkulačka přepravy ČR & SK — start a cíl z Nominatim, trasa přes OSRM."""
+    section_header("🚛", "Logistika ČR & SK — Kalkulačka přepravy")
 
     st.markdown(
         '<div class="info-box">'
-        'Vyhledejte <strong>start</strong> a <strong>cíl</strong> v ČR · '
-        'Silniční trasa přes OSRM (záloha: vzdušná × 1,3) · '
-        'Fix = manipulace + dojezd k hubu (km × sazba) · orientační model · vytížení v %'
+        'Vyhledejte <strong>start</strong> a <strong>cíl</strong> v <strong>ČR nebo na Slovensku</strong> '
+        '(Košice, Senec, Bratislava, …) · silniční trasa OSRM včetně přeshraniční · '
+        'záloha vzdálenosti: vzdušná × 1,3 · fix = manipulace + dojezd k hubu · vytížení v %'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -3978,11 +3991,15 @@ def render_domestic_logistics() -> None:
                 if used_osrm
                 else "záložní odhad (vzdušná × 1,3)"
             )
+            start_cc = start_loc.get("country", "CZ")
+            dest_cc = dest_loc.get("country", "CZ")
+            cross_border = start_cc != dest_cc
+            border_note = " · přeshraniční trasa CZ↔SK" if cross_border else ""
             st.caption(
                 f"{v_type} · max {max_w:,.0f} kg / {max_l} LDM · "
-                f"vzdálenost: {route_note} · sazba {sazba:.1f} CZK/km · "
-                f"start: {start_loc['display_name']} · "
-                f"cíl: {dest_loc['display_name']}"
+                f"vzdálenost: {route_note}{border_note} · sazba {sazba:.1f} CZK/km · "
+                f"start ({start_cc}): {start_loc['display_name']} · "
+                f"cíl ({dest_cc}): {dest_loc['display_name']}"
             )
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
@@ -4173,7 +4190,7 @@ def main() -> None:
         "🔩 Kovy & Trh",
         "💱 Měnové kurzy",
         "🛢️ Plasty & Ropa",
-        "🚛 Vnitrostátní logistika",
+        "🚛 Logistika ČR & SK",
         "📊 Souhrnný přehled",
     ]
 
