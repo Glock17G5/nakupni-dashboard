@@ -3736,31 +3736,26 @@ def render_domestic_logistics() -> None:
         with st.expander("ℹ️ Tahák: Počet EUR palet vs. Ložné metry (LDM)"):
             st.markdown(
                 "**🚚 Typy vozidel a jejich rozměry:**<br>"
-                "• **Kamion (Plachtový návěs):** Délka 13,6 m | Šířka 2,48 m | "
-                "Výška 2,7 - 3,0 m | <b>34 palet / 24 tun</b><br>"
-                "• **Sólo (Náklaďák 7,5t - 12t):** Délka cca 7,2 m | Šířka 2,48 m | "
-                "Výška cca 2,7 m | <b>18 palet / 3,5 - 5,5 tuny</b><br>"
-                "• **Plachtová dodávka:** Délka 4,2 - 4,8 m | Šířka 2,2 m | "
-                "Výška 2,0 - 2,3 m | <b>8 - 10 palet / max 1,2 tuny!</b><br><br>"
-                "Matematický vzorec: `1 EUR paleta = 0,4 LDM`.",
+                "• **Kamion (Plachtový návěs):** Délka 13,6 m | Šířka 2,48 m | Výška 2,7 - 3,0 m | <b>34 palet / 24 tun</b><br>"
+                "• **Sólo (Náklaďák 7,5t - 12t):** Délka cca 7,2 m | Šířka 2,48 m | Výška cca 2,7 m | <b>18 palet / 3,5 - 5,5 tuny</b><br>"
+                "• **Plachtová dodávka:** Délka 4,2 - 4,8 m | Šířka 2,2 m | Výška 2,0 - 2,3 m | <b>8 - 10 palet / max 1,2 tuny!</b><br><br>"
+                "Matematický vzorec: `1 EUR paleta = 0,4 LDM`.<br>"
+                "Standardní návěs (šířka 2,48 m) pojme **34 nestohovatelných EUR palet** (1,2 × 0,8 m), což odpovídá **13,6 LDM**.",
                 unsafe_allow_html=True,
             )
-            st.markdown(
-                "Standardní návěs (šířka **2,48 m**) pojme **34 nestohovatelných EUR palet** "
-                "(1,2 × 0,8 m), což odpovídá **13,6 LDM**."
-            )
-            st.markdown(
-                """
-| Počet palet | LDM |
-|-------------|-----|
-| 1 | 0,4 |
-| 2 | 0,8 |
-| 5 | 2,0 |
-| 10 | 4,0 |
-| 33 | 13,2 |
-| 34 | 13,6 |
-                """
-            )
+
+            pallets = list(range(1, 35))
+            ldms = [float(f"{p * 0.4:.1f}") for p in pallets]
+
+            c1, c2, c3 = st.columns(3)
+
+            df1 = pd.DataFrame({"Počet palet": pallets[:12], "LDM": ldms[:12]})
+            df2 = pd.DataFrame({"Počet palet": pallets[12:24], "LDM": ldms[12:24]})
+            df3 = pd.DataFrame({"Počet palet": pallets[24:], "LDM": ldms[24:]})
+
+            c1.dataframe(df1, hide_index=True, use_container_width=True)
+            c2.dataframe(df2, hide_index=True, use_container_width=True)
+            c3.dataframe(df3, hide_index=True, use_container_width=True)
 
     with col_result:
         if not start_loc or not dest_loc:
