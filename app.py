@@ -12,7 +12,9 @@
 import math
 import re
 import time
+import unicodedata
 from datetime import datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -4430,6 +4432,402 @@ def render_summary_table() -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+#  PLÁNOVÁNÍ NAKLÁDKY — bubny TP KBB 3, bin packing, těžiště
+# ──────────────────────────────────────────────────────────────────────────────
+
+_DRUMS_CSV_FILENAME = "TPKBB3_dřevěné bubny_2017.xlsx - List1.csv"
+_TRAILER_WIDTH_CM = 245.0
+_TRAILER_LENGTH_CM = 1360.0
+_TRAILER_MAX_WEIGHT_KG = 24_000.0
+_DRUM_DIAMETER_MIN_CM = 80
+_DRUM_DIAMETER_MAX_CM = 260
+_DRUM_DIAMETER_STEP_CM = 10
+
+
+def _normalize_column_name(name: str) -> str:
+    """Sloupec bez diakritiky, malými písmeny — pro heuristické párování."""
+    s = str(name).strip().lower()
+    return "".join(
+        c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c)
+    )
+
+
+def _identify_drum_csv_columns(df: pd.DataFrame) -> tuple[str, str, str, str]:
+    """Najde sloupce typ, průměr, šířka a váha prázdného bubnu v CSV."""
+    type_col = diameter_col = width_col = weight_col = None
+    for col in df.columns:
+        n = _normalize_column_name(col)
+        if type_col is None and any(k in n for k in ("typ", "oznac", "ozn", "vde", "buben")):
+            type_col = col
+        if diameter_col is None and ("prumer" in n or "diameter" in n) and "sir" not in n:
+            diameter_col = col
+        if width_col is None and ("sir" in n or "width" in n):
+            width_col = col
+        if weight_col is None and any(k in n for k in ("vaha", "hmot", "weight", "kg")):
+            weight_col = col
+    if diameter_col is None:
+        for col in df.columns:
+            n = _normalize_column_name(col)
+            if "prumer" in n or ("rozmer" in n and "sir" not in n):
+                diameter_col = col
+                break
+    missing = [
+        label
+        for label, val in (
+            ("typ", type_col),
+            ("průměr", diameter_col),
+            ("šířka", width_col),
+            ("váha", weight_col),
+        )
+        if val is None
+    ]
+    if missing:
+        raise ValueError(
+            f"V CSV chybí sloupce pro: {', '.join(missing)}. "
+            f"Dostupné sloupce: {list(df.columns)}"
+        )
+    return type_col, diameter_col, width_col, weight_col
+
+
+def _parse_czech_number(series: pd.Series) -> pd.Series:
+    """Převede čísla s čárkou jako desetinným oddělovačem."""
+    if series.dtype == object:
+        return pd.to_numeric(
+            series.astype(str).str.replace("\u00a0", "", regex=False).str.replace(" ", "").str.replace(",", "."),
+            errors="coerce",
+        )
+    return pd.to_numeric(series, errors="coerce")
+
+
+def _drums_csv_path() -> Path:
+    return Path(__file__).resolve().parent / _DRUMS_CSV_FILENAME
+
+
+@st.cache_data(show_spinner=False)
+def load_and_interpolate_drums() -> dict[str, dict[str, float | str]]:
+    """
+    Načte CSV bubnů TP KBB 3 a doplní typy VDE 80–260 po 10 cm lineární interpolací.
+    """
+    path = _drums_csv_path()
+    if not path.is_file():
+        raise FileNotFoundError(f"Soubor s daty bubnů nenalezen: {path}")
+
+    raw_df = pd.read_csv(path, sep=None, engine="python", encoding="utf-8-sig")
+    if raw_df.shape[1] == 1:
+        raw_df = pd.read_csv(path, sep=";", encoding="utf-8-sig")
+
+    type_col, diameter_col, width_col, weight_col = _identify_drum_csv_columns(raw_df)
+    work = raw_df[[type_col, diameter_col, width_col, weight_col]].copy()
+    work.columns = ["type_label", "diameter_cm", "width_cm", "empty_weight_kg"]
+    work["diameter_cm"] = _parse_czech_number(work["diameter_cm"])
+    work["width_cm"] = _parse_czech_number(work["width_cm"])
+    work["empty_weight_kg"] = _parse_czech_number(work["empty_weight_kg"])
+    work = work.dropna(subset=["diameter_cm", "width_cm", "empty_weight_kg"])
+    work = work.sort_values("diameter_cm")
+    work = work.groupby("diameter_cm", as_index=False).agg(
+        {
+            "type_label": "first",
+            "width_cm": "mean",
+            "empty_weight_kg": "mean",
+        }
+    )
+    known_d = work["diameter_cm"].astype(float).values
+    known_w = work["width_cm"].astype(float).values
+    known_wt = work["empty_weight_kg"].astype(float).values
+
+    if len(known_d) < 1:
+        raise ValueError("CSV neobsahuje žádné platné řádky bubnů.")
+
+    drums: dict[str, dict[str, float | str]] = {}
+    for d in range(_DRUM_DIAMETER_MIN_CM, _DRUM_DIAMETER_MAX_CM + 1, _DRUM_DIAMETER_STEP_CM):
+        d_f = float(d)
+        width = float(pd.Series(known_w, index=known_d).reindex([d_f]).interpolate(method="index").iloc[0])
+        empty_w = float(
+            pd.Series(known_wt, index=known_d).reindex([d_f]).interpolate(method="index").iloc[0]
+        )
+        key = f"VDE {d}"
+        drums[key] = {
+            "type": key,
+            "diameter_cm": d_f,
+            "width_cm": width,
+            "empty_weight_kg": empty_w,
+        }
+    return drums
+
+
+def _pack_drums_row_wise(
+    drum_units: list[dict],
+    trailer_width_cm: float = _TRAILER_WIDTH_CM,
+) -> tuple[list[dict], float]:
+    """
+    Skládá bubny od čela návěsu (Y=0): vedle sebe do šířky, pak nová řada.
+    """
+    placements: list[dict] = []
+    row_x = 0.0
+    row_y = 0.0
+    row_max_diameter = 0.0
+
+    for unit in drum_units:
+        w = float(unit["width_cm"])
+        d = float(unit["diameter_cm"])
+        if row_x > 0 and row_x + w > trailer_width_cm:
+            row_y += row_max_diameter
+            row_x = 0.0
+            row_max_diameter = 0.0
+        placements.append(
+            {
+                **unit,
+                "x_cm": row_x,
+                "y_cm": row_y,
+            }
+        )
+        row_x += w
+        row_max_diameter = max(row_max_diameter, d)
+
+    used_length = row_y + row_max_diameter
+    return placements, used_length
+
+
+def _compute_cargo_center_of_gravity(placements: list[dict]) -> tuple[float, float, float]:
+    """Vážené 2D těžiště (X, Y) a celková hmotnost [kg]."""
+    total_w = 0.0
+    sum_x = 0.0
+    sum_y = 0.0
+    for p in placements:
+        weight = float(p["total_weight_kg"])
+        cx = float(p["x_cm"]) + float(p["width_cm"]) / 2.0
+        cy = float(p["y_cm"]) + float(p["diameter_cm"]) / 2.0
+        total_w += weight
+        sum_x += cx * weight
+        sum_y += cy * weight
+    if total_w <= 0:
+        return 0.0, 0.0, 0.0
+    return sum_x / total_w, sum_y / total_w, total_w
+
+
+def _build_cargo_plotly_figure(
+    placements: list[dict],
+    cog_x: float,
+    cog_y: float,
+) -> go.Figure:
+    """2D půdorys návěsu s bubny a těžištěm."""
+    fig = go.Figure()
+    fig.add_shape(
+        type="rect",
+        x0=0,
+        y0=0,
+        x1=_TRAILER_WIDTH_CM,
+        y1=_TRAILER_LENGTH_CM,
+        line=dict(color="#1e293b", width=2),
+        fillcolor="rgba(148, 163, 184, 0.12)",
+        layer="below",
+    )
+    ideal_y_max = _TRAILER_LENGTH_CM / 2.0
+    ideal_y_min = _TRAILER_LENGTH_CM / 3.0
+    fig.add_shape(
+        type="rect",
+        x0=0,
+        y0=0,
+        x1=_TRAILER_WIDTH_CM,
+        y1=ideal_y_max,
+        line=dict(width=0),
+        fillcolor="rgba(34, 197, 94, 0.08)",
+        layer="below",
+    )
+    fig.add_hline(y=ideal_y_min, line_dash="dot", line_color="#16a34a", opacity=0.5)
+    fig.add_hline(y=ideal_y_max, line_dash="dot", line_color="#16a34a", opacity=0.5)
+
+    for p in placements:
+        x0, y0 = float(p["x_cm"]), float(p["y_cm"])
+        x1 = x0 + float(p["width_cm"])
+        y1 = y0 + float(p["diameter_cm"])
+        fig.add_shape(
+            type="rect",
+            x0=x0,
+            y0=y0,
+            x1=x1,
+            y1=y1,
+            line=dict(color="#2563eb", width=1.5),
+            fillcolor="rgba(37, 99, 235, 0.25)",
+        )
+        fig.add_annotation(
+            x=(x0 + x1) / 2,
+            y=(y0 + y1) / 2,
+            text=f"{p['type']}<br>{p['total_weight_kg']:.0f} kg",
+            showarrow=False,
+            font=dict(size=10, color="#0f172a"),
+        )
+
+    cross = 18.0
+    fig.add_trace(
+        go.Scatter(
+            x=[cog_x - cross, cog_x + cross, None, cog_x, cog_x],
+            y=[cog_y, cog_y, None, cog_y - cross, cog_y + cross],
+            mode="lines",
+            line=dict(color="#dc2626", width=4),
+            name="Těžiště",
+        )
+    )
+    fig.add_annotation(
+        x=cog_x,
+        y=cog_y + cross + 8,
+        text="COG",
+        showarrow=False,
+        font=dict(color="#dc2626", size=11),
+    )
+    fig.update_layout(
+        title="Půdorys návěsu (245 × 1360 cm) — zelená = doporučená zóna těžiště",
+        xaxis=dict(title="Šířka X (cm)", range=[-10, _TRAILER_WIDTH_CM + 15], constrain="domain"),
+        yaxis=dict(
+            title="Délka Y od čela (cm)",
+            range=[-10, _TRAILER_LENGTH_CM + 30],
+            scaleanchor="x",
+            scaleratio=1,
+        ),
+        height=520,
+        margin=dict(l=50, r=20, t=50, b=50),
+        showlegend=False,
+        plot_bgcolor="#f8fafc",
+    )
+    return fig
+
+
+def render_cargo_visualization() -> None:
+    """Plánování nakládky kamionu — bubny, bin packing, těžiště, Plotly."""
+    section_header("📦", "Plánování nakládky — bubny a těžiště")
+
+    st.markdown(
+        '<div class="info-box">'
+        "Rozměry návěsu: <strong>245 cm × 13,6 m</strong> · skládání od čela (Y=0) · "
+        "těžiště vážené podle bubnu + kabelu · data bubnů TP KBB 3 (interpolace VDE 80–260)"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    try:
+        drums_catalog = load_and_interpolate_drums()
+    except FileNotFoundError as exc:
+        st.error(str(exc))
+        st.info(f"Umístěte soubor `{_DRUMS_CSV_FILENAME}` do složky s aplikací.")
+        return
+    except Exception as exc:
+        st.error(f"Nepodařilo se načíst data bubnů: {exc}")
+        return
+
+    drum_types = sorted(drums_catalog.keys(), key=lambda k: drums_catalog[k]["diameter_cm"])  # type: ignore[arg-type]
+    default_type = drum_types[0] if drum_types else ""
+
+    col_input, col_stats = st.columns([1.2, 1])
+    with col_input:
+        st.markdown("#### Položky nákladu")
+        default_rows = pd.DataFrame(
+            [{"Počet": 2, "Typ": default_type, "Váha kabelu (kg)": 500.0}]
+        )
+        edited = st.data_editor(
+            default_rows,
+            column_config={
+                "Počet": st.column_config.NumberColumn("Počet", min_value=0, step=1, format="%d"),
+                "Typ": st.column_config.SelectboxColumn("Typ bubnu", options=drum_types, required=True),
+                "Váha kabelu (kg)": st.column_config.NumberColumn(
+                    "Váha kabelu (kg)", min_value=0.0, step=10.0, format="%.1f"
+                ),
+            },
+            num_rows="dynamic",
+            use_container_width=True,
+            key="cargo_drum_rows",
+        )
+
+    drum_units: list[dict] = []
+    for _, row in edited.iterrows():
+        try:
+            count = int(row.get("Počet", 0) or 0)
+        except (TypeError, ValueError):
+            count = 0
+        if count <= 0:
+            continue
+        typ = str(row.get("Typ", "") or "").strip()
+        spec = drums_catalog.get(typ)
+        if not spec:
+            continue
+        try:
+            cable_kg = float(row.get("Váha kabelu (kg)", 0) or 0)
+        except (TypeError, ValueError):
+            cable_kg = 0.0
+        empty_kg = float(spec["empty_weight_kg"])
+        total_kg = empty_kg + cable_kg
+        for _ in range(count):
+            drum_units.append(
+                {
+                    "type": typ,
+                    "width_cm": float(spec["width_cm"]),
+                    "diameter_cm": float(spec["diameter_cm"]),
+                    "empty_weight_kg": empty_kg,
+                    "cable_weight_kg": cable_kg,
+                    "total_weight_kg": total_kg,
+                }
+            )
+
+    if not drum_units:
+        st.info("Zadejte alespoň jeden buben s kladným počtem.")
+        return
+
+    placements, used_length_cm = _pack_drums_row_wise(drum_units)
+    cog_x, cog_y, total_weight_kg = _compute_cargo_center_of_gravity(placements)
+    drum_count = len(placements)
+
+    ideal_y_min = _TRAILER_LENGTH_CM / 3.0
+    ideal_y_max = _TRAILER_LENGTH_CM / 2.0
+    cog_ok = ideal_y_min <= cog_y <= ideal_y_max
+
+    if total_weight_kg > _TRAILER_MAX_WEIGHT_KG:
+        st.warning(
+            f"Celková hmotnost {total_weight_kg:,.0f} kg překračuje limit "
+            f"{_TRAILER_MAX_WEIGHT_KG:,.0f} kg."
+        )
+    if used_length_cm > _TRAILER_LENGTH_CM:
+        st.warning(
+            f"Náklad zabírá cca {used_length_cm / 100:.2f} m — přesahuje délku návěsu 13,6 m."
+        )
+    if not cog_ok and total_weight_kg > 0:
+        st.warning(
+            f"Těžiště na ose Y je {cog_y:.0f} cm (doporučeno cca {ideal_y_min:.0f}–{ideal_y_max:.0f} cm "
+            "od čela, aby byl zatížen tahač i nápravy návěsu)."
+        )
+
+    with col_stats:
+        st.markdown("#### Souhrn")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Počet bubnů", drum_count)
+        m2.metric("Celková hmotnost", f"{total_weight_kg:,.0f} kg")
+        m3.metric("Obsazená délka", f"{used_length_cm / 100:.2f} m")
+        st.metric("Těžiště X", f"{cog_x:.1f} cm", help="Šířka návěsu 245 cm")
+        st.metric(
+            "Těžiště Y",
+            f"{cog_y:.1f} cm",
+            delta="v doporučené zóně" if cog_ok else "mimo ideální zónu",
+            delta_color="normal" if cog_ok else "inverse",
+        )
+
+    st.plotly_chart(_build_cargo_plotly_figure(placements, cog_x, cog_y), use_container_width=True)
+
+    detail_df = pd.DataFrame(
+        [
+            {
+                "Typ": p["type"],
+                "X (cm)": round(p["x_cm"], 1),
+                "Y (cm)": round(p["y_cm"], 1),
+                "Šířka (cm)": p["width_cm"],
+                "Průměr (cm)": p["diameter_cm"],
+                "Váha celkem (kg)": round(p["total_weight_kg"], 1),
+            }
+            for p in placements
+        ]
+    )
+    with st.expander("Rozložení bubnů — souřadnice"):
+        st.dataframe(detail_df, hide_index=True, use_container_width=True)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 #  FOOTER
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -4476,6 +4874,7 @@ def main() -> None:
         "💱 Měnové kurzy",
         "🛢️ Plasty & Ropa",
         "🚛 Logistika ČR & SK",
+        "📦 Plánování nakládky",
         "📊 Souhrnný přehled",
     ]
 
@@ -4500,11 +4899,15 @@ def main() -> None:
         with tabs[4]:
             render_domestic_logistics()
         with tabs[5]:
+            render_cargo_visualization()
+        with tabs[6]:
             render_summary_table()
     else:
         with tabs[3]:
             render_domestic_logistics()
         with tabs[4]:
+            render_cargo_visualization()
+        with tabs[5]:
             render_summary_table()
 
     render_footer()
