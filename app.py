@@ -1141,38 +1141,62 @@ def _safe_float(s: str) -> float | None:
         return None
 
 
-_SHFE_HIST_TICKERS: dict[str, str] = {"CU": "SCF=F", "AL": "SAF=F"}
 _METAL_KEY_TO_SHFE_CODE: dict[str, str] = {"copper": "CU", "aluminum": "AL"}
+_SHFE_SINA_SYMBOLS: dict[str, str] = {"CU": "CU0", "AL": "AL0"}
+_SHFE_SINA_KLINE_URL = (
+    "https://stock2.finance.sina.com.cn/futures/api/json.php/"
+    "InnerFuturesNewService.getDailyKLine?symbol={symbol}"
+)
 
 
 @st.cache_data(ttl=CACHE_TTL)
-def get_shfe_historical_usd(metal_code: str, period: str = "1y") -> pd.DataFrame:
-    """
-    Historie SHFE (yfinance) přepočtená na USD/t — stejný den kovu a USDCNY=X.
-    Při chybě nebo prázdné odpovědi vrací prázdný DataFrame (aplikace nepadá).
-    """
-    if metal_code not in _SHFE_HIST_TICKERS:
+def get_shfe_historical_usd_sina(metal_code: str, period: str = "1y") -> pd.DataFrame:
+    """Stáhne historii SHFE ze Sina Finance a přepočte ji na USD pomocí kurzu z Yahoo."""
+    if metal_code not in _SHFE_SINA_SYMBOLS:
         return pd.DataFrame()
+
+    symbol = _SHFE_SINA_SYMBOLS[metal_code]
+    url = _SHFE_SINA_KLINE_URL.format(symbol=symbol)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "http://finance.sina.com.cn/",
+    }
+
     try:
-        ticker = _SHFE_HIST_TICKERS[metal_code]
-        df_metal = yf.Ticker(ticker).history(period=period, auto_adjust=False)
+        res = requests.get(url, headers=headers, timeout=12)
+        res.raise_for_status()
+        data = res.json()
+        if not isinstance(data, list) or not data:
+            return pd.DataFrame()
+
+        df_shfe = pd.DataFrame(data)
+        if "d" not in df_shfe.columns or "c" not in df_shfe.columns:
+            return pd.DataFrame()
+
+        df_shfe["date"] = pd.to_datetime(df_shfe["d"], errors="coerce").dt.normalize()
+        df_shfe["Price_CNY"] = pd.to_numeric(df_shfe["c"], errors="coerce")
+        df_shfe = df_shfe.dropna(subset=["date", "Price_CNY"])
+        df_shfe = df_shfe[df_shfe["Price_CNY"] > 0]
+        if df_shfe.empty:
+            return pd.DataFrame()
+
+        df_shfe = df_shfe.drop_duplicates(subset=["date"], keep="last")
+        df_shfe = df_shfe.set_index("date")[["Price_CNY"]]
+
         df_fx = yf.Ticker("USDCNY=X").history(period=period, auto_adjust=False)
-        if df_metal is None or df_fx is None or df_metal.empty or df_fx.empty:
+        if df_fx is None or df_fx.empty:
+            df_fx = yf.Ticker("CNY=X").history(period=period, auto_adjust=False)
+        if df_fx is None or df_fx.empty:
             return pd.DataFrame()
 
-        metal_close = pd.to_numeric(df_metal["Close"], errors="coerce")
+        fx_idx = pd.to_datetime(df_fx.index, utc=True).tz_convert(None).normalize()
         fx_close = pd.to_numeric(df_fx["Close"], errors="coerce")
-        metal_dates = pd.to_datetime(df_metal.index, utc=True).tz_convert(None).normalize()
-        fx_dates = pd.to_datetime(df_fx.index, utc=True).tz_convert(None).normalize()
-
-        metal_s = pd.Series(metal_close.values, index=metal_dates, name="Price_CNY")
-        fx_s = pd.Series(fx_close.values, index=fx_dates, name="FX")
-        metal_s = metal_s[metal_s > 0]
-        fx_s = fx_s[fx_s > 0]
-        if metal_s.empty or fx_s.empty:
+        df_fx = pd.DataFrame({"FX": fx_close.values}, index=fx_idx)
+        df_fx = df_fx[df_fx["FX"] > 0].dropna()
+        if df_fx.empty:
             return pd.DataFrame()
 
-        df = pd.concat([metal_s, fx_s], axis=1, join="inner").dropna()
+        df = df_shfe.join(df_fx, how="inner")
         if df.empty:
             return pd.DataFrame()
 
@@ -2506,7 +2530,7 @@ def _build_metal_correlation_figure(
     if lme_hist_df is None or lme_hist_df.empty or "Close" not in lme_hist_df.columns:
         return None, 0
 
-    shfe_df = get_shfe_historical_usd(metal_code, period)
+    shfe_df = get_shfe_historical_usd_sina(metal_code, period)
     if shfe_df is None or shfe_df.empty:
         return None, 0
 
@@ -2538,7 +2562,7 @@ def _build_metal_correlation_figure(
                     x=shfe_s.index,
                     y=shfe_s.values,
                     mode="lines",
-                    name="SHFE (Šanghaj v USD)",
+                    name="SHFE (Šanghaj - USD)",
                     line=dict(color="#FD7E14", width=2.2, shape="spline", smoothing=0.65),
                     hovertemplate="<b>%{x|%d.%m.%Y}</b><br>SHFE: %{y:,.0f} USD/t<extra></extra>",
                 )
@@ -2595,9 +2619,9 @@ def _build_metal_correlation_figure(
 def render_metal_correlation_chart(
     metal_key: str,
     period: str,
-    lme_hist_df: pd.DataFrame | None = None,
+    lme_hist_df: pd.DataFrame | None,
 ) -> None:
-    """Historická korelace LME (Westmetall) vs SHFE (yfinance) — bez zásob, reaguje na období."""
+    """Historická korelace LME (Westmetall) vs SHFE (Sina + Yahoo FX) — bez zásob."""
     metal_code = _METAL_KEY_TO_SHFE_CODE.get(metal_key)
     if not metal_code:
         return
@@ -2605,6 +2629,7 @@ def render_metal_correlation_chart(
     period_lbl = get_chart_period_label()
     metal_titles = {"copper": "Měď", "aluminum": "Hliník"}
     title_metal = metal_titles.get(metal_key, metal_key)
+    sina_symbol = _SHFE_SINA_SYMBOLS.get(metal_code, "")
 
     st.markdown(
         "<div style='font-family:Syne,sans-serif;font-size:0.72rem;font-weight:700;"
@@ -2613,13 +2638,26 @@ def render_metal_correlation_chart(
         unsafe_allow_html=True,
     )
 
+    if lme_hist_df is None or lme_hist_df.empty:
+        lme_hist_df = _wm_lme_history_filtered(metal_key)
+
     try:
+        shfe_df = get_shfe_historical_usd_sina(metal_code, period)
+        if lme_hist_df is None or lme_hist_df.empty or shfe_df is None or shfe_df.empty:
+            st.markdown(
+                '<div class="error-box" style="padding:10px;font-size:0.85rem;">'
+                "Data pro srovnání LME a SHFE nejsou k dispozici "
+                f"(Westmetall + Sina {_SHFE_SINA_SYMBOLS.get(metal_code, '')} / USDCNY=X)."
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            return
+
         fig, overlap = _build_metal_correlation_figure(metal_key, period, lme_hist_df)
         if fig is None:
             st.markdown(
                 '<div class="error-box" style="padding:10px;font-size:0.85rem;">'
-                "Data pro srovnání LME a SHFE nejsou k dispozici "
-                f"(Westmetall + yfinance {_SHFE_HIST_TICKERS.get(metal_code, '')} / USDCNY=X)."
+                "Korelační graf nelze sestavit — chybí společná data po zarovnání datumů."
                 "</div>",
                 unsafe_allow_html=True,
             )
@@ -2627,7 +2665,7 @@ def render_metal_correlation_chart(
 
         _show_plotly(fig)
         st.caption(
-            f"LME: Westmetall Cash · SHFE: {_SHFE_HIST_TICKERS[metal_code]} ÷ USDCNY=X · "
+            f"LME: Westmetall Cash · SHFE: Sina Finance {sina_symbol} ÷ USDCNY=X (Yahoo) · "
             f"období {period_lbl} · společných obchodních dnů: {overlap}"
         )
     except Exception as exc:
@@ -2894,11 +2932,11 @@ def render_metals() -> None:
 
     with col_cu:
         _render_wm_metal_history_chart("copper", "Měď (Cu)", "#f97316")
-        render_metal_correlation_chart("copper", period)
+        render_metal_correlation_chart("copper", period, _wm_lme_history_filtered("copper"))
 
     with col_al:
         _render_wm_metal_history_chart("aluminum", "Hliník (Al)", "#10b981")
-        render_metal_correlation_chart("aluminum", period)
+        render_metal_correlation_chart("aluminum", period, _wm_lme_history_filtered("aluminum"))
 
     with col_st:
         if steel_data:
