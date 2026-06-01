@@ -691,6 +691,7 @@ def _show_plotly(fig: go.Figure | None, *, toolbar: bool = True) -> None:
     """Vykreslí Plotly graf v chart-wrap kontejneru."""
     if fig is None:
         return
+    _ensure_plot_separators(fig)
     st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": toolbar})
     st.markdown("</div>", unsafe_allow_html=True)
@@ -1146,33 +1147,43 @@ _METAL_KEY_TO_SHFE_CODE: dict[str, str] = {"copper": "CU", "aluminum": "AL"}
 
 @st.cache_data(ttl=CACHE_TTL)
 def get_shfe_historical_usd(metal_code: str, period: str = "1y") -> pd.DataFrame:
-    """Historie SHFE z yfinance (SCF=F / SAF=F) přepočtená na USD/t."""
+    """
+    Historie SHFE (yfinance) přepočtená na USD/t — stejný den kovu a USDCNY=X.
+    Při chybě nebo prázdné odpovědi vrací prázdný DataFrame (aplikace nepadá).
+    """
     if metal_code not in _SHFE_HIST_TICKERS:
         return pd.DataFrame()
     try:
-        df_metal = yf.Ticker(_SHFE_HIST_TICKERS[metal_code]).history(period=period)
-        df_fx = yf.Ticker("USDCNY=X").history(period=period)
-        if df_metal.empty or df_fx.empty:
+        ticker = _SHFE_HIST_TICKERS[metal_code]
+        df_metal = yf.Ticker(ticker).history(period=period, auto_adjust=False)
+        df_fx = yf.Ticker("USDCNY=X").history(period=period, auto_adjust=False)
+        if df_metal is None or df_fx is None or df_metal.empty or df_fx.empty:
             return pd.DataFrame()
 
-        metal_idx = pd.to_datetime(df_metal.index, utc=True).tz_convert(None).normalize()
-        fx_idx = pd.to_datetime(df_fx.index, utc=True).tz_convert(None).normalize()
-        df_metal = df_metal.copy()
-        df_fx = df_fx.copy()
-        df_metal.index = metal_idx
-        df_fx.index = fx_idx
+        metal_close = pd.to_numeric(df_metal["Close"], errors="coerce")
+        fx_close = pd.to_numeric(df_fx["Close"], errors="coerce")
+        metal_dates = pd.to_datetime(df_metal.index, utc=True).tz_convert(None).normalize()
+        fx_dates = pd.to_datetime(df_fx.index, utc=True).tz_convert(None).normalize()
 
-        df = df_metal[["Close"]].rename(columns={"Close": "Price_CNY"}).join(
-            df_fx[["Close"]].rename(columns={"Close": "FX"}),
-            how="inner",
-        )
+        metal_s = pd.Series(metal_close.values, index=metal_dates, name="Price_CNY")
+        fx_s = pd.Series(fx_close.values, index=fx_dates, name="FX")
+        metal_s = metal_s[metal_s > 0]
+        fx_s = fx_s[fx_s > 0]
+        if metal_s.empty or fx_s.empty:
+            return pd.DataFrame()
+
+        df = pd.concat([metal_s, fx_s], axis=1, join="inner").dropna()
         if df.empty:
             return pd.DataFrame()
-        df["SHFE_USD"] = pd.to_numeric(df["Price_CNY"], errors="coerce") / pd.to_numeric(
-            df["FX"], errors="coerce"
-        )
-        df = df.dropna(subset=["SHFE_USD"])
-        return df[["SHFE_USD"]]
+
+        df["SHFE_USD"] = df["Price_CNY"] / df["FX"]
+        df = df[df["SHFE_USD"] > 0]
+        if df.empty:
+            return pd.DataFrame()
+
+        out = df[["SHFE_USD"]].copy()
+        out.index.name = "Date"
+        return out.sort_index()
     except Exception:
         return pd.DataFrame()
 
@@ -1916,7 +1927,7 @@ def wm_stock_extra(wm_data: dict | None, stock_key: str) -> str | None:
         return None
     info = wm_data.get(stock_key)
     if isinstance(info, dict) and info.get("tons"):
-        return f"LME zásoby: {int(info['tons']):,} t"
+        return f"LME zásoby: {format_num(int(info['tons']), 0)} t"
     return None
 
 
@@ -2014,6 +2025,57 @@ _HOVER_LABEL = dict(
     font=dict(family="IBM Plex Mono, monospace", size=11, color="#212529"),
 )
 
+# Mezera = tisíce, tečka = desetinná (český standard v Plotly)
+_PLOT_SEPARATORS = " ."
+
+
+def _chart_period_cutoff() -> pd.Timestamp:
+    """Spodní hranice data podle globálního přepínače období (1W–1Y)."""
+    days = _WM_PERIOD_DAYS.get(get_chart_period(), 92)
+    prague_now = now_prague()
+    return pd.Timestamp(prague_now.replace(tzinfo=None)).normalize() - pd.Timedelta(days=days)
+
+
+def _ensure_plot_separators(fig: go.Figure | None) -> go.Figure | None:
+    """Jednotné české formátování čísel na osách a v hoveru."""
+    if fig is not None:
+        fig.update_layout(separators=_PLOT_SEPARATORS)
+    return fig
+
+
+def _history_to_dated_series(
+    df: pd.DataFrame,
+    value_col: str,
+    date_col: str | None = "Date",
+) -> pd.Series:
+    """Normalizuje historii na Series (index = datum, hodnoty = float)."""
+    if df is None or df.empty:
+        return pd.Series(dtype=float)
+    work = df.copy()
+    if date_col and date_col in work.columns:
+        dates = pd.to_datetime(work[date_col], errors="coerce").dt.normalize()
+        values = pd.to_numeric(work[value_col], errors="coerce")
+    else:
+        work = work.reset_index()
+        col0 = work.columns[0]
+        dates = pd.to_datetime(work[col0], errors="coerce").dt.normalize()
+        values = pd.to_numeric(work[value_col], errors="coerce")
+    out = pd.Series(values.values, index=dates, name=value_col)
+    out = out[out.index.notna()]
+    out = out[~out.index.duplicated(keep="last")]
+    return out.sort_index().dropna()
+
+
+def _clip_series_to_chart_period(series: pd.Series) -> pd.Series:
+    """Ořízne časovou řadu podle aktivního období v UI."""
+    if series is None or series.empty:
+        return pd.Series(dtype=float)
+    cutoff = _chart_period_cutoff()
+    idx = pd.to_datetime(series.index, errors="coerce").normalize()
+    clipped = series.copy()
+    clipped.index = idx
+    return clipped[clipped.index >= cutoff].dropna()
+
 
 def _apply_financial_y_axis(fig: go.Figure, df: pd.DataFrame, y_col: str) -> go.Figure:
     """Osa Y bez nuly — dynamický rozsah dle min/max zobrazených dat (+ malá rezerva)."""
@@ -2075,7 +2137,7 @@ def metal_price_history_figure(
         ),
     )
     fig.update_layout(
-        separators=" .",
+        separators=_PLOT_SEPARATORS,
         height=height,
         margin=dict(l=12, r=12, t=44, b=12),
         paper_bgcolor=_PLOT_PAPER,
@@ -2156,6 +2218,7 @@ def _render_metal_history_with_tabs(
                 y_unit,
             )
         if fig:
+            _ensure_plot_separators(fig)
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
         else:
             st.markdown('<div class="error-box">Graf nelze vykreslit</div>', unsafe_allow_html=True)
@@ -2234,7 +2297,7 @@ def interactive_line_chart(
             ))
 
     fig.update_layout(
-        separators=" .",
+        separators=_PLOT_SEPARATORS,
         title=dict(text=title, font=dict(family="Syne, sans-serif", size=13, color=_PLOT_TITLE_COLOR), y=0.97),
         height=height,
         margin=dict(l=10, r=10, t=42 if show_legend else 36, b=12),
@@ -2333,7 +2396,7 @@ def interactive_metal_dual_chart(
 
     # 4. Sestavení finálního layoutu s pevnými limity
     fig.update_layout(
-        separators=" .",
+        separators=_PLOT_SEPARATORS,
         title=dict(text=title, font=dict(family="Syne, sans-serif", size=13, color=_PLOT_TITLE_COLOR), y=0.98),
         height=height,
         margin=dict(l=10, r=10, t=48, b=12),
@@ -2425,112 +2488,89 @@ def _render_wm_metal_history_chart(
     )
 
 
-def render_metal_correlation_chart(
+def _build_metal_correlation_figure(
     metal_key: str,
     period: str,
     lme_hist_df: pd.DataFrame | None,
-) -> None:
-    """Historická korelace LME (Westmetall) vs SHFE (yfinance) v USD/t — bez zásob."""
+) -> tuple[go.Figure | None, int]:
+    """
+    Sestaví graf LME vs SHFE (USD/t). Vrací (fig, počet společných dnů).
+    Při chybě nebo chybějících datech vrací (None, 0).
+    """
     metal_code = _METAL_KEY_TO_SHFE_CODE.get(metal_key)
     if not metal_code:
-        return
+        return None, 0
 
-    metal_titles = {"copper": "Měď", "aluminum": "Hliník"}
-    title_metal = metal_titles.get(metal_key, metal_key)
-    period_lbl = get_chart_period_label()
+    if lme_hist_df is None or lme_hist_df.empty:
+        lme_hist_df = _wm_lme_history_filtered(metal_key)
+    if lme_hist_df is None or lme_hist_df.empty or "Close" not in lme_hist_df.columns:
+        return None, 0
 
-    st.markdown(
-        "<div style='font-family:Syne,sans-serif;font-size:0.72rem;font-weight:700;"
-        "color:#495057;text-transform:uppercase;letter-spacing:0.8px;margin:12px 0 6px 0;'>"
-        f"📊 Korelace LME vs SHFE — {title_metal} ({period_lbl})</div>",
-        unsafe_allow_html=True,
-    )
+    shfe_df = get_shfe_historical_usd(metal_code, period)
+    if shfe_df is None or shfe_df.empty:
+        return None, 0
 
     try:
-        if lme_hist_df is None or lme_hist_df.empty or "Close" not in lme_hist_df.columns:
-            st.markdown(
-                '<div class="error-box" style="padding:10px;font-size:0.85rem;">'
-                "LME historie není k dispozici."
-                "</div>",
-                unsafe_allow_html=True,
-            )
-            return
+        lme_s = _clip_series_to_chart_period(_history_to_dated_series(lme_hist_df, "Close", "Date"))
+        shfe_s = _clip_series_to_chart_period(_history_to_dated_series(shfe_df, "SHFE_USD", None))
+        if lme_s.empty and shfe_s.empty:
+            return None, 0
 
-        shfe_df = get_shfe_historical_usd(metal_code, period)
-        if shfe_df is None or shfe_df.empty:
-            st.markdown(
-                '<div class="error-box" style="padding:10px;font-size:0.85rem;">'
-                f"SHFE historie není k dispozici (yfinance {_SHFE_HIST_TICKERS.get(metal_code, '')})."
-                "</div>",
-                unsafe_allow_html=True,
-            )
-            return
-
-        lme_plot = lme_hist_df[["Date", "Close"]].copy()
-        lme_plot["Date"] = pd.to_datetime(lme_plot["Date"], errors="coerce").dt.normalize()
-        lme_plot["Close"] = pd.to_numeric(lme_plot["Close"], errors="coerce")
-        lme_plot = lme_plot.dropna(subset=["Date", "Close"])
-        if lme_plot.empty:
-            st.markdown(
-                '<div class="error-box" style="padding:10px;font-size:0.85rem;">'
-                "LME data nelze zpracovat."
-                "</div>",
-                unsafe_allow_html=True,
-            )
-            return
-
-        shfe_plot = shfe_df.reset_index()
-        shfe_date_col = shfe_plot.columns[0]
-        shfe_plot = shfe_plot.rename(columns={shfe_date_col: "Date", "SHFE_USD": "Close"})
-        shfe_plot["Date"] = pd.to_datetime(shfe_plot["Date"], errors="coerce").dt.normalize()
-        shfe_plot["Close"] = pd.to_numeric(shfe_plot["Close"], errors="coerce")
-        shfe_plot = shfe_plot.dropna(subset=["Date", "Close"])
-        if shfe_plot.empty:
-            st.markdown(
-                '<div class="error-box" style="padding:10px;font-size:0.85rem;">'
-                "SHFE data nelze zpracovat."
-                "</div>",
-                unsafe_allow_html=True,
-            )
-            return
+        overlap = 0
+        if not lme_s.empty and not shfe_s.empty:
+            overlap = len(set(lme_s.index.date).intersection(set(shfe_s.index.date)))
 
         fig = go.Figure()
-        fig.add_trace(
-            go.Scatter(
-                x=lme_plot["Date"],
-                y=lme_plot["Close"],
-                mode="lines",
-                name="LME (Londýn)",
-                line=dict(color="#0D6EFD", width=2.2, shape="spline", smoothing=0.65),
-                hovertemplate="<b>%{x|%d.%m.%Y}</b><br>LME: %{y:,.0f} USD/t<extra></extra>",
+        if not lme_s.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=lme_s.index,
+                    y=lme_s.values,
+                    mode="lines",
+                    name="LME (Londýn)",
+                    line=dict(color="#0D6EFD", width=2.2, shape="spline", smoothing=0.65),
+                    hovertemplate="<b>%{x|%d.%m.%Y}</b><br>LME: %{y:,.0f} USD/t<extra></extra>",
+                )
             )
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=shfe_plot["Date"],
-                y=shfe_plot["Close"],
-                mode="lines",
-                name="SHFE (Šanghaj — přepočet na USD)",
-                line=dict(color="#FD7E14", width=2.2, shape="spline", smoothing=0.65),
-                hovertemplate="<b>%{x|%d.%m.%Y}</b><br>SHFE: %{y:,.0f} USD/t<extra></extra>",
+        if not shfe_s.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=shfe_s.index,
+                    y=shfe_s.values,
+                    mode="lines",
+                    name="SHFE (Šanghaj v USD)",
+                    line=dict(color="#FD7E14", width=2.2, shape="spline", smoothing=0.65),
+                    hovertemplate="<b>%{x|%d.%m.%Y}</b><br>SHFE: %{y:,.0f} USD/t<extra></extra>",
+                )
             )
-        )
 
-        y_all = pd.concat([lme_plot["Close"], shfe_plot["Close"]], ignore_index=True).dropna()
+        y_all = pd.concat([lme_s, shfe_s], ignore_index=True).dropna()
+        if y_all.empty:
+            return None, overlap
         y_min, y_max = float(y_all.min()), float(y_all.max())
-        pad = max((y_max - y_min) * 0.06, 50.0) if y_max > y_min else max(y_max * 0.02, 50.0)
+        pad = max((y_max - y_min) * 0.06, 50.0) if y_max > y_min else max(abs(y_max) * 0.02, 50.0)
+
+        period_lbl = get_chart_period_label()
+        metal_titles = {"copper": "Měď", "aluminum": "Hliník"}
+        title_metal = metal_titles.get(metal_key, metal_key)
 
         fig.update_layout(
-            separators=" .",
+            separators=_PLOT_SEPARATORS,
+            title=dict(
+                text=f"{title_metal} — LME vs SHFE ({period_lbl})",
+                font=dict(family="Syne, sans-serif", size=11, color=_PLOT_TITLE_COLOR),
+                x=0.02,
+                xanchor="left",
+            ),
             height=300,
-            margin=dict(l=8, r=8, t=36, b=8),
+            margin=dict(l=8, r=8, t=40, b=8),
             paper_bgcolor=_PLOT_PAPER,
             plot_bgcolor=_PLOT_BG,
             showlegend=True,
             legend=dict(
                 orientation="h",
                 yanchor="bottom",
-                y=1.14,
+                y=1.12,
                 xanchor="right",
                 x=1,
                 font=dict(family="IBM Plex Mono, monospace", size=9, color=_PLOT_TICK_COLOR),
@@ -2547,13 +2587,48 @@ def render_metal_correlation_chart(
                 autorange=False,
             ),
         )
+        return fig, overlap
+    except Exception:
+        return None, 0
+
+
+def render_metal_correlation_chart(
+    metal_key: str,
+    period: str,
+    lme_hist_df: pd.DataFrame | None = None,
+) -> None:
+    """Historická korelace LME (Westmetall) vs SHFE (yfinance) — bez zásob, reaguje na období."""
+    metal_code = _METAL_KEY_TO_SHFE_CODE.get(metal_key)
+    if not metal_code:
+        return
+
+    period_lbl = get_chart_period_label()
+    metal_titles = {"copper": "Měď", "aluminum": "Hliník"}
+    title_metal = metal_titles.get(metal_key, metal_key)
+
+    st.markdown(
+        "<div style='font-family:Syne,sans-serif;font-size:0.72rem;font-weight:700;"
+        "color:#495057;text-transform:uppercase;letter-spacing:0.8px;margin:12px 0 6px 0;'>"
+        f"📊 Korelace LME vs SHFE — {title_metal} ({period_lbl})</div>",
+        unsafe_allow_html=True,
+    )
+
+    try:
+        fig, overlap = _build_metal_correlation_figure(metal_key, period, lme_hist_df)
+        if fig is None:
+            st.markdown(
+                '<div class="error-box" style="padding:10px;font-size:0.85rem;">'
+                "Data pro srovnání LME a SHFE nejsou k dispozici "
+                f"(Westmetall + yfinance {_SHFE_HIST_TICKERS.get(metal_code, '')} / USDCNY=X)."
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            return
+
         _show_plotly(fig)
-        overlap = len(
-            set(lme_plot["Date"].dt.date).intersection(set(shfe_plot["Date"].dt.date))
-        )
         st.caption(
-            f"LME: Westmetall · SHFE: {_SHFE_HIST_TICKERS[metal_code]} ÷ USDCNY=X · "
-            f"{period_lbl} · společných dnů: {overlap}"
+            f"LME: Westmetall Cash · SHFE: {_SHFE_HIST_TICKERS[metal_code]} ÷ USDCNY=X · "
+            f"období {period_lbl} · společných obchodních dnů: {overlap}"
         )
     except Exception as exc:
         st.markdown(
@@ -2629,7 +2704,7 @@ def bar_metals(
         hovertemplate=f"<b>%{{y}}</b><br>%{{x:,.0f}} {currency}/t<extra></extra>",
     ))
     fig.update_layout(
-        separators=" .",
+        separators=_PLOT_SEPARATORS,
         title=dict(text=title, font=dict(family="Syne, sans-serif", size=13, color=_PLOT_TITLE_COLOR)),
         height=220,
         margin=dict(l=10, r=10, t=36, b=12),
@@ -2819,11 +2894,11 @@ def render_metals() -> None:
 
     with col_cu:
         _render_wm_metal_history_chart("copper", "Měď (Cu)", "#f97316")
-        render_metal_correlation_chart("copper", period, _wm_lme_history_filtered("copper"))
+        render_metal_correlation_chart("copper", period)
 
     with col_al:
         _render_wm_metal_history_chart("aluminum", "Hliník (Al)", "#10b981")
-        render_metal_correlation_chart("aluminum", period, _wm_lme_history_filtered("aluminum"))
+        render_metal_correlation_chart("aluminum", period)
 
     with col_st:
         if steel_data:
@@ -4873,6 +4948,7 @@ def _build_cargo_plotly_figure(
         font=dict(color="#dc2626", size=11),
     )
     fig.update_layout(
+        separators=_PLOT_SEPARATORS,
         title="Půdorys návěsu (245 × 1360 cm) — zelená = doporučená zóna těžiště",
         xaxis=dict(title="Šířka X (cm)", range=[-10, _TRAILER_WIDTH_CM + 15], constrain="domain"),
         yaxis=dict(
@@ -5005,7 +5081,8 @@ def render_cargo_visualization() -> None:
             delta_color="normal" if cog_ok else "inverse",
         )
 
-    st.plotly_chart(_build_cargo_plotly_figure(placements, cog_x, cog_y), use_container_width=True)
+    cargo_fig = _ensure_plot_separators(_build_cargo_plotly_figure(placements, cog_x, cog_y))
+    st.plotly_chart(cargo_fig, use_container_width=True)
 
     detail_df = pd.DataFrame(
         [
