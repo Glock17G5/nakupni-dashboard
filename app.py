@@ -1140,6 +1140,42 @@ def _safe_float(s: str) -> float | None:
         return None
 
 
+_SHFE_YF_TICKERS: dict[str, str] = {"CU": "SCF=F", "AL": "SAF=F"}
+_WM_KEY_BY_SHFE_CODE: dict[str, str] = {"CU": "copper", "AL": "aluminum"}
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def get_shfe_history_usd(metal_code: str, period: str = "1y") -> pd.DataFrame:
+    """Stáhne historii SHFE z yfinance (Měď=SCF=F, Hliník=SAF=F) a přepočítá ji na USD/t."""
+    if metal_code not in _SHFE_YF_TICKERS:
+        return pd.DataFrame()
+
+    try:
+        df_metal = yf.Ticker(_SHFE_YF_TICKERS[metal_code]).history(period=period)
+        df_fx = yf.Ticker("USDCNY=X").history(period=period)
+
+        if df_metal.empty or df_fx.empty:
+            return pd.DataFrame()
+
+        def _yf_dates(index: pd.Index) -> pd.Index:
+            idx = pd.to_datetime(index)
+            if getattr(idx, "tz", None) is not None:
+                idx = idx.tz_localize(None)
+            return idx.normalize().date
+
+        df_metal.index = _yf_dates(df_metal.index)
+        df_fx.index = _yf_dates(df_fx.index)
+
+        df = df_metal[["Close"]].rename(columns={"Close": "Price_CNY"}).join(
+            df_fx[["Close"]].rename(columns={"Close": "FX_USDCNY"}),
+            how="inner",
+        )
+        df["SHFE_USD"] = df["Price_CNY"] / df["FX_USDCNY"]
+        return df[["SHFE_USD"]]
+    except Exception:
+        return pd.DataFrame()
+
+
 # ==============================================================================
 # ─────────────────────────────────────────────────────────────────────────────
 #  DATOVÉ FUNKCE – FX (ČNB + yfinance trendy)
@@ -2376,6 +2412,138 @@ def _render_wm_metal_history_chart(
     )
 
 
+def _lme_shfe_comparison_figure(
+    lme_hist: pd.DataFrame,
+    shfe_df: pd.DataFrame,
+    metal_code: str,
+    period_lbl: str,
+) -> go.Figure | None:
+    """Plotly graf — LME Cash (USD/t) vs SHFE přepočtené na USD/t."""
+    if lme_hist is None or lme_hist.empty or shfe_df is None or shfe_df.empty:
+        return None
+
+    metal_name = "Měď (Cu)" if metal_code == "CU" else "Hliník (Al)"
+    lme_dates = pd.to_datetime(lme_hist["Date"])
+    lme_prices = pd.to_numeric(lme_hist["Close"], errors="coerce")
+
+    shfe_plot = shfe_df.reset_index()
+    shfe_date_col = shfe_plot.columns[0]
+    shfe_dates = pd.to_datetime(shfe_plot[shfe_date_col])
+    shfe_prices = pd.to_numeric(shfe_plot["SHFE_USD"], errors="coerce")
+
+    if lme_prices.dropna().empty or shfe_prices.dropna().empty:
+        return None
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=lme_dates,
+            y=lme_prices,
+            mode="lines",
+            name="LME západní trh",
+            line=dict(color="#2563eb", width=2.2, shape="spline", smoothing=0.65),
+            hovertemplate="<b>%{x|%d.%m.%Y}</b><br>LME: %{y:,.2f} USD/t<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=shfe_dates,
+            y=shfe_prices,
+            mode="lines",
+            name="SHFE čínský trh (USD/t)",
+            line=dict(color="#ea580c", width=2.2, shape="spline", smoothing=0.65),
+            hovertemplate="<b>%{x|%d.%m.%Y}</b><br>SHFE: %{y:,.2f} USD/t<extra></extra>",
+        )
+    )
+
+    y_all = pd.concat([lme_prices, shfe_prices], ignore_index=True).dropna()
+    y_min, y_max = float(y_all.min()), float(y_all.max())
+    pad = max((y_max - y_min) * 0.06, 1.0) if y_max > y_min else max(y_max * 0.02, 1.0)
+    if y_max <= y_min:
+        y_min -= pad
+        y_max += pad
+
+    fig.update_layout(
+        separators=" .",
+        title=dict(
+            text=f"{metal_name} — LME vs SHFE ({period_lbl})",
+            font=dict(family="Syne, sans-serif", size=12, color=_PLOT_TITLE_COLOR),
+            x=0.02,
+            xanchor="left",
+        ),
+        height=300,
+        margin=dict(l=10, r=10, t=44, b=12),
+        paper_bgcolor=_PLOT_PAPER,
+        plot_bgcolor=_PLOT_BG,
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.12,
+            xanchor="right",
+            x=1,
+            font=dict(family="IBM Plex Mono, monospace", size=10, color=_PLOT_TICK_COLOR),
+            bgcolor=_PLOT_PAPER,
+        ),
+        hoverlabel=_HOVER_LABEL,
+        hovermode="x unified",
+        xaxis=dict(**_TICK_AXIS, tickformat="%d.%m.%Y", title=None),
+        yaxis=dict(
+            **_TICK_AXIS,
+            tickformat=",.0f",
+            title=dict(text="USD/t", standoff=8),
+            range=[y_min - pad, y_max + pad],
+            autorange=False,
+        ),
+    )
+    return fig
+
+
+def render_lme_shfe_comparison_chart(metal_code: str, period: str) -> None:
+    """Vykreslí srovnávací graf čistých cen LME vs SHFE přepočtených na USD/t (bez zásob)."""
+    wm_key = _WM_KEY_BY_SHFE_CODE.get(metal_code)
+    if not wm_key or metal_code not in _SHFE_YF_TICKERS:
+        return
+
+    st.markdown(
+        "<div style='font-family:Syne,sans-serif;font-size:0.72rem;font-weight:700;"
+        "color:#495057;text-transform:uppercase;letter-spacing:0.8px;margin:12px 0 6px 0;'>"
+        "📊 Korelace trhů: LME vs. SHFE (čistá cena v USD/t)</div>",
+        unsafe_allow_html=True,
+    )
+
+    period_lbl = get_chart_period_label()
+    shfe_df = get_shfe_history_usd(metal_code, period)
+    lme_full = fetch_westmetall_history(WM_HISTORY_URLS[wm_key])
+    lme_hist = filter_history_by_period(lme_full)
+
+    if shfe_df.empty or lme_hist is None or lme_hist.empty:
+        st.markdown(
+            '<div class="error-box" style="padding:10px;font-size:0.85rem;">'
+            "Srovnání LME vs SHFE není pro zvolené období k dispozici "
+            f"(Westmetall + yfinance {_SHFE_YF_TICKERS[metal_code]} / USDCNY=X)."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    fig = _lme_shfe_comparison_figure(lme_hist, shfe_df, metal_code, period_lbl)
+    if fig is None:
+        st.markdown(
+            '<div class="error-box" style="padding:10px;font-size:0.85rem;">'
+            "Graf korelace nelze vykreslit — chybí platná cenová data."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    _show_plotly(fig)
+    st.caption(
+        f"LME: Westmetall Cash · SHFE: yfinance {_SHFE_YF_TICKERS[metal_code]} ÷ USDCNY=X · "
+        f"období {period_lbl} · bez LME zásob"
+    )
+
+
 def interactive_oil_chart(
     df: pd.DataFrame,
     title: str,
@@ -2631,9 +2799,11 @@ def render_metals() -> None:
 
     with col_cu:
         _render_wm_metal_history_chart("copper", "Měď (Cu)", "#f97316")
+        render_lme_shfe_comparison_chart("CU", period)
 
     with col_al:
         _render_wm_metal_history_chart("aluminum", "Hliník (Al)", "#10b981")
+        render_lme_shfe_comparison_chart("AL", period)
 
     with col_st:
         if steel_data:
