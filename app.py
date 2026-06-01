@@ -626,11 +626,12 @@ def section_header(icon: str, title: str, *badges_html: str) -> None:
 
 
 def format_num(value, decimals: int = 2, prefix: str = "", suffix: str = "") -> str:
-    """Formátuje číslo na řetězec; při chybě vrátí 'N/A'."""
+    """Formátuje číslo na řetězec s mezerou jako oddělovačem tisíců."""
     if value is None:
         return "N/A"
     try:
-        return f"{prefix}{float(value):,.{decimals}f}{suffix}"
+        formatted = f"{float(value):,.{decimals}f}".replace(",", " ")
+        return f"{prefix}{formatted}{suffix}"
     except (ValueError, TypeError):
         return "N/A"
 
@@ -642,9 +643,9 @@ def delta_chip(delta_val, suffix: str = "") -> str:
     try:
         d = float(delta_val)
         if d > 0:
-            return f'<span class="delta-chip delta-up">▲ +{d:,.2f}{suffix}</span>'
+            return f'<span class="delta-chip delta-up">▲ +{format_num(d, 2)}{suffix}</span>'
         elif d < 0:
-            return f'<span class="delta-chip delta-down">▼ {d:,.2f}{suffix}</span>'
+            return f'<span class="delta-chip delta-down">▼ {format_num(d, 2)}{suffix}</span>'
         else:
             return f'<span class="delta-chip delta-flat">— 0.00{suffix}</span>'
     except (ValueError, TypeError):
@@ -1504,7 +1505,7 @@ def format_oil_price(value_usd: float | None, decimals: int = 2) -> str:
     if val is None:
         return "N/A"
     sym = "€" if get_display_currency() == "EUR" else "$"
-    return f"{sym}{val:,.{decimals}f}"
+    return f"{sym}{format_num(val, decimals)}"
 
 
 def get_usd_per_cny() -> float | None:
@@ -1705,7 +1706,7 @@ def render_metal_surcharge_calculator(cnb: dict | None) -> None:
         if curr_metal_ex is not None:
             st.metric(
                 "Aktuální cena LME (live)",
-                f"{curr_metal_ex:,.2f} USD/t",
+                f"{format_num(curr_metal_ex, 2)} USD/t",
                 help="Westmetall LME Cash — automaticky v výpočtu",
             )
         else:
@@ -1718,7 +1719,7 @@ def render_metal_surcharge_calculator(cnb: dict | None) -> None:
         if curr_metal_ex is not None:
             st.metric(
                 "Aktuální cena SHFE (live)",
-                f"{curr_metal_ex:,.2f} CNY/t",
+                f"{format_num(curr_metal_ex, 2)} CNY/t",
                 help="Sina Finance / SHFE — automaticky v výpočtu",
             )
         else:
@@ -1799,7 +1800,7 @@ def render_metal_surcharge_calculator(cnb: dict | None) -> None:
             st.markdown(
                 f'<div class="calc-result">'
                 f'<div class="calc-result-label">{title}</div>'
-                f'<div class="calc-result-value">{val:,.4f} {sym}</div>'
+                f'<div class="calc-result-value">{format_num(val, 4)} {sym}</div>'
                 f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.65rem;'
                 f'color:#6C757D;margin-top:4px;">{hint}</div></div>',
                 unsafe_allow_html=True,
@@ -1808,7 +1809,7 @@ def render_metal_surcharge_calculator(cnb: dict | None) -> None:
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown(
         f'<div class="info-box">'
-        f'<strong>Původní nabídka:</strong> {orig_total_out:,.4f} {sym}/m · '
+        f'<strong>Původní nabídka:</strong> {format_num(orig_total_out, 4)} {sym}/m · '
         f'<strong>Růst burzy kovu:</strong> {metal_change_pct * 100:+.2f} %</div>',
         unsafe_allow_html=True,
     )
@@ -1817,7 +1818,7 @@ def render_metal_surcharge_calculator(cnb: dict | None) -> None:
         st.markdown(
             f'<div class="calc-result">'
             f'<div class="calc-result-label">Prostá přímá úměra (celá cena × růst burzy)</div>'
-            f'<div class="calc-result-value">{simple_out:,.4f} {sym}/m</div></div>',
+            f'<div class="calc-result-value">{format_num(simple_out, 4)} {sym}/m</div></div>',
             unsafe_allow_html=True,
         )
     with c_diff:
@@ -1827,7 +1828,7 @@ def render_metal_surcharge_calculator(cnb: dict | None) -> None:
             f'<div class="calc-result">'
             f'<div class="calc-result-label">Rozdíl: férová vs. prostá úměra</div>'
             f'<div class="calc-result-value" style="color:{color};">'
-            f'{sign}{diff_out:,.4f} {sym}/m</div>'
+            f'{sign}{format_num(diff_out, 4)} {sym}/m</div>'
             f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.65rem;'
             f'color:#6C757D;margin-top:4px;">'
             f'Kladné = férový model dražší než plošné zdražení celé nabídky</div></div>',
@@ -2037,6 +2038,7 @@ def metal_price_history_figure(
         ),
     )
     fig.update_layout(
+        separators=" .",
         height=height,
         margin=dict(l=12, r=12, t=44, b=12),
         paper_bgcolor=_PLOT_PAPER,
@@ -2127,16 +2129,18 @@ def _render_metal_history_with_tabs(
         col_config = {
             "Datum": st.column_config.TextColumn("Datum", width="medium"),
         }
+        if price_label in table_df.columns or "Zásoby (t)" in table_df.columns:
+            table_df = table_df.copy()
         if price_label in table_df.columns:
-            col_config[price_label] = st.column_config.NumberColumn(
-                price_label,
-                format="%.2f",
+            table_df[price_label] = table_df[price_label].apply(
+                lambda x: format_num(x, 2) if pd.notna(x) else "N/A"
             )
+            col_config[price_label] = st.column_config.TextColumn(price_label, width="medium")
         if "Zásoby (t)" in table_df.columns:
-            col_config["Zásoby (t)"] = st.column_config.NumberColumn(
-                "Zásoby (t)",
-                format="%,.0f",
+            table_df["Zásoby (t)"] = table_df["Zásoby (t)"].apply(
+                lambda x: format_num(x, 0) if pd.notna(x) else "N/A"
             )
+            col_config["Zásoby (t)"] = st.column_config.TextColumn("Zásoby (t)", width="medium")
         st.dataframe(
             table_df,
             use_container_width=True,
@@ -2193,6 +2197,7 @@ def interactive_line_chart(
             ))
 
     fig.update_layout(
+        separators=" .",
         title=dict(text=title, font=dict(family="Syne, sans-serif", size=13, color=_PLOT_TITLE_COLOR), y=0.97),
         height=height,
         margin=dict(l=10, r=10, t=42 if show_legend else 36, b=12),
@@ -2291,6 +2296,7 @@ def interactive_metal_dual_chart(
 
     # 4. Sestavení finálního layoutu s pevnými limity
     fig.update_layout(
+        separators=" .",
         title=dict(text=title, font=dict(family="Syne, sans-serif", size=13, color=_PLOT_TITLE_COLOR), y=0.98),
         height=height,
         margin=dict(l=10, r=10, t=48, b=12),
@@ -2429,12 +2435,13 @@ def bar_metals(
         x=prices,
         orientation="h",
         marker=dict(color=colors, line_width=0),
-        text=[f" {p:,.0f} {currency}/t" for p in prices],
+        text=[f" {format_num(p, 0)} {currency}/t" for p in prices],
         textposition="outside",
         textfont=dict(family="IBM Plex Mono, monospace", size=9.5, color=_PLOT_TITLE_COLOR),
         hovertemplate=f"<b>%{{y}}</b><br>%{{x:,.0f}} {currency}/t<extra></extra>",
     ))
     fig.update_layout(
+        separators=" .",
         title=dict(text=title, font=dict(family="Syne, sans-serif", size=13, color=_PLOT_TITLE_COLOR)),
         height=220,
         margin=dict(l=10, r=10, t=36, b=12),
@@ -2712,9 +2719,9 @@ def _render_shfe_spread_item(metal_key: str, metal_name: str, wm_data: dict | No
         st.markdown(
             f"<div style='margin-bottom:6px;'>{badge_html(True, 'Sina / SHFE')}</div>"
             f'<div class="spread-card"><div class="spread-label">{metal_name}: SHFE vs LME</div>'
-            f'<div class="spread-value" style="color:{s_color};">{s_sign}{spread_disp:,.0f} {ccy}/t</div>'
-            f'<div class="spread-details">SHFE: {cny_price:,.0f} CNY/t (≈ {china_disp:,.0f} {ccy}/t)<br>'
-            f"LME Cash (Westmetall): {lme_disp:,.0f} {ccy}/t</div></div>",
+            f'<div class="spread-value" style="color:{s_color};">{s_sign}{format_num(spread_disp, 0)} {ccy}/t</div>'
+            f'<div class="spread-details">SHFE: {format_num(cny_price, 0)} CNY/t (≈ {format_num(china_disp, 0)} {ccy}/t)<br>'
+            f"LME Cash (Westmetall): {format_num(lme_disp, 0)} {ccy}/t</div></div>",
             unsafe_allow_html=True,
         )
         return
@@ -2946,7 +2953,7 @@ def render_oil_plastics() -> None:
         with col:
             if plastics and key in plastics:
                 st.markdown(
-                    metric_card(label, f"~{plastics[key]['price']:,.0f}", "USD/t (model)",
+                    metric_card(label, format_num(plastics[key]["price"], 0, prefix="~"), "USD/t (model)",
                                  card_class="card-plastic", extra="Lag 4–8 týdnů"),
                     unsafe_allow_html=True,
                 )
@@ -3005,7 +3012,7 @@ def render_oil_plastics() -> None:
         if plastics:
             rows = "".join([
                 f'<tr><td>{plastics[k]["desc"]}</td>'
-                f'<td style="color:#14b8a6;text-align:right;">~{plastics[k]["price"]:,.0f}</td></tr>'
+                f'<td style="color:#14b8a6;text-align:right;">{format_num(plastics[k]["price"], 0, prefix="~")}</td></tr>'
                 for k in ["pvc", "xlpe", "pa12", "lldpe"]
             ])
             st.markdown(f"""
@@ -3313,9 +3320,9 @@ def render_landed_cost_pricing() -> None:
     total_goods = results["Hodnota řádku (EUR)"].sum()
     total_landed = results["Celková Landed cena položky (EUR)"].sum()
     s1, s2, s3 = st.columns(3)
-    s1.metric("Hodnota zboží na faktuře", f"{total_goods:,.2f} EUR")
-    s2.metric("Celkové náklady (landed)", f"{total_landed:,.2f} EUR")
-    s3.metric("Celkem v CZK", f"{total_landed * eur_czk:,.0f} Kč")
+    s1.metric("Hodnota zboží na faktuře", f"{format_num(total_goods, 2)} EUR")
+    s2.metric("Celkové náklady (landed)", f"{format_num(total_landed, 2)} EUR")
+    s3.metric("Celkem v CZK", f"{format_num(total_landed * eur_czk, 0)} Kč")
 
     st.markdown("#### Výsledky — Landed Cost po položkách")
     display_cols = [
@@ -3985,13 +3992,13 @@ def _format_domestic_transport_request(
         "── Trasa ──",
         f"Nakládka: {start_loc['display_name']} ({start_loc.get('country', 'CZ')})",
         f"Vykládka: {dest_loc['display_name']} ({dest_loc.get('country', 'CZ')})",
-        f"Vzdálenost: cca {road_km:,.0f} km"
+        f"Vzdálenost: cca {format_num(road_km, 0)} km"
         + (" (OSRM)" if used_osrm else " (odhad)"),
         "",
         "── Vozidlo a náklad ──",
         f"Vozidlo: {v_type}",
         f"Zboží: {shipment['cargo_desc']}",
-        f"Hmotnost: {weight_kg:,.0f} kg",
+        f"Hmotnost: {format_num(weight_kg, 0)} kg",
         f"Ložné metry: {ldm:.1f} LDM",
     ]
     if eur_pallets > 0:
@@ -4020,11 +4027,11 @@ def _format_domestic_transport_request(
 
     lines.extend(["", "── Orientační kalkulace (interní) ──"])
     if price_czk is not None and quote.get("price_valid"):
-        lines.append(f"Odhadovaná cena k jednání: {price_czk:,.0f} CZK")
+        lines.append(f"Odhadovaná cena k jednání: {format_num(price_czk, 0)} CZK")
         if price_eur is not None and eur_czk:
-            lines.append(f"≈ {price_eur:,.0f} EUR (ČNB {eur_czk:.4f} CZK/EUR)")
+            lines.append(f"≈ {format_num(price_eur, 0)} EUR (ČNB {eur_czk:.4f} CZK/EUR)")
         lines.append(
-            f"Rozpad: jízda {quote['km_part']:,.0f} + fix {quote['fix_fee']:,.0f} CZK "
+            f"Rozpad: jízda {format_num(quote['km_part'], 0)} + fix {format_num(quote['fix_fee'], 0)} CZK "
             f"(sazba {sazba:.1f} CZK/km, LTL {quote['ltl_koef']:.2f})"
         )
     else:
@@ -4132,10 +4139,10 @@ def render_domestic_logistics() -> None:
 
         fix_preview = _domestic_compute_fix_fee(profile, sazba)
         st.caption(
-            f"Fixní složka (orientačně): **{fix_preview['fix_fee']:,.0f} CZK** · "
-            f"manipulace {fix_preview['fix_handling']:,.0f} + "
+            f"Fixní složka (orientačně): **{format_num(fix_preview['fix_fee'], 0)} CZK** · "
+            f"manipulace {format_num(fix_preview['fix_handling'], 0)} + "
             f"dojezd {fix_preview['fix_hub_km']:.0f} km × {sazba:.1f} = "
-            f"{fix_preview['fix_positioning']:,.0f} CZK"
+            f"{format_num(fix_preview['fix_positioning'], 0)} CZK"
         )
 
         st.markdown("**Vytížení vozidla (náklad)**")
@@ -4197,7 +4204,7 @@ def render_domestic_logistics() -> None:
             if quote["overload"]:
                 st.error(
                     f"🚨 POZOR: Náklad přesahuje kapacitu vozidla **{v_type}**! "
-                    f"(Využití {quote['cap_pct']:.0f} % · max {max_w:,.0f} kg / {max_l} LDM). "
+                    f"(Využití {quote['cap_pct']:.0f} % · max {format_num(max_w, 0)} kg / {max_l} LDM). "
                     f"Zvolte větší vozidlo nebo snižte náklad. **Cenu nelze spočítat.**",
                     icon="🚨",
                 )
@@ -4209,7 +4216,7 @@ def render_domestic_logistics() -> None:
             m1, m2, m3 = st.columns(3)
             m1.metric(
                 "Vzdálenost silniční",
-                f"{road_km:,.0f} km",
+                f"{format_num(road_km, 0)} km",
                 help=dist_help,
             )
             m2.metric(
@@ -4220,27 +4227,27 @@ def render_domestic_logistics() -> None:
             price_eur, eur_czk = _domestic_price_eur(price_czk)
             if quote["price_valid"] and price_czk is not None:
                 eur_hint = (
-                    f"≈ {price_eur:,.0f} EUR"
+                    f"≈ {format_num(price_eur, 0)} EUR"
                     if price_eur is not None
                     else "EUR: kurz ČNB nedostupný"
                 )
                 m3.metric(
                     "Odhadovaná cena k jednání",
-                    f"{price_czk:,.0f} CZK",
+                    f"{format_num(price_czk, 0)} CZK",
                     help=eur_hint,
                 )
                 if price_eur is not None and eur_czk:
                     st.caption(
-                        f"**{price_eur:,.0f} EUR** · kurz ČNB {eur_czk:.4f} CZK/EUR · "
-                        f"rozpad: jízda {quote['km_part']:,.0f} + fix {quote['fix_fee']:,.0f} CZK "
-                        f"(manipulace {quote['fix_handling']:,.0f} + dojezd "
-                        f"{quote['fix_hub_km']:.0f} km × {sazba:.1f} = {quote['fix_positioning']:,.0f}) · "
-                        f"min. {profile.get('min_price', _DOMESTIC_MIN_PRICE_CZK):,.0f} CZK"
+                        f"**{format_num(price_eur, 0)} EUR** · kurz ČNB {eur_czk:.4f} CZK/EUR · "
+                        f"rozpad: jízda {format_num(quote['km_part'], 0)} + fix {format_num(quote['fix_fee'], 0)} CZK "
+                        f"(manipulace {format_num(quote['fix_handling'], 0)} + dojezd "
+                        f"{quote['fix_hub_km']:.0f} km × {sazba:.1f} = {format_num(quote['fix_positioning'], 0)}) · "
+                        f"min. {format_num(profile.get('min_price', _DOMESTIC_MIN_PRICE_CZK), 0)} CZK"
                     )
                 else:
                     st.caption(
-                        f"Rozpad: jízda {quote['km_part']:,.0f} CZK + fix {quote['fix_fee']:,.0f} CZK · "
-                        f"min. {profile.get('min_price', _DOMESTIC_MIN_PRICE_CZK):,.0f} CZK"
+                        f"Rozpad: jízda {format_num(quote['km_part'], 0)} CZK + fix {format_num(quote['fix_fee'], 0)} CZK · "
+                        f"min. {format_num(profile.get('min_price', _DOMESTIC_MIN_PRICE_CZK), 0)} CZK"
                     )
             else:
                 m3.metric("Odhadovaná cena k jednání", "—")
@@ -4283,7 +4290,7 @@ def render_domestic_logistics() -> None:
             cross_border = start_cc != dest_cc
             border_note = " · přeshraniční trasa CZ↔SK" if cross_border else ""
             st.caption(
-                f"{v_type} · max {max_w:,.0f} kg / {max_l} LDM · "
+                f"{v_type} · max {format_num(max_w, 0)} kg / {max_l} LDM · "
                 f"vzdálenost: {route_note}{border_note} · sazba {sazba:.1f} CZK/km · "
                 f"start ({start_cc}): {start_loc['display_name']} · "
                 f"cíl ({dest_cc}): {dest_loc['display_name']}"
@@ -4313,7 +4320,7 @@ def render_summary_table() -> None:
                 rows.append({
                     "Kategorie": "⚙️ Kov",
                     "Indikátor": label,
-                    "Hodnota":   f"{price_disp:,.0f} {ccy}/t",
+                    "Hodnota":   f"{format_num(price_disp, 0)} {ccy}/t",
                     "Δ %":       "LME Cash",
                     "Trend":     "—",
                     "Zdroj":     "Westmetall",
@@ -4327,7 +4334,7 @@ def render_summary_table() -> None:
         rows.append({
             "Kategorie": "⚙️ Kov",
             "Indikátor": "Steel (HRC)",
-            "Hodnota":   f"{p_disp:,.0f} {ccy}/t" if p_disp else "N/A",
+            "Hodnota":   f"{format_num(p_disp, 0)} {ccy}/t" if p_disp else "N/A",
             "Δ %":       f"{dp:+.2f}%",
             "Trend":     "▲" if steel.get("delta", 0) > 0 else "▼",
             "Zdroj":     "Yahoo Finance",
@@ -4781,8 +4788,8 @@ def render_cargo_visualization() -> None:
 
     if total_weight_kg > _TRAILER_MAX_WEIGHT_KG:
         st.warning(
-            f"Celková hmotnost {total_weight_kg:,.0f} kg překračuje limit "
-            f"{_TRAILER_MAX_WEIGHT_KG:,.0f} kg."
+            f"Celková hmotnost {format_num(total_weight_kg, 0)} kg překračuje limit "
+            f"{format_num(_TRAILER_MAX_WEIGHT_KG, 0)} kg."
         )
     if used_length_cm > _TRAILER_LENGTH_CM:
         st.warning(
@@ -4798,7 +4805,7 @@ def render_cargo_visualization() -> None:
         st.markdown("#### Souhrn")
         m1, m2, m3 = st.columns(3)
         m1.metric("Počet bubnů", drum_count)
-        m2.metric("Celková hmotnost", f"{total_weight_kg:,.0f} kg")
+        m2.metric("Celková hmotnost", f"{format_num(total_weight_kg, 0)} kg")
         m3.metric("Obsazená délka", f"{used_length_cm / 100:.2f} m")
         st.metric("Těžiště X", f"{cog_x:.1f} cm", help="Šířka návěsu 245 cm")
         st.metric(
