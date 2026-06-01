@@ -2114,6 +2114,36 @@ def _ensure_plot_separators(fig: go.Figure | None) -> go.Figure | None:
     return fig
 
 
+def _tight_yaxis_range(
+    *series: pd.Series | list | None,
+    padding_ratio: float = 0.15,
+    min_relative_span: float = 0.003,
+) -> tuple[float, float] | None:
+    """
+    Rozsah osy Y podle min/max dat (bez nuly), aby byly vidět denní výkyvy.
+    Při téměř ploché křivce rozšíří rozsah kolem středu (min. podíl od střední hodnoty).
+    """
+    vals: list[float] = []
+    for s in series:
+        if s is None:
+            continue
+        arr = pd.Series(s).dropna().astype(float)
+        if arr.empty:
+            continue
+        vals.extend(arr.tolist())
+    if not vals:
+        return None
+    lo, hi = min(vals), max(vals)
+    span = hi - lo
+    mid = (hi + lo) / 2.0
+    min_span = max(abs(mid) * min_relative_span, 1e-6)
+    if span < min_span:
+        lo, hi = mid - min_span / 2.0, mid + min_span / 2.0
+        span = min_span
+    pad = span * padding_ratio
+    return lo - pad, hi + pad
+
+
 def _history_to_dated_series(
     df: pd.DataFrame,
     value_col: str,
@@ -2329,10 +2359,13 @@ def interactive_line_chart(
     y_column: str = "Close",
     extra_traces: list[dict] | None = None,
     show_legend: bool = False,
+    tight_yaxis: bool = False,
+    y_tickformat: str | None = None,
 ) -> go.Figure | None:
     """
     Interaktivní čárový graf (plotly.graph_objects) s volitelnými dalšími řadami.
     extra_traces: [{"y": Series/array, "name": str, "color": str, "dash": "solid"|"dot"|...}]
+    tight_yaxis: osa Y jen kolem dat (vhodné pro FX — výkyvy v tisícinách).
     """
     if df is None or df.empty or y_column not in df.columns:
         return None
@@ -2341,14 +2374,20 @@ def interactive_line_chart(
     fig = go.Figure()
 
     r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+    scatter_fill: str | None = "tozeroy"
+    scatter_fillcolor = f"rgba({r},{g},{b},0.08)"
+    if tight_yaxis:
+        scatter_fill = None
+        scatter_fillcolor = None
+
     fig.add_trace(go.Scatter(
         x=x_data,
         y=df[y_column],
         mode="lines",
         name=title.split("—")[0].strip() if "—" in title else "Cena",
         line=dict(color=color, width=2.2, shape="spline", smoothing=0.8),
-        fill="tozeroy",
-        fillcolor=f"rgba({r},{g},{b},0.08)",
+        fill=scatter_fill,
+        fillcolor=scatter_fillcolor,
         hovertemplate=f"<b>%{{x|%d.%m.%Y}}</b><br>{y_label}: %{{y:,.4f}}<extra></extra>",
     ))
 
@@ -2366,6 +2405,15 @@ def interactive_line_chart(
                 ),
                 hovertemplate=f"<b>%{{x|%d.%m.%Y}}</b><br>{tr.get('name', '')}: %{{y:,.4f}}<extra></extra>",
             ))
+
+    y_series = [df[y_column]]
+    if extra_traces:
+        y_series.extend(tr.get("y") for tr in extra_traces)
+    y_range = _tight_yaxis_range(*y_series) if tight_yaxis else None
+    default_tick = ",.4f" if tight_yaxis else ",.2f"
+    yaxis_layout = dict(**_TICK_AXIS, tickformat=y_tickformat or default_tick)
+    if y_range is not None:
+        yaxis_layout["range"] = list(y_range)
 
     fig.update_layout(
         separators=_PLOT_SEPARATORS,
@@ -2385,7 +2433,7 @@ def interactive_line_chart(
             bgcolor=_PLOT_PAPER,
         ) if show_legend else None,
         xaxis=dict(**_TICK_AXIS, tickformat="%b %y"),
-        yaxis=dict(**_TICK_AXIS, tickformat=",.2f"),
+        yaxis=yaxis_layout,
         hoverlabel=_HOVER_LABEL,
         hovermode="x unified",
     )
@@ -3359,7 +3407,13 @@ def render_fx() -> None:
                 hist = fetch_fx_history("EURUSD=X", period)
             if hist is not None and not hist.empty:
                 sub = " · odvozeno USDCZK×CNYUSD" if kind == "cny" and derived else ""
-                fig = interactive_line_chart(hist, f"{pair} — {period_lbl}{sub}", color, unit)
+                fig = interactive_line_chart(
+                    hist,
+                    f"{pair} — {period_lbl}{sub}",
+                    color,
+                    unit,
+                    tight_yaxis=True,
+                )
                 if fig:
                     _show_plotly(fig)
             else:
@@ -3374,7 +3428,13 @@ def render_fx() -> None:
     if hist_eu is not None and not hist_eu.empty:
         hist_ue = hist_eu.copy()
         hist_ue["Close"] = 1.0 / hist_ue["Close"]
-        fig_ue = interactive_line_chart(hist_ue, f"USD/EUR — {period_lbl}", "#22c55e", "EUR")
+        fig_ue = interactive_line_chart(
+            hist_ue,
+            f"USD/EUR — {period_lbl}",
+            "#22c55e",
+            "EUR",
+            tight_yaxis=True,
+        )
         if fig_ue:
             _show_plotly(fig_ue)
 
