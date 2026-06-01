@@ -2705,6 +2705,142 @@ def interactive_oil_chart(
     )
 
 
+_LME_SHFE_SPOT_COMPARE: list[tuple[str, str]] = [
+    ("copper", "Copper"),
+    ("aluminum", "Aluminum"),
+]
+
+
+def lme_shfe_spot_comparison_figure(wm_data: dict | None) -> go.Figure | None:
+    """Vodorovný graf — LME vs SHFE aktuální cena (USD/t) pro měď a hliník."""
+    labels: list[str] = []
+    prices: list[float] = []
+    colors: list[str] = []
+
+    for metal_key, metal_label in _LME_SHFE_SPOT_COMPARE:
+        try:
+            lme_usd, _, _ = resolve_metal_price(metal_key, wm_data)
+            if lme_usd is not None and float(lme_usd) > 0:
+                labels.append(f"{metal_label} — LME")
+                prices.append(float(lme_usd))
+                colors.append("#0D6EFD")
+        except Exception:
+            pass
+        try:
+            shfe_usd, _, _ = get_shfe_china_usd(metal_key)
+            if shfe_usd is not None and float(shfe_usd) > 0:
+                labels.append(f"{metal_label} — SHFE")
+                prices.append(float(shfe_usd))
+                colors.append("#FD7E14")
+        except Exception:
+            pass
+
+    if not labels:
+        return None
+
+    fig = go.Figure(
+        go.Bar(
+            y=labels,
+            x=prices,
+            orientation="h",
+            marker=dict(color=colors, line_width=0),
+            text=[f" {format_num(p, 0)} USD/t" for p in prices],
+            textposition="outside",
+            textfont=dict(family="IBM Plex Mono, monospace", size=9.5, color=_PLOT_TITLE_COLOR),
+            hovertemplate="<b>%{y}</b><br>%{x:,.0f} USD/t<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        separators=_PLOT_SEPARATORS,
+        title=dict(
+            text="Porovnání LME vs SHFE — aktuální ceny (USD/t)",
+            font=dict(family="Syne, sans-serif", size=13, color=_PLOT_TITLE_COLOR),
+        ),
+        height=max(180, 52 * len(labels)),
+        margin=dict(l=10, r=10, t=36, b=12),
+        paper_bgcolor=_PLOT_PAPER,
+        plot_bgcolor=_PLOT_BG,
+        showlegend=False,
+        xaxis=dict(
+            gridcolor=_PLOT_GRID,
+            tickfont=dict(family="IBM Plex Mono, monospace", size=10, color=_PLOT_TICK_COLOR),
+            tickformat=",.0f",
+            showgrid=True,
+            zeroline=False,
+            title="USD/t",
+        ),
+        yaxis=dict(
+            tickfont=dict(family="Syne, sans-serif", size=10, color=_PLOT_TICK_COLOR),
+            showgrid=False,
+        ),
+        bargap=0.28,
+        hoverlabel=_HOVER_LABEL,
+    )
+    return fig
+
+
+def _render_lme_shfe_spot_comparison(wm_data: dict | None) -> None:
+    """Tabulka + graf: LME a SHFE ceny mědi a hliníku v USD/t (bez oceli)."""
+    table_rows: list[dict[str, str]] = []
+
+    for metal_key, metal_label in _LME_SHFE_SPOT_COMPARE:
+        lme_str = "N/A"
+        shfe_str = "N/A"
+        try:
+            lme_usd, _, _ = resolve_metal_price(metal_key, wm_data)
+            if lme_usd is not None:
+                lme_str = format_num(lme_usd, 0)
+        except Exception:
+            pass
+        try:
+            shfe_usd, _, _ = get_shfe_china_usd(metal_key)
+            if shfe_usd is not None:
+                shfe_str = format_num(shfe_usd, 0)
+        except Exception:
+            pass
+        if lme_str != "N/A" or shfe_str != "N/A":
+            table_rows.append(
+                {"Kov": metal_label, "LME (Londýn) [USD/t]": lme_str, "SHFE (Šanghaj) [USD/t]": shfe_str}
+            )
+
+    if not table_rows:
+        st.markdown(
+            '<div class="error-box" style="padding:10px;">'
+            "Porovnání LME vs SHFE — aktuální ceny nejsou k dispozici."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    st.markdown(
+        "<div style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
+        "color:#495057;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
+        "Aktuální ceny LME vs SHFE (USD/t)</div>",
+        unsafe_allow_html=True,
+    )
+    st.dataframe(
+        pd.DataFrame(table_rows),
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Kov": st.column_config.TextColumn("Kov", width="small"),
+            "LME (Londýn) [USD/t]": st.column_config.TextColumn("LME (Londýn) [USD/t]"),
+            "SHFE (Šanghaj) [USD/t]": st.column_config.TextColumn("SHFE (Šanghaj) [USD/t]"),
+        },
+    )
+
+    try:
+        fig = lme_shfe_spot_comparison_figure(wm_data)
+        if fig:
+            st.markdown("<br>", unsafe_allow_html=True)
+            _show_plotly(fig, toolbar=False)
+            st.caption(
+                "LME: Westmetall Cash · SHFE: Sina Finance + přepočet CNY→USD (ČNB) · vše v USD/t"
+            )
+    except Exception as exc:
+        st.warning(f"Graf porovnání LME/SHFE nelze vykreslit: {exc}")
+
+
 def bar_metals(
     data: dict,
     title: str | None = None,
@@ -2971,22 +3107,9 @@ def render_metals() -> None:
     with col_spread_full:
         _render_shfe_spreads(wm_data)
 
-    # ── Srovnávací bar chart (měď, hliník, ocel) ──────────────────────────────
-    bar_data: dict = {}
-    for mk in ["copper", "aluminum"]:
-        p_usd, _, _ = resolve_metal_price(mk, wm_data)
-        p_disp = usd_to_display(p_usd, ccy)
-        if p_disp is not None:
-            bar_data[mk] = {"price": p_disp}
-    if steel_data:
-        p_st = usd_to_display(steel_data["price"], ccy)
-        if p_st is not None:
-            bar_data["steel"] = {"price": p_st}
-    if bar_data:
-        fig_bar = bar_metals(bar_data, currency=ccy)
-        if fig_bar:
-            st.markdown("<br>", unsafe_allow_html=True)
-            _show_plotly(fig_bar, toolbar=False)
+    # ── Aktuální ceny LME vs SHFE (měď, hliník — USD/t, bez oceli) ───────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    _render_lme_shfe_spot_comparison(wm_data)
 
     if wm_data and wm_data.get("_source") == "westmetall.com":
         st.markdown(
