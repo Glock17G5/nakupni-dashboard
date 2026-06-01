@@ -335,9 +335,39 @@ footer { visibility: hidden; }
 }
 
 .card-value-sm { font-size: 1.1rem; }
-.card-unit { font-size: 0.7rem; color: #495057; }
-.card-extra { font-size: 0.65rem; color: #6C757D; }
-.card-delta-row { margin-top: 4px; }
+.card-unit {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #343a40;
+    margin: 4px 0 8px 0;
+    letter-spacing: 0.4px;
+}
+.card-unit-emphasis {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: #000000;
+    margin: 8px 0 12px 0;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+}
+.card-extra {
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: #495057;
+    line-height: 1.45;
+    margin-top: 8px;
+}
+.card-extra-emphasis {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #212529;
+    margin-top: 14px;
+    padding-top: 10px;
+    border-top: 2px solid #DEE2E6;
+    line-height: 1.5;
+}
+.card-delta-row { margin-top: 6px; }
 
 .delta-chip {
     font-family: 'IBM Plex Mono', monospace;
@@ -376,6 +406,8 @@ footer { visibility: hidden; }
     .dash-title { font-size: 1.35rem; }
     .metric-card { padding: 12px; }
     .card-value { font-size: 1.2rem; }
+    .card-unit-emphasis { font-size: 1.05rem; }
+    .card-extra-emphasis { font-size: 0.92rem; }
     [data-testid="stHorizontalBlock"] { flex-direction: column !important; }
     [data-testid="stHorizontalBlock"] > div { width: 100% !important; }
 }
@@ -661,16 +693,19 @@ def metric_card(
     card_class: str = "card-neutral",
     extra: str = None,
     value_size: str = "",
+    emphasis: bool = False,
 ) -> str:
     """Sestaví HTML pro metrickou kartu a vrátí jako řetězec."""
     delta_row = f'<div class="card-delta-row">{delta_chip(delta, delta_suffix)}</div>'
-    extra_row = f'<div class="card-extra">{extra}</div>' if extra else ""
+    extra_cls = "card-extra card-extra-emphasis" if emphasis else "card-extra"
+    unit_cls = "card-unit card-unit-emphasis" if emphasis else "card-unit"
+    extra_row = f'<div class="{extra_cls}">{extra}</div>' if extra else ""
     size_cls = " card-value-sm" if value_size == "sm" else ""
     return f"""
     <div class="metric-card {card_class}">
         <div class="card-label">{label}</div>
         <div class="card-value{size_cls}">{value}</div>
-        <div class="card-unit">{unit}</div>
+        <div class="{unit_cls}">{unit}</div>
         {delta_row}
         {extra_row}
     </div>
@@ -738,6 +773,7 @@ def _render_lme_metal_card(
                     unit,
                     card_class=card_class,
                     extra=stock_extra or "Westmetall LME Cash",
+                    emphasis=True,
                 ),
                 unsafe_allow_html=True,
             )
@@ -765,6 +801,7 @@ def _render_steel_metric_card(steel_data: dict | None) -> None:
                 delta_suffix=d_suffix if st_delta is not None else "",
                 card_class="card-steel",
                 extra=f'{steel_data.get("ticker", "HRC")} · Yahoo · armoured cables',
+                emphasis=True,
             ),
             unsafe_allow_html=True,
         )
@@ -1918,6 +1955,16 @@ def get_chart_period_label() -> str:
     return st.session_state.get("chart_period_label", "3M")
 
 
+def _shfe_vs_lme_spread_pct(shfe_usd: float, lme_usd: float) -> float | None:
+    """SHFE oproti LME v % — (SHFE − LME) / LME × 100."""
+    try:
+        if lme_usd is None or shfe_usd is None or float(lme_usd) == 0:
+            return None
+        return (float(shfe_usd) - float(lme_usd)) / float(lme_usd) * 100.0
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
 def get_shfe_china_usd(metal_key: str) -> tuple[float | None, dict | None, float | None]:
     """
     Čínská strana spreadu — pouze SHFE (Sina) + přepočet CNY přes ČNB.
@@ -2786,6 +2833,10 @@ def _render_lme_shfe_spot_comparison(wm_data: dict | None) -> None:
     for metal_key, metal_label in _LME_SHFE_SPOT_COMPARE:
         lme_str = "N/A"
         shfe_str = "N/A"
+        diff_str = "N/A"
+        pct_str = "N/A"
+        lme_usd: float | None = None
+        shfe_usd: float | None = None
         try:
             lme_usd, _, _ = resolve_metal_price(metal_key, wm_data)
             if lme_usd is not None:
@@ -2798,9 +2849,21 @@ def _render_lme_shfe_spot_comparison(wm_data: dict | None) -> None:
                 shfe_str = format_num(shfe_usd, 0)
         except Exception:
             pass
+        if lme_usd is not None and shfe_usd is not None:
+            diff_usd = shfe_usd - lme_usd
+            diff_str = f"{diff_usd:+,.0f}".replace(",", " ")
+            spread_pct = _shfe_vs_lme_spread_pct(shfe_usd, lme_usd)
+            if spread_pct is not None:
+                pct_str = f"{spread_pct:+.1f} %"
         if lme_str != "N/A" or shfe_str != "N/A":
             table_rows.append(
-                {"Kov": metal_label, "LME (Londýn) [USD/t]": lme_str, "SHFE (Šanghaj) [USD/t]": shfe_str}
+                {
+                    "Kov": metal_label,
+                    "LME (Londýn) [USD/t]": lme_str,
+                    "SHFE (Šanghaj) [USD/t]": shfe_str,
+                    "Rozdíl SHFE−LME [USD/t]": diff_str,
+                    "Rozdíl vůči LME [%]": pct_str,
+                }
             )
 
     if not table_rows:
@@ -2826,6 +2889,8 @@ def _render_lme_shfe_spot_comparison(wm_data: dict | None) -> None:
             "Kov": st.column_config.TextColumn("Kov", width="small"),
             "LME (Londýn) [USD/t]": st.column_config.TextColumn("LME (Londýn) [USD/t]"),
             "SHFE (Šanghaj) [USD/t]": st.column_config.TextColumn("SHFE (Šanghaj) [USD/t]"),
+            "Rozdíl SHFE−LME [USD/t]": st.column_config.TextColumn("Rozdíl SHFE−LME [USD/t]"),
+            "Rozdíl vůči LME [%]": st.column_config.TextColumn("Rozdíl vůči LME [%]"),
         },
     )
 
@@ -3142,10 +3207,19 @@ def _render_shfe_spread_item(metal_key: str, metal_name: str, wm_data: dict | No
             return
         s_color = "#10b981" if spread_usd >= 0 else "#ef4444"
         s_sign = "+" if spread_usd >= 0 else ""
+        spread_pct = _shfe_vs_lme_spread_pct(china_usd, lme_usd)
+        pct_html = ""
+        if spread_pct is not None:
+            pct_sign = "+" if spread_pct >= 0 else ""
+            pct_html = (
+                f' <span style="font-size:0.85rem;font-weight:600;">'
+                f"({pct_sign}{spread_pct:.1f} % vůči LME)</span>"
+            )
         st.markdown(
             f"<div style='margin-bottom:6px;'>{badge_html(True, 'Sina / SHFE')}</div>"
             f'<div class="spread-card"><div class="spread-label">{metal_name}: SHFE vs LME</div>'
-            f'<div class="spread-value" style="color:{s_color};">{s_sign}{format_num(spread_disp, 0)} {ccy}/t</div>'
+            f'<div class="spread-value" style="color:{s_color};">'
+            f"{s_sign}{format_num(spread_disp, 0)} {ccy}/t{pct_html}</div>"
             f'<div class="spread-details">SHFE: {format_num(cny_price, 0)} CNY/t (≈ {format_num(china_disp, 0)} {ccy}/t)<br>'
             f"LME Cash (Westmetall): {format_num(lme_disp, 0)} {ccy}/t</div></div>",
             unsafe_allow_html=True,
