@@ -784,8 +784,12 @@ def _render_lme_metal_card(
         )
 
 
-def _render_steel_metric_card(steel_data: dict | None) -> None:
-    """Metrická karta oceli (HRC) — Yahoo."""
+def _render_steel_metric_card(
+    steel_data: dict | None,
+    label: str,
+    default_ticker: str,
+) -> None:
+    """Metrická karta oceli (HRC / Scrap) — Yahoo."""
     unit = metal_unit_label()
     ccy = get_display_currency()
     d_suffix = currency_delta_suffix()
@@ -794,21 +798,21 @@ def _render_steel_metric_card(steel_data: dict | None) -> None:
         st_delta = usd_to_display(steel_data.get("delta"), ccy)
         st.markdown(
             metric_card(
-                "Ocel (HRC)",
+                label,
                 format_num(st_price, 0) if st_price is not None else "N/A",
                 unit,
                 delta=st_delta,
                 delta_suffix=d_suffix if st_delta is not None else "",
                 card_class="card-steel",
-                extra=f'{steel_data.get("ticker", "HRC")} · Yahoo · armoured cables',
+                extra=f'{steel_data.get("ticker", default_ticker)} · Yahoo',
                 emphasis=True,
             ),
             unsafe_allow_html=True,
         )
     else:
-        st.warning("Ocel (HRC): Yahoo Finance nevrátilo živou cenu.")
+        st.warning(f"{label}: Yahoo Finance nevrátilo živou cenu ({default_ticker}).")
         st.markdown(
-            error_card("Ocel (HRC)", "card-steel", "Data nedostupná"),
+            error_card(label, "card-steel", "Data nedostupná"),
             unsafe_allow_html=True,
         )
 
@@ -1067,35 +1071,54 @@ def fetch_westmetall() -> dict | None:
 # Převod CME HRC (USD / short ton) → USD / metrická tuna
 _ST_TON_FACTOR = 2204.623 / 2000.0
 
-_STEEL_TICKERS = ("HRC=F", "STRE=F")
+_STEEL_HRC_TICKERS = ("HRC=F", "STRE=F")
+_STEEL_SCRAP_TICKERS = ("BUS=F",)
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def fetch_steel_ticker(ticker: str, note: str) -> dict | None:
+    """Jedna ocelová série z Yahoo (USD/short ton → USD/t). Bez náhradních tickerů v rámci řady."""
+    try:
+        hist = yf.Ticker(ticker).history(period="1mo", auto_adjust=True)
+        hist = hist.dropna(subset=["Close"])
+        if hist.empty:
+            return None
+        price_st = float(hist["Close"].iloc[-1])
+        prev_st = float(hist["Close"].iloc[-2]) if len(hist) > 1 else price_st
+        price_t = price_st * _ST_TON_FACTOR
+        prev_t = prev_st * _ST_TON_FACTOR
+        return {
+            "price": round(price_t, 2),
+            "prev_price": round(prev_t, 2),
+            "delta": round(price_t - prev_t, 2),
+            "delta_pct": round((price_t - prev_t) / prev_t * 100, 2) if prev_t else 0,
+            "unit": "USD/t",
+            "ticker": ticker,
+            "note": note,
+            "_source": "Yahoo Finance",
+            "_ts": now_prague().strftime("%Y-%m-%d %H:%M"),
+        }
+    except Exception:
+        return None
 
 
 @st.cache_data(ttl=CACHE_TTL)
 def fetch_steel_yfinance() -> dict | None:
-    """Ocel (Hot Rolled Coil) — Yahoo HRC=F nebo STRE=F, cena v USD/t."""
-    for ticker in _STEEL_TICKERS:
-        try:
-            hist = yf.Ticker(ticker).history(period="10d")
-            hist = hist.dropna(subset=["Close"])
-            if hist.empty:
-                continue
-            price_st = float(hist["Close"].iloc[-1])
-            prev_st = float(hist["Close"].iloc[-2]) if len(hist) > 1 else price_st
-            price_t = price_st * _ST_TON_FACTOR
-            prev_t = prev_st * _ST_TON_FACTOR
-            return {
-                "price":      round(price_t, 2),
-                "prev_price": round(prev_t, 2),
-                "delta":      round(price_t - prev_t, 2),
-                "delta_pct":  round((price_t - prev_t) / prev_t * 100, 2) if prev_t else 0,
-                "unit":       "USD/t",
-                "ticker":     ticker,
-                "note":       "Hot Rolled Coil (CME)",
-                "_source":    "Yahoo Finance",
-                "_ts":        now_prague().strftime("%Y-%m-%d %H:%M"),
-            }
-        except Exception:
-            continue
+    """Ocel HRC — Yahoo HRC=F, záloha STRE=F."""
+    for ticker in _STEEL_HRC_TICKERS:
+        data = fetch_steel_ticker(ticker, "Hot Rolled Coil (CME)")
+        if data:
+            return data
+    return None
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def fetch_steel_scrap_yfinance() -> dict | None:
+    """Ocel Scrap — Yahoo BUS=F (busheling)."""
+    for ticker in _STEEL_SCRAP_TICKERS:
+        data = fetch_steel_ticker(ticker, "Busheling scrap (CME)")
+        if data:
+            return data
     return None
 
 
@@ -1177,90 +1200,6 @@ def _safe_float(s: str) -> float | None:
         return v if v != 0.0 else None
     except (ValueError, AttributeError):
         return None
-
-
-_METAL_KEY_TO_SHFE_CODE: dict[str, str] = {"copper": "CU", "aluminum": "AL"}
-_SHFE_SINA_SYMBOLS: dict[str, str] = {"CU": "CU0", "AL": "AL0"}
-_SHFE_SINA_KLINE_URL = (
-    "https://stock2.finance.sina.com.cn/futures/api/json.php/"
-    "InnerFuturesNewService.getDailyKLine?symbol={symbol}"
-)
-_SHFE_CORRELATION_UNAVAILABLE_MSG = (
-    "Historická data z čínské burzy (SHFE) nejsou momentálně dostupná. "
-    "Graf korelace trhů nelze zobrazit."
-)
-
-
-def _shfe_historical_has_values(df: pd.DataFrame | None) -> bool:
-    """True jen pokud DataFrame obsahuje reálné kladné hodnoty SHFE_USD ze Sina (+ FX)."""
-    if df is None or df.empty or "SHFE_USD" not in df.columns:
-        return False
-    vals = pd.to_numeric(df["SHFE_USD"], errors="coerce").dropna()
-    return not vals.empty and bool((vals > 0).any())
-
-
-@st.cache_data(ttl=CACHE_TTL)
-def get_shfe_historical_usd_sina(metal_code: str, period: str = "1y") -> pd.DataFrame:
-    """
-    Historie SHFE ze Sina Finance → USD/t přes USDCNY=X (Yahoo).
-    Při jakémkoli selhání vrací prázdný DataFrame — žádná náhradní data.
-    """
-    if metal_code not in _SHFE_SINA_SYMBOLS:
-        return pd.DataFrame()
-
-    symbol = _SHFE_SINA_SYMBOLS[metal_code]
-    url = _SHFE_SINA_KLINE_URL.format(symbol=symbol)
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Referer": "http://finance.sina.com.cn/",
-    }
-
-    try:
-        res = requests.get(url, headers=headers, timeout=12)
-        res.raise_for_status()
-        data = res.json()
-        if not isinstance(data, list) or not data:
-            return pd.DataFrame()
-
-        df_shfe = pd.DataFrame(data)
-        if "d" not in df_shfe.columns or "c" not in df_shfe.columns:
-            return pd.DataFrame()
-
-        df_shfe["date"] = pd.to_datetime(df_shfe["d"], errors="coerce").dt.normalize()
-        df_shfe["Price_CNY"] = pd.to_numeric(df_shfe["c"], errors="coerce")
-        df_shfe = df_shfe.dropna(subset=["date", "Price_CNY"])
-        df_shfe = df_shfe[df_shfe["Price_CNY"] > 0]
-        if df_shfe.empty:
-            return pd.DataFrame()
-
-        df_shfe = df_shfe.drop_duplicates(subset=["date"], keep="last")
-        df_shfe = df_shfe.set_index("date")[["Price_CNY"]]
-
-        df_fx = yf.Ticker("USDCNY=X").history(period=period, auto_adjust=False)
-        if df_fx is None or df_fx.empty or "Close" not in df_fx.columns:
-            return pd.DataFrame()
-
-        fx_idx = pd.to_datetime(df_fx.index, utc=True).tz_convert(None).normalize()
-        fx_close = pd.to_numeric(df_fx["Close"], errors="coerce")
-        df_fx = pd.DataFrame({"FX": fx_close.values}, index=fx_idx)
-        df_fx = df_fx[df_fx["FX"] > 0].dropna()
-        if df_fx.empty:
-            return pd.DataFrame()
-
-        df = df_shfe.join(df_fx, how="inner")
-        if df.empty:
-            return pd.DataFrame()
-
-        df["SHFE_USD"] = df["Price_CNY"] / df["FX"]
-        df = df[df["SHFE_USD"] > 0]
-        if df.empty:
-            return pd.DataFrame()
-
-        out = df[["SHFE_USD"]].copy()
-        out.index.name = "Date"
-        return out.sort_index()
-    except Exception:
-        return pd.DataFrame()
 
 
 # ==============================================================================
@@ -2621,174 +2560,6 @@ def _render_wm_metal_history_chart(
     )
 
 
-def _lme_shfe_overlap_days(lme_s: pd.Series, shfe_s: pd.Series) -> int:
-    """Počet společných kalendářních dnů s reálnými hodnotami LME i SHFE."""
-    if lme_s.empty or shfe_s.empty:
-        return 0
-    return len(lme_s.index.intersection(shfe_s.index))
-
-
-def _build_metal_correlation_figure(
-    metal_key: str,
-    period: str,
-    lme_hist_df: pd.DataFrame | None,
-    shfe_df: pd.DataFrame | None = None,
-) -> tuple[go.Figure | None, int]:
-    """
-    Sestaví graf LME vs SHFE (USD/t). Vrací (fig, počet společných dnů).
-    Bez platných dat SHFE nebo bez překryvu s LME vrací (None, 0) — nikdy jen jednu řadu.
-    """
-    metal_code = _METAL_KEY_TO_SHFE_CODE.get(metal_key)
-    if not metal_code:
-        return None, 0
-
-    if lme_hist_df is None or lme_hist_df.empty:
-        lme_hist_df = _wm_lme_history_filtered(metal_key)
-    if lme_hist_df is None or lme_hist_df.empty or "Close" not in lme_hist_df.columns:
-        return None, 0
-
-    if shfe_df is None:
-        shfe_df = get_shfe_historical_usd_sina(metal_code, period)
-    if not _shfe_historical_has_values(shfe_df):
-        return None, 0
-
-    try:
-        lme_s = _clip_series_to_chart_period(_history_to_dated_series(lme_hist_df, "Close", "Date"))
-        shfe_s = _clip_series_to_chart_period(_history_to_dated_series(shfe_df, "SHFE_USD", None))
-        if lme_s.empty or shfe_s.empty:
-            return None, 0
-
-        overlap = _lme_shfe_overlap_days(lme_s, shfe_s)
-        if overlap < 1:
-            return None, 0
-
-        fig = go.Figure()
-        fig.add_trace(
-            go.Scatter(
-                x=lme_s.index,
-                y=lme_s.values,
-                mode="lines",
-                name="LME (Londýn)",
-                line=dict(color="#0D6EFD", width=2.2, shape="spline", smoothing=0.65),
-                hovertemplate="<b>%{x|%d.%m.%Y}</b><br>LME: %{y:,.0f} USD/t<extra></extra>",
-            )
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=shfe_s.index,
-                y=shfe_s.values,
-                mode="lines",
-                name="SHFE (Šanghaj - USD)",
-                line=dict(color="#FD7E14", width=2.2, shape="spline", smoothing=0.65),
-                hovertemplate="<b>%{x|%d.%m.%Y}</b><br>SHFE: %{y:,.0f} USD/t<extra></extra>",
-            )
-        )
-
-        y_all = pd.concat([lme_s, shfe_s], ignore_index=True).dropna()
-        if y_all.empty or len(fig.data) != 2:
-            return None, overlap
-        y_min, y_max = float(y_all.min()), float(y_all.max())
-        pad = max((y_max - y_min) * 0.06, 50.0) if y_max > y_min else max(abs(y_max) * 0.02, 50.0)
-
-        period_lbl = get_chart_period_label()
-        metal_titles = {"copper": "Měď", "aluminum": "Hliník"}
-        title_metal = metal_titles.get(metal_key, metal_key)
-
-        fig.update_layout(
-            separators=_PLOT_SEPARATORS,
-            title=dict(
-                text=f"{title_metal} — LME vs SHFE ({period_lbl})",
-                font=dict(family="Syne, sans-serif", size=11, color=_PLOT_TITLE_COLOR),
-                x=0.02,
-                xanchor="left",
-            ),
-            height=300,
-            margin=dict(l=8, r=8, t=40, b=8),
-            paper_bgcolor=_PLOT_PAPER,
-            plot_bgcolor=_PLOT_BG,
-            showlegend=True,
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.12,
-                xanchor="right",
-                x=1,
-                font=dict(family="IBM Plex Mono, monospace", size=9, color=_PLOT_TICK_COLOR),
-                bgcolor=_PLOT_PAPER,
-            ),
-            hoverlabel=_HOVER_LABEL,
-            hovermode="x unified",
-            xaxis=dict(**_TICK_AXIS, tickformat="%d.%m.%Y", title=None),
-            yaxis=dict(
-                **_TICK_AXIS,
-                tickformat=",.0f",
-                title=dict(text="USD/t", standoff=6),
-                range=[y_min - pad, y_max + pad],
-                autorange=False,
-            ),
-        )
-        return fig, overlap
-    except Exception:
-        return None, 0
-
-
-def render_metal_correlation_chart(
-    metal_key: str,
-    period: str,
-    lme_hist_df: pd.DataFrame | None,
-) -> None:
-    """Historická korelace LME (Westmetall) vs SHFE (Sina + USDCNY=X) — bez náhradních dat."""
-    metal_code = _METAL_KEY_TO_SHFE_CODE.get(metal_key)
-    if not metal_code:
-        return
-
-    period_lbl = get_chart_period_label()
-    metal_titles = {"copper": "Měď", "aluminum": "Hliník"}
-    title_metal = metal_titles.get(metal_key, metal_key)
-    sina_symbol = _SHFE_SINA_SYMBOLS.get(metal_code, "")
-
-    st.markdown(
-        "<div style='font-family:Syne,sans-serif;font-size:0.72rem;font-weight:700;"
-        "color:#495057;text-transform:uppercase;letter-spacing:0.8px;margin:12px 0 6px 0;'>"
-        f"📊 Korelace LME vs SHFE — {title_metal} ({period_lbl})</div>",
-        unsafe_allow_html=True,
-    )
-
-    if lme_hist_df is None or lme_hist_df.empty:
-        lme_hist_df = _wm_lme_history_filtered(metal_key)
-
-    shfe_df = get_shfe_historical_usd_sina(metal_code, period)
-    if not _shfe_historical_has_values(shfe_df):
-        st.warning(_SHFE_CORRELATION_UNAVAILABLE_MSG)
-        return
-
-    if lme_hist_df is None or lme_hist_df.empty or "Close" not in lme_hist_df.columns:
-        st.markdown(
-            '<div class="error-box" style="padding:10px;font-size:0.85rem;">'
-            "Historická data LME (Westmetall) nejsou k dispozici — graf korelace nelze zobrazit."
-            "</div>",
-            unsafe_allow_html=True,
-        )
-        return
-
-    try:
-        fig, overlap = _build_metal_correlation_figure(
-            metal_key, period, lme_hist_df, shfe_df=shfe_df
-        )
-        if fig is None or overlap < 1:
-            st.warning(_SHFE_CORRELATION_UNAVAILABLE_MSG)
-            return
-
-        _ensure_plot_separators(fig)
-        _show_plotly(fig)
-        st.caption(
-            f"LME: Westmetall Cash · SHFE: Sina Finance {sina_symbol} ÷ USDCNY=X (Yahoo) · "
-            f"období {period_lbl} · společných obchodních dnů: {overlap}"
-        )
-    except Exception:
-        st.warning(_SHFE_CORRELATION_UNAVAILABLE_MSG)
-
-
 def interactive_oil_chart(
     df: pd.DataFrame,
     title: str,
@@ -3144,10 +2915,11 @@ def render_global_controls() -> tuple[str, str]:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def render_metals() -> None:
-    """Sekce 1 – LME & SHFE ceny kovů, spreads, historické grafy."""
+    """Sekce 1 – LME kovy, ocel (HRC/Scrap), spotové SHFE vs LME, historie Westmetall."""
 
     wm_data = fetch_westmetall()
-    steel_data = fetch_steel_yfinance()
+    steel_hrc = fetch_steel_yfinance()
+    steel_scrap = fetch_steel_scrap_yfinance()
     period = get_chart_period()
     period_lbl = get_chart_period_label()
 
@@ -3157,19 +2929,24 @@ def render_metals() -> None:
     section_header(
         "🔩", "Metaly — LME, Ocel & SHFE",
         badge_html(has_cu and has_al, "westmetall.com LME Cash"),
-        badge_html(steel_data is not None, "Yahoo HRC"),
+        badge_html(steel_hrc is not None, "Yahoo HRC"),
+        badge_html(steel_scrap is not None, "Yahoo Scrap"),
     )
 
     if not wm_data:
         st.warning("Westmetall: LME data se nepodařilo stáhnout — ceny mědi a hliníku nejsou k dispozici.")
 
     ccy = get_display_currency()
-    cols = st.columns(3)
-    for (mk, mn, cls, stock_key), col in zip(_LME_METAL_CARDS, cols[:2]):
-        with col:
-            _render_lme_metal_card(mk, mn, cls, stock_key, wm_data)
-    with cols[2]:
-        _render_steel_metric_card(steel_data)
+    col_cu, col_al, col_hrc, col_scrap = st.columns(4)
+    cu_cfg, al_cfg = _LME_METAL_CARDS
+    with col_cu:
+        _render_lme_metal_card(cu_cfg[0], cu_cfg[1], cu_cfg[2], cu_cfg[3], wm_data)
+    with col_al:
+        _render_lme_metal_card(al_cfg[0], al_cfg[1], al_cfg[2], al_cfg[3], wm_data)
+    with col_hrc:
+        _render_steel_metric_card(steel_hrc, "Ocel HRC", "HRC=F")
+    with col_scrap:
+        _render_steel_metric_card(steel_scrap, "Ocel Scrap", "BUS=F")
 
     with st.expander(
         "🧮 Profesionální kabelářská kalkulačka (Metal Surcharge)",
@@ -3178,30 +2955,28 @@ def render_metals() -> None:
         render_metal_surcharge_calculator(fetch_cnb_rates())
 
     st.markdown("<br>", unsafe_allow_html=True)
-    render_rsi_signals(steel_data)
+    render_rsi_signals(steel_hrc)
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Historické grafy — měď & hliník (Westmetall), ocel (Yahoo) ────────────
+    # ── Historické grafy — měď & hliník (Westmetall), ocel HRC (Yahoo) ────────
     st.markdown(
         "<div style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
         "color:#495057;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
         f"Historické grafy — Měď & Hliník (Westmetall, {period_lbl}) · "
-        f"Ocel (Yahoo, {ccy}/t)</div>",
+        f"Ocel HRC (Yahoo, {ccy}/t)</div>",
         unsafe_allow_html=True,
     )
-    col_cu, col_al, col_st = st.columns(3)
+    col_cu_hist, col_al_hist, col_st_hist = st.columns(3)
     y_unit = f"{ccy}/t"
-    steel_ticker = (steel_data or {}).get("ticker", "HRC=F")
+    steel_ticker = (steel_hrc or {}).get("ticker", "HRC=F")
 
-    with col_cu:
+    with col_cu_hist:
         _render_wm_metal_history_chart("copper", "Měď (Cu)", "#f97316")
-        render_metal_correlation_chart("copper", period, _wm_lme_history_filtered("copper"))
 
-    with col_al:
+    with col_al_hist:
         _render_wm_metal_history_chart("aluminum", "Hliník (Al)", "#10b981")
-        render_metal_correlation_chart("aluminum", period, _wm_lme_history_filtered("aluminum"))
 
-    with col_st:
+    with col_st_hist:
         st_hist = fetch_metal_history(steel_ticker, period)
         if st_hist is not None and not st_hist.empty:
             st_plot = st_hist.copy()
@@ -3209,7 +2984,7 @@ def render_metals() -> None:
             st_plot = apply_currency_to_df(st_plot)
             _render_metal_history_with_tabs(
                 st_plot,
-                "Ocel (HRC)",
+                "Ocel HRC",
                 "#64748b",
                 y_unit,
                 price_col="Close",
@@ -3217,7 +2992,7 @@ def render_metals() -> None:
             )
         else:
             st.markdown(
-                '<div class="error-box">Graf oceli momentálně nedostupný (Yahoo HRC=F / STRE=F)</div>',
+                '<div class="error-box">Graf oceli HRC momentálně nedostupný (Yahoo HRC=F / STRE=F)</div>',
                 unsafe_allow_html=True,
             )
 
