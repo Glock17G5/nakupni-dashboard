@@ -1134,51 +1134,83 @@ def fetch_metal_history(ticker: str = "HG=F", period: str = "6mo") -> pd.DataFra
 
 # ==============================================================================
 # ─────────────────────────────────────────────────────────────────────────────
-#  DATOVÉ FUNKCE – SHFE (Čínská burza přes Sina Finance)
+#  DATOVÉ FUNKCE – Čínský spot (ccmn.cn)
 # ─────────────────────────────────────────────────────────────────────────────
 # ==============================================================================
 
-_SHFE_TICKERS = {"copper": "nf_CU0", "aluminum": "nf_AL0"}
-
 
 @st.cache_data(ttl=CACHE_TTL)
-def fetch_shfe_sina(metal: str = "copper") -> dict | None:
+def fetch_ccmn_spot(metal: str = "copper") -> dict | None:
     """
-    Stahuje aktuální ceny z SHFE přes Sina Finance hq API.
-    Formát odpovědi: var hq_str_nf_CU0="datum,čas,open,high,low,close,settle,...";
-    Vrátí {price (CNY/t), open, settle, ticker} nebo None.
+    Scrapuje aktuální ceny z fyzického trhu Changjiang (ccmn.cn).
+    Hledá 1#铜 (Měď) a A00铝 (Hliník).
     """
-    ticker = _SHFE_TICKERS.get(metal)
-    if not ticker:
-        return None
-    url    = f"http://hq.sinajs.cn/list={ticker}"
+    target = "1#铜" if metal == "copper" else "A00铝"
+    fallback = "https://copper.ccmn.cn/" if metal == "copper" else "https://alu.ccmn.cn/"
+    urls = ["https://www.ccmn.cn/", fallback]
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Referer":    "http://finance.sina.com.cn/",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        )
     }
+
+    def _price_from_table(soup: BeautifulSoup) -> float | None:
+        cell = soup.find(
+            lambda tag: tag.name in ["td", "a", "span"]
+            and tag.get_text(strip=True) == target
+        )
+        if not cell:
+            return None
+        row = cell.find_parent("tr")
+        if not row:
+            return None
+        cols = row.find_all("td")
+        if len(cols) < 3:
+            return None
+        avg_price_str = cols[2].get_text(strip=True)
+        price = float(re.sub(r"[^\d.]", "", avg_price_str))
+        return price if price > 0 else None
+
+    def _price_from_spot_blocks(soup: BeautifulSoup) -> float | None:
+        picked: float | None = None
+        for block in soup.select("div.content1-text-div"):
+            right = block.find("span", class_="right")
+            if not right or right.get_text(strip=True) != target:
+                continue
+            region_el = block.find("span", class_="left")
+            region = region_el.get_text(strip=True) if region_el else ""
+            span = block.select_one("span.up_down_span")
+            if not span:
+                continue
+            match = re.search(r"([\d,]+(?:\.\d+)?)", span.get_text())
+            if not match:
+                continue
+            price = float(match.group(1).replace(",", ""))
+            if price <= 0:
+                continue
+            if "长江综合" in region:
+                return price
+            if picked is None or "上海地区" in region:
+                picked = price
+        return picked
+
     try:
-        resp = requests.get(url, headers=headers, timeout=12)
-        resp.encoding = "gbk"   # Sina Finance používá GBK
-        match = re.search(r'"([^"]+)"', resp.text)
-        if not match:
-            return None
-        parts = match.group(1).split(",")
-        if len(parts) < 6:
-            return None
-        # Typická pozice 5 = close (aktuální cena), 7 = settle
-        price   = _safe_float(parts[5])
-        settle  = _safe_float(parts[6]) if len(parts) > 6 else None
-        op      = _safe_float(parts[2]) if len(parts) > 2 else None
-        if price and 5_000 < price < 1_000_000:   # rozumný rozsah CNY/t
-            return {
-                "price":  price,
-                "open":   op,
-                "settle": settle,
-                "unit":   "CNY/t",
-                "ticker": ticker,
-            }
+        for url in urls:
+            res = requests.get(url, headers=headers, timeout=15)
+            res.encoding = "utf-8"
+            soup = BeautifulSoup(res.text, "lxml")
+            price = _price_from_table(soup) or _price_from_spot_blocks(soup)
+            if price and price > 0:
+                return {
+                    "price": price,
+                    "unit": "CNY/t",
+                    "ticker": f"CCMN ({target})",
+                    "source": "ccmn.cn",
+                }
         return None
-    except Exception:
+    except Exception as e:
+        print(f"Chyba při scrapování ccmn.cn: {e}")
         return None
 
 
@@ -1719,7 +1751,7 @@ def _live_metal_price_in_currency(
     """Aktuální burzovní cena kovu v zvolené měně burzy (LME USD nebo SHFE CNY)."""
     try:
         if currency == "CNY":
-            shfe = fetch_shfe_sina(metal_key)
+            shfe = fetch_ccmn_spot(metal_key)
             return float(shfe["price"]) if shfe and shfe.get("price") else None
         price_usd, _, _ = resolve_metal_price(metal_key, wm_data)
         if price_usd is None:
@@ -1991,10 +2023,10 @@ def _shfe_vs_lme_spread_pct(shfe_usd: float, lme_usd: float) -> float | None:
 
 def get_shfe_china_usd(metal_key: str) -> tuple[float | None, dict | None, float | None]:
     """
-    Čínská strana spreadu — pouze SHFE (Sina) + přepočet CNY přes ČNB.
+    Čínská strana spreadu — spot ccmn.cn + přepočet CNY přes ČNB.
     Vrátí (USD/t, shfe dict, CNY/t).
     """
-    shfe = fetch_shfe_sina(metal_key)
+    shfe = fetch_ccmn_spot(metal_key)
     if not shfe or not shfe.get("price"):
         return None, None, None
     usd_per_cny = get_usd_per_cny()
@@ -2732,7 +2764,7 @@ _LME_SHFE_SPOT_COMPARE: list[tuple[str, str]] = [
 
 
 def lme_shfe_spot_comparison_figure(wm_data: dict | None) -> go.Figure | None:
-    """Vodorovný graf — LME vs SHFE aktuální cena (USD/t); jen kovy s oběma zdroji."""
+    """Vodorovný graf — LME vs CCMN aktuální cena (USD/t); jen kovy s oběma zdroji."""
     labels: list[str] = []
     prices: list[float] = []
     colors: list[str] = []
@@ -2750,7 +2782,7 @@ def lme_shfe_spot_comparison_figure(wm_data: dict | None) -> go.Figure | None:
         labels.append(f"{metal_label} — LME")
         prices.append(float(lme_usd))
         colors.append("#0D6EFD")
-        labels.append(f"{metal_label} — SHFE")
+        labels.append(f"{metal_label} — CCMN")
         prices.append(float(shfe_usd))
         colors.append("#FD7E14")
 
@@ -2772,7 +2804,7 @@ def lme_shfe_spot_comparison_figure(wm_data: dict | None) -> go.Figure | None:
     fig.update_layout(
         separators=_PLOT_SEPARATORS,
         title=dict(
-            text="Porovnání LME vs SHFE — aktuální ceny (USD/t)",
+            text="Porovnání LME vs CCMN (Čína) — aktuální ceny (USD/t)",
             font=dict(family="Syne, sans-serif", size=13, color=_PLOT_TITLE_COLOR),
         ),
         height=max(180, 52 * len(labels)),
@@ -2799,7 +2831,7 @@ def lme_shfe_spot_comparison_figure(wm_data: dict | None) -> go.Figure | None:
 
 
 def _render_lme_shfe_spot_comparison(wm_data: dict | None) -> None:
-    """Tabulka + graf: LME a SHFE ceny mědi a hliníku v USD/t (bez oceli)."""
+    """Tabulka + graf: LME a CCMN ceny mědi a hliníku v USD/t (bez oceli)."""
     table_rows: list[dict[str, str]] = []
 
     for metal_key, metal_label in _LME_SHFE_SPOT_COMPARE:
@@ -2832,8 +2864,8 @@ def _render_lme_shfe_spot_comparison(wm_data: dict | None) -> None:
                 {
                     "Kov": metal_label,
                     "LME (Londýn) [USD/t]": lme_str,
-                    "SHFE (Šanghaj) [USD/t]": shfe_str,
-                    "Rozdíl SHFE−LME [USD/t]": diff_str,
+                    "CCMN (Changjiang Spot) [USD/t]": shfe_str,
+                    "Rozdíl CCMN−LME [USD/t]": diff_str,
                     "Rozdíl vůči LME [%]": pct_str,
                 }
             )
@@ -2841,7 +2873,7 @@ def _render_lme_shfe_spot_comparison(wm_data: dict | None) -> None:
     if not table_rows:
         st.markdown(
             '<div class="error-box" style="padding:10px;">'
-            "Porovnání LME vs SHFE — aktuální ceny nejsou k dispozici."
+            "Porovnání LME vs CCMN (Čína) — aktuální ceny nejsou k dispozici."
             "</div>",
             unsafe_allow_html=True,
         )
@@ -2850,7 +2882,7 @@ def _render_lme_shfe_spot_comparison(wm_data: dict | None) -> None:
     st.markdown(
         "<div style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
         "color:#495057;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
-        "Aktuální ceny LME vs SHFE (USD/t)</div>",
+        "Aktuální ceny LME vs CCMN (Čína) (USD/t)</div>",
         unsafe_allow_html=True,
     )
     st.dataframe(
@@ -2860,8 +2892,10 @@ def _render_lme_shfe_spot_comparison(wm_data: dict | None) -> None:
         column_config={
             "Kov": st.column_config.TextColumn("Kov", width="small"),
             "LME (Londýn) [USD/t]": st.column_config.TextColumn("LME (Londýn) [USD/t]"),
-            "SHFE (Šanghaj) [USD/t]": st.column_config.TextColumn("SHFE (Šanghaj) [USD/t]"),
-            "Rozdíl SHFE−LME [USD/t]": st.column_config.TextColumn("Rozdíl SHFE−LME [USD/t]"),
+            "CCMN (Changjiang Spot) [USD/t]": st.column_config.TextColumn(
+                "CCMN (Changjiang Spot) [USD/t]"
+            ),
+            "Rozdíl CCMN−LME [USD/t]": st.column_config.TextColumn("Rozdíl CCMN−LME [USD/t]"),
             "Rozdíl vůči LME [%]": st.column_config.TextColumn("Rozdíl vůči LME [%]"),
         },
     )
@@ -2872,7 +2906,7 @@ def _render_lme_shfe_spot_comparison(wm_data: dict | None) -> None:
         _ensure_plot_separators(fig)
         _show_plotly(fig, toolbar=False)
         st.caption(
-            "LME: Westmetall Cash · SHFE: Sina Finance + přepočet CNY→USD (ČNB) · vše v USD/t"
+            "LME: Westmetall Cash · CCMN: ccmn.cn spot + přepočet CNY→USD (ČNB) · vše v USD/t"
         )
 
 
@@ -3159,7 +3193,7 @@ def render_metals() -> None:
 
 
 def _render_shfe_spread_item(metal_key: str, metal_name: str, wm_data: dict | None) -> None:
-    """Jedna spread karta SHFE vs LME."""
+    """Jedna spread karta CCMN (Čína) vs LME."""
     ccy = get_display_currency()
     lme_usd, _, _ = resolve_metal_price(metal_key, wm_data)
     china_usd, _, cny_price = get_shfe_china_usd(metal_key)
@@ -3171,7 +3205,7 @@ def _render_shfe_spread_item(metal_key: str, metal_name: str, wm_data: dict | No
         china_disp = usd_to_display(china_usd, ccy)
         if spread_disp is None or lme_disp is None or china_disp is None:
             st.markdown(
-                f'<div class="spread-card"><div class="spread-label">{metal_name}: SHFE vs LME</div>'
+                f'<div class="spread-card"><div class="spread-label">{metal_name}: CCMN (Čína) vs LME</div>'
                 f'<div class="error-box" style="margin-top:6px;">N/A — chybí kurz EUR/USD</div></div>',
                 unsafe_allow_html=True,
             )
@@ -3187,11 +3221,11 @@ def _render_shfe_spread_item(metal_key: str, metal_name: str, wm_data: dict | No
                 f"({pct_sign}{spread_pct:.1f} % vůči LME)</span>"
             )
         st.markdown(
-            f"<div style='margin-bottom:6px;'>{badge_html(True, 'Sina / SHFE')}</div>"
-            f'<div class="spread-card"><div class="spread-label">{metal_name}: SHFE vs LME</div>'
+            f"<div style='margin-bottom:6px;'>{badge_html(True, 'ccmn.cn (Spot)')}</div>"
+            f'<div class="spread-card"><div class="spread-label">{metal_name}: CCMN (Čína) vs LME</div>'
             f'<div class="spread-value" style="color:{s_color};">'
             f"{s_sign}{format_num(spread_disp, 0)} {ccy}/t{pct_html}</div>"
-            f'<div class="spread-details">SHFE: {format_num(cny_price, 0)} CNY/t (≈ {format_num(china_disp, 0)} {ccy}/t)<br>'
+            f'<div class="spread-details">CCMN: {format_num(cny_price, 0)} CNY/t (≈ {format_num(china_disp, 0)} {ccy}/t)<br>'
             f"LME Cash (Westmetall): {format_num(lme_disp, 0)} {ccy}/t</div></div>",
             unsafe_allow_html=True,
         )
@@ -3201,27 +3235,27 @@ def _render_shfe_spread_item(metal_key: str, metal_name: str, wm_data: dict | No
     if lme_usd is None:
         missing.append("LME Cash (Westmetall)")
     if china_usd is None:
-        missing.append("SHFE (Sina) nebo kurz CNY (ČNB)")
+        missing.append("ccmn.cn (spot) nebo kurz CNY (ČNB)")
     st.markdown(
-        f'<div class="spread-card"><div class="spread-label">{metal_name}: SHFE vs LME</div>'
+        f'<div class="spread-card"><div class="spread-label">{metal_name}: CCMN (Čína) vs LME</div>'
         f'<div class="error-box" style="margin-top:6px;">Data nedostupná — {", ".join(missing)}</div></div>',
         unsafe_allow_html=True,
     )
 
 
 def _render_shfe_spreads(wm_data: dict | None) -> None:
-    """SHFE vs LME spread — pouze živá data (Sina + ČNB + Westmetall)."""
+    """CCMN (Čína) vs LME spread — živá data (ccmn.cn + ČNB + Westmetall)."""
     ccy = get_display_currency()
     st.markdown(
         f"<div style='margin-bottom:10px;'>"
         f"<span style='font-family:Syne,sans-serif;font-size:0.7rem;font-weight:700;"
         f"color:#495057;text-transform:uppercase;letter-spacing:1px;'>"
-        f"SHFE vs LME Spread ({ccy}/t)</span></div>",
+        f"CCMN (Čína) vs LME Spread ({ccy}/t)</span></div>",
         unsafe_allow_html=True,
     )
     if not get_usd_per_cny():
         st.warning(
-            "Spread: chybí kurz CNY z ČNB — přepočet SHFE (CNY/t) na USD/EUR nelze spočítat."
+            "Spread: chybí kurz CNY z ČNB — přepočet CCMN (CNY/t) na USD/EUR nelze spočítat."
         )
     for metal_key, metal_name in _SHFE_SPREAD_METALS:
         _render_shfe_spread_item(metal_key, metal_name, wm_data)
