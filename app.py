@@ -1136,8 +1136,9 @@ def fetch_shfe_sina(metal: str = "copper") -> dict | None:
     Formát odpovědi: var hq_str_nf_CU0="datum,čas,open,high,low,close,settle,...";
     Vrátí {price (CNY/t), open, settle, ticker} nebo None.
     """
-    ticker_map = _SHFE_TICKERS
-    ticker = ticker_map.get(metal, "nf_CU0")
+    ticker = _SHFE_TICKERS.get(metal)
+    if not ticker:
+        return None
     url    = f"http://hq.sinajs.cn/list={ticker}"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
@@ -1184,11 +1185,26 @@ _SHFE_SINA_KLINE_URL = (
     "https://stock2.finance.sina.com.cn/futures/api/json.php/"
     "InnerFuturesNewService.getDailyKLine?symbol={symbol}"
 )
+_SHFE_CORRELATION_UNAVAILABLE_MSG = (
+    "Historická data z čínské burzy (SHFE) nejsou momentálně dostupná. "
+    "Graf korelace trhů nelze zobrazit."
+)
+
+
+def _shfe_historical_has_values(df: pd.DataFrame | None) -> bool:
+    """True jen pokud DataFrame obsahuje reálné kladné hodnoty SHFE_USD ze Sina (+ FX)."""
+    if df is None or df.empty or "SHFE_USD" not in df.columns:
+        return False
+    vals = pd.to_numeric(df["SHFE_USD"], errors="coerce").dropna()
+    return not vals.empty and bool((vals > 0).any())
 
 
 @st.cache_data(ttl=CACHE_TTL)
 def get_shfe_historical_usd_sina(metal_code: str, period: str = "1y") -> pd.DataFrame:
-    """Stáhne historii SHFE ze Sina Finance a přepočte ji na USD pomocí kurzu z Yahoo."""
+    """
+    Historie SHFE ze Sina Finance → USD/t přes USDCNY=X (Yahoo).
+    Při jakémkoli selhání vrací prázdný DataFrame — žádná náhradní data.
+    """
     if metal_code not in _SHFE_SINA_SYMBOLS:
         return pd.DataFrame()
 
@@ -1221,9 +1237,7 @@ def get_shfe_historical_usd_sina(metal_code: str, period: str = "1y") -> pd.Data
         df_shfe = df_shfe.set_index("date")[["Price_CNY"]]
 
         df_fx = yf.Ticker("USDCNY=X").history(period=period, auto_adjust=False)
-        if df_fx is None or df_fx.empty:
-            df_fx = yf.Ticker("CNY=X").history(period=period, auto_adjust=False)
-        if df_fx is None or df_fx.empty:
+        if df_fx is None or df_fx.empty or "Close" not in df_fx.columns:
             return pd.DataFrame()
 
         fx_idx = pd.to_datetime(df_fx.index, utc=True).tz_convert(None).normalize()
@@ -2607,14 +2621,22 @@ def _render_wm_metal_history_chart(
     )
 
 
+def _lme_shfe_overlap_days(lme_s: pd.Series, shfe_s: pd.Series) -> int:
+    """Počet společných kalendářních dnů s reálnými hodnotami LME i SHFE."""
+    if lme_s.empty or shfe_s.empty:
+        return 0
+    return len(lme_s.index.intersection(shfe_s.index))
+
+
 def _build_metal_correlation_figure(
     metal_key: str,
     period: str,
     lme_hist_df: pd.DataFrame | None,
+    shfe_df: pd.DataFrame | None = None,
 ) -> tuple[go.Figure | None, int]:
     """
     Sestaví graf LME vs SHFE (USD/t). Vrací (fig, počet společných dnů).
-    Při chybě nebo chybějících datech vrací (None, 0).
+    Bez platných dat SHFE nebo bez překryvu s LME vrací (None, 0) — nikdy jen jednu řadu.
     """
     metal_code = _METAL_KEY_TO_SHFE_CODE.get(metal_key)
     if not metal_code:
@@ -2625,46 +2647,45 @@ def _build_metal_correlation_figure(
     if lme_hist_df is None or lme_hist_df.empty or "Close" not in lme_hist_df.columns:
         return None, 0
 
-    shfe_df = get_shfe_historical_usd_sina(metal_code, period)
-    if shfe_df is None or shfe_df.empty:
+    if shfe_df is None:
+        shfe_df = get_shfe_historical_usd_sina(metal_code, period)
+    if not _shfe_historical_has_values(shfe_df):
         return None, 0
 
     try:
         lme_s = _clip_series_to_chart_period(_history_to_dated_series(lme_hist_df, "Close", "Date"))
         shfe_s = _clip_series_to_chart_period(_history_to_dated_series(shfe_df, "SHFE_USD", None))
-        if lme_s.empty and shfe_s.empty:
+        if lme_s.empty or shfe_s.empty:
             return None, 0
 
-        overlap = 0
-        if not lme_s.empty and not shfe_s.empty:
-            overlap = len(set(lme_s.index.date).intersection(set(shfe_s.index.date)))
+        overlap = _lme_shfe_overlap_days(lme_s, shfe_s)
+        if overlap < 1:
+            return None, 0
 
         fig = go.Figure()
-        if not lme_s.empty:
-            fig.add_trace(
-                go.Scatter(
-                    x=lme_s.index,
-                    y=lme_s.values,
-                    mode="lines",
-                    name="LME (Londýn)",
-                    line=dict(color="#0D6EFD", width=2.2, shape="spline", smoothing=0.65),
-                    hovertemplate="<b>%{x|%d.%m.%Y}</b><br>LME: %{y:,.0f} USD/t<extra></extra>",
-                )
+        fig.add_trace(
+            go.Scatter(
+                x=lme_s.index,
+                y=lme_s.values,
+                mode="lines",
+                name="LME (Londýn)",
+                line=dict(color="#0D6EFD", width=2.2, shape="spline", smoothing=0.65),
+                hovertemplate="<b>%{x|%d.%m.%Y}</b><br>LME: %{y:,.0f} USD/t<extra></extra>",
             )
-        if not shfe_s.empty:
-            fig.add_trace(
-                go.Scatter(
-                    x=shfe_s.index,
-                    y=shfe_s.values,
-                    mode="lines",
-                    name="SHFE (Šanghaj - USD)",
-                    line=dict(color="#FD7E14", width=2.2, shape="spline", smoothing=0.65),
-                    hovertemplate="<b>%{x|%d.%m.%Y}</b><br>SHFE: %{y:,.0f} USD/t<extra></extra>",
-                )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=shfe_s.index,
+                y=shfe_s.values,
+                mode="lines",
+                name="SHFE (Šanghaj - USD)",
+                line=dict(color="#FD7E14", width=2.2, shape="spline", smoothing=0.65),
+                hovertemplate="<b>%{x|%d.%m.%Y}</b><br>SHFE: %{y:,.0f} USD/t<extra></extra>",
             )
+        )
 
         y_all = pd.concat([lme_s, shfe_s], ignore_index=True).dropna()
-        if y_all.empty:
+        if y_all.empty or len(fig.data) != 2:
             return None, overlap
         y_min, y_max = float(y_all.min()), float(y_all.max())
         pad = max((y_max - y_min) * 0.06, 50.0) if y_max > y_min else max(abs(y_max) * 0.02, 50.0)
@@ -2716,7 +2737,7 @@ def render_metal_correlation_chart(
     period: str,
     lme_hist_df: pd.DataFrame | None,
 ) -> None:
-    """Historická korelace LME (Westmetall) vs SHFE (Sina + Yahoo FX) — bez zásob."""
+    """Historická korelace LME (Westmetall) vs SHFE (Sina + USDCNY=X) — bez náhradních dat."""
     metal_code = _METAL_KEY_TO_SHFE_CODE.get(metal_key)
     if not metal_code:
         return
@@ -2736,40 +2757,36 @@ def render_metal_correlation_chart(
     if lme_hist_df is None or lme_hist_df.empty:
         lme_hist_df = _wm_lme_history_filtered(metal_key)
 
+    shfe_df = get_shfe_historical_usd_sina(metal_code, period)
+    if not _shfe_historical_has_values(shfe_df):
+        st.warning(_SHFE_CORRELATION_UNAVAILABLE_MSG)
+        return
+
+    if lme_hist_df is None or lme_hist_df.empty or "Close" not in lme_hist_df.columns:
+        st.markdown(
+            '<div class="error-box" style="padding:10px;font-size:0.85rem;">'
+            "Historická data LME (Westmetall) nejsou k dispozici — graf korelace nelze zobrazit."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
     try:
-        shfe_df = get_shfe_historical_usd_sina(metal_code, period)
-        if lme_hist_df is None or lme_hist_df.empty or shfe_df is None or shfe_df.empty:
-            st.markdown(
-                '<div class="error-box" style="padding:10px;font-size:0.85rem;">'
-                "Data pro srovnání LME a SHFE nejsou k dispozici "
-                f"(Westmetall + Sina {_SHFE_SINA_SYMBOLS.get(metal_code, '')} / USDCNY=X)."
-                "</div>",
-                unsafe_allow_html=True,
-            )
+        fig, overlap = _build_metal_correlation_figure(
+            metal_key, period, lme_hist_df, shfe_df=shfe_df
+        )
+        if fig is None or overlap < 1:
+            st.warning(_SHFE_CORRELATION_UNAVAILABLE_MSG)
             return
 
-        fig, overlap = _build_metal_correlation_figure(metal_key, period, lme_hist_df)
-        if fig is None:
-            st.markdown(
-                '<div class="error-box" style="padding:10px;font-size:0.85rem;">'
-                "Korelační graf nelze sestavit — chybí společná data po zarovnání datumů."
-                "</div>",
-                unsafe_allow_html=True,
-            )
-            return
-
+        _ensure_plot_separators(fig)
         _show_plotly(fig)
         st.caption(
             f"LME: Westmetall Cash · SHFE: Sina Finance {sina_symbol} ÷ USDCNY=X (Yahoo) · "
             f"období {period_lbl} · společných obchodních dnů: {overlap}"
         )
-    except Exception as exc:
-        st.markdown(
-            '<div class="error-box" style="padding:10px;font-size:0.85rem;">'
-            f"Korelační graf nelze zobrazit: {exc}"
-            "</div>",
-            unsafe_allow_html=True,
-        )
+    except Exception:
+        st.warning(_SHFE_CORRELATION_UNAVAILABLE_MSG)
 
 
 def interactive_oil_chart(
@@ -2807,28 +2824,27 @@ _LME_SHFE_SPOT_COMPARE: list[tuple[str, str]] = [
 
 
 def lme_shfe_spot_comparison_figure(wm_data: dict | None) -> go.Figure | None:
-    """Vodorovný graf — LME vs SHFE aktuální cena (USD/t) pro měď a hliník."""
+    """Vodorovný graf — LME vs SHFE aktuální cena (USD/t); jen kovy s oběma zdroji."""
     labels: list[str] = []
     prices: list[float] = []
     colors: list[str] = []
 
     for metal_key, metal_label in _LME_SHFE_SPOT_COMPARE:
-        try:
-            lme_usd, _, _ = resolve_metal_price(metal_key, wm_data)
-            if lme_usd is not None and float(lme_usd) > 0:
-                labels.append(f"{metal_label} — LME")
-                prices.append(float(lme_usd))
-                colors.append("#0D6EFD")
-        except Exception:
-            pass
-        try:
-            shfe_usd, _, _ = get_shfe_china_usd(metal_key)
-            if shfe_usd is not None and float(shfe_usd) > 0:
-                labels.append(f"{metal_label} — SHFE")
-                prices.append(float(shfe_usd))
-                colors.append("#FD7E14")
-        except Exception:
-            pass
+        lme_usd, _, _ = resolve_metal_price(metal_key, wm_data)
+        shfe_usd, _, _ = get_shfe_china_usd(metal_key)
+        if (
+            lme_usd is None
+            or shfe_usd is None
+            or float(lme_usd) <= 0
+            or float(shfe_usd) <= 0
+        ):
+            continue
+        labels.append(f"{metal_label} — LME")
+        prices.append(float(lme_usd))
+        colors.append("#0D6EFD")
+        labels.append(f"{metal_label} — SHFE")
+        prices.append(float(shfe_usd))
+        colors.append("#FD7E14")
 
     if not labels:
         return None
@@ -2942,16 +2958,14 @@ def _render_lme_shfe_spot_comparison(wm_data: dict | None) -> None:
         },
     )
 
-    try:
-        fig = lme_shfe_spot_comparison_figure(wm_data)
-        if fig:
-            st.markdown("<br>", unsafe_allow_html=True)
-            _show_plotly(fig, toolbar=False)
-            st.caption(
-                "LME: Westmetall Cash · SHFE: Sina Finance + přepočet CNY→USD (ČNB) · vše v USD/t"
-            )
-    except Exception as exc:
-        st.warning(f"Graf porovnání LME/SHFE nelze vykreslit: {exc}")
+    fig = lme_shfe_spot_comparison_figure(wm_data)
+    if fig is not None:
+        st.markdown("<br>", unsafe_allow_html=True)
+        _ensure_plot_separators(fig)
+        _show_plotly(fig, toolbar=False)
+        st.caption(
+            "LME: Westmetall Cash · SHFE: Sina Finance + přepočet CNY→USD (ČNB) · vše v USD/t"
+        )
 
 
 def bar_metals(
