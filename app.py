@@ -1196,51 +1196,22 @@ def _shfe_historical_has_values(df: pd.DataFrame | None) -> bool:
 
 
 @st.cache_data(ttl=3600)
-def get_shfe_historical_usd_sina(metal_code: str, period: str = "1y") -> pd.DataFrame:
-    """Stáhne historii SHFE přes veřejný IndexService a přepočte ji na USD."""
+def get_shfe_historical_usd_akshare(metal_code: str, period: str = "1y") -> pd.DataFrame:
+    """Stáhne historii SHFE pomocí robustní knihovny akshare a přepočte na USD."""
     if metal_code not in _SHFE_SINA_SYMBOLS:
         return pd.DataFrame()
 
-    symbol = _SHFE_SINA_SYMBOLS[metal_code]
-    url = (
-        "https://stock2.finance.sina.com.cn/futures/api/json.php/"
-        f"IndexService.getInnerFuturesDailyKLine?symbol={symbol}"
-    )
-
     try:
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            ),
-            "Referer": "https://finance.sina.com.cn/futures/quotes/",
-            "Accept": "application/json, text/javascript, */*; q=0.01",
-            "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive",
-        }
-        res = requests.get(url, headers=headers, timeout=10)
+        import akshare as ak
 
-        if res.status_code != 200 or not res.text.strip():
+        symbol = "CU0" if metal_code == "CU" else "AL0"
+        df_shfe = ak.futures_zh_daily_sina(symbol=symbol)
+
+        if df_shfe is None or df_shfe.empty:
             return pd.DataFrame()
 
-        data = res.json()
-        if not data or not isinstance(data, list):
-            return pd.DataFrame()
-
-        df_shfe = pd.DataFrame(data)
-
-        if isinstance(data[0], list):
-            df_shfe["date"] = pd.to_datetime(df_shfe[0], errors="coerce").dt.normalize()
-            df_shfe["Price_CNY"] = pd.to_numeric(df_shfe[4], errors="coerce")
-        else:
-            date_col = "d" if "d" in df_shfe.columns else "date"
-            close_col = "c" if "c" in df_shfe.columns else "close"
-            if date_col not in df_shfe.columns or close_col not in df_shfe.columns:
-                return pd.DataFrame()
-            df_shfe["date"] = pd.to_datetime(df_shfe[date_col], errors="coerce").dt.normalize()
-            df_shfe["Price_CNY"] = pd.to_numeric(df_shfe[close_col], errors="coerce")
-
+        df_shfe["date"] = pd.to_datetime(df_shfe["date"], errors="coerce").dt.normalize()
+        df_shfe["Price_CNY"] = pd.to_numeric(df_shfe["close"], errors="coerce")
         df_shfe = df_shfe.dropna(subset=["date", "Price_CNY"])
         df_shfe = df_shfe[df_shfe["Price_CNY"] > 0]
         if df_shfe.empty:
@@ -1276,8 +1247,7 @@ def get_shfe_historical_usd_sina(metal_code: str, period: str = "1y") -> pd.Data
         out = df[["SHFE_USD"]].copy()
         out.index.name = "Date"
         return out.sort_index()
-    except Exception as e:
-        print(f"Chyba při stahování/zpracování SHFE dat: {e}")
+    except Exception:
         return pd.DataFrame()
 
 
@@ -2666,7 +2636,7 @@ def _build_metal_correlation_figure(
         return None, 0
 
     if shfe_df is None:
-        shfe_df = get_shfe_historical_usd_sina(metal_code, period)
+        shfe_df = get_shfe_historical_usd_akshare(metal_code, period)
     if not _shfe_historical_has_values(shfe_df):
         return None, 0
 
@@ -2775,7 +2745,7 @@ def render_metal_correlation_chart(
     if lme_hist_df is None or lme_hist_df.empty:
         lme_hist_df = _wm_lme_history_filtered(metal_key)
 
-    shfe_df = get_shfe_historical_usd_sina(metal_code, period)
+    shfe_df = get_shfe_historical_usd_akshare(metal_code, period)
     if not _shfe_historical_has_values(shfe_df):
         st.warning(_SHFE_CORRELATION_UNAVAILABLE_MSG)
         return
