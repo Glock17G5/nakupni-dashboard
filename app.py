@@ -789,7 +789,7 @@ def _render_steel_metric_card(
     label: str,
     default_ticker: str,
 ) -> None:
-    """Metrická karta oceli (HRC / Scrap) — Yahoo."""
+    """Metrická karta oceli (HRC) — Yahoo."""
     unit = metal_unit_label()
     ccy = get_display_currency()
     d_suffix = currency_delta_suffix()
@@ -1072,7 +1072,6 @@ def fetch_westmetall() -> dict | None:
 _ST_TON_FACTOR = 2204.623 / 2000.0
 
 _STEEL_HRC_TICKERS = ("HRC=F", "STRE=F")
-_STEEL_SCRAP_TICKERS = ("BUS=F",)
 
 
 @st.cache_data(ttl=CACHE_TTL)
@@ -1107,16 +1106,6 @@ def fetch_steel_yfinance() -> dict | None:
     """Ocel HRC — Yahoo HRC=F, záloha STRE=F."""
     for ticker in _STEEL_HRC_TICKERS:
         data = fetch_steel_ticker(ticker, "Hot Rolled Coil (CME)")
-        if data:
-            return data
-    return None
-
-
-@st.cache_data(ttl=CACHE_TTL)
-def fetch_steel_scrap_yfinance() -> dict | None:
-    """Ocel Scrap — Yahoo BUS=F (busheling)."""
-    for ticker in _STEEL_SCRAP_TICKERS:
-        data = fetch_steel_ticker(ticker, "Busheling scrap (CME)")
         if data:
             return data
     return None
@@ -1200,6 +1189,130 @@ def _safe_float(s: str) -> float | None:
         return v if v != 0.0 else None
     except (ValueError, AttributeError):
         return None
+
+
+_METAL_KEY_TO_SHFE_CODE: dict[str, str] = {"copper": "CU", "aluminum": "AL"}
+_NASDAQ_API_BASE = "https://data.nasdaq.com/api/v3/datasets"
+_CHRIS_SHFE_DATASETS: dict[str, str] = {
+    "CU": "CHRIS/SHFE_CU1",
+    "AL": "CHRIS/SHFE_AL1",
+}
+_SHFE_CORRELATION_UNAVAILABLE_MSG = (
+    "Historická data SHFE (Nasdaq Data Link — CHRIS/SHFE) nejsou k dispozici. "
+    "Graf korelace trhů nelze zobrazit."
+)
+
+
+def _load_nasdaq_api_key() -> str | None:
+    """API klíč z .streamlit/secrets.toml — NASDAQ_API_KEY."""
+    try:
+        key = st.secrets.get("NASDAQ_API_KEY") or st.secrets.get("nasdaq_api_key")
+        if key is None:
+            return None
+        key_str = str(key).strip()
+        return key_str if key_str else None
+    except Exception:
+        return None
+
+
+def _nasdaq_start_date_for_period(period: str) -> str:
+    """Počáteční datum pro stažení CHRIS podle globálního období grafů."""
+    days_map = {"5d": 12, "1mo": 40, "3mo": 110, "6mo": 200, "1y": 400}
+    days = days_map.get(period, 400)
+    start = now_prague().date() - timedelta(days=days)
+    return start.isoformat()
+
+
+def _shfe_historical_has_values(df: pd.DataFrame | None) -> bool:
+    """True pokud DataFrame obsahuje kladné hodnoty SHFE_USD."""
+    if df is None or df.empty or "SHFE_USD" not in df.columns:
+        return False
+    vals = pd.to_numeric(df["SHFE_USD"], errors="coerce").dropna()
+    return not vals.empty and bool((vals > 0).any())
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def get_shfe_historical_usd_nasdaq(metal_code: str, period: str = "1y") -> pd.DataFrame:
+    """
+    Historie SHFE z Nasdaq Data Link (CHRIS/SHFE_CU1, CHRIS/SHFE_AL1) → USD/t přes USDCNY=X.
+    Bez API klíče nebo při chybě vrací prázdný DataFrame — žádná náhradní data.
+    """
+    api_key = _load_nasdaq_api_key()
+    if not api_key or metal_code not in _CHRIS_SHFE_DATASETS:
+        return pd.DataFrame()
+
+    dataset = _CHRIS_SHFE_DATASETS[metal_code]
+    try:
+        from urllib.parse import quote
+
+        path = quote(dataset, safe="")
+        url = f"{_NASDAQ_API_BASE}/{path}/data.json"
+        params = {
+            "api_key": api_key,
+            "start_date": _nasdaq_start_date_for_period(period),
+            "order": "asc",
+        }
+        res = requests.get(url, params=params, timeout=30)
+        if res.status_code != 200:
+            return pd.DataFrame()
+
+        payload = res.json()
+        if payload.get("quandl_error"):
+            return pd.DataFrame()
+
+        dataset_data = payload.get("dataset_data") or {}
+        rows = dataset_data.get("data") or []
+        colnames = dataset_data.get("column_names") or []
+        if not rows or not colnames:
+            return pd.DataFrame()
+
+        df_shfe = pd.DataFrame(rows, columns=colnames)
+        date_col = next(
+            (c for c in ("Date", "Trade Date") if c in df_shfe.columns),
+            df_shfe.columns[0],
+        )
+        price_col = next(
+            (c for c in ("Settle", "Last", "Close") if c in df_shfe.columns),
+            None,
+        )
+        if price_col is None:
+            return pd.DataFrame()
+
+        df_shfe["date"] = pd.to_datetime(df_shfe[date_col], errors="coerce").dt.normalize()
+        df_shfe["Price_CNY"] = pd.to_numeric(df_shfe[price_col], errors="coerce")
+        df_shfe = df_shfe.dropna(subset=["date", "Price_CNY"])
+        df_shfe = df_shfe[df_shfe["Price_CNY"] > 0]
+        if df_shfe.empty:
+            return pd.DataFrame()
+
+        df_shfe = df_shfe.drop_duplicates(subset=["date"], keep="last")
+        df_shfe = df_shfe.set_index("date")[["Price_CNY"]]
+
+        df_fx = yf.Ticker("USDCNY=X").history(period=period, auto_adjust=False)
+        if df_fx is None or df_fx.empty or "Close" not in df_fx.columns:
+            return pd.DataFrame()
+
+        fx_idx = pd.to_datetime(df_fx.index, utc=True).tz_convert(None).normalize()
+        fx_close = pd.to_numeric(df_fx["Close"], errors="coerce")
+        df_fx = pd.DataFrame({"FX": fx_close.values}, index=fx_idx)
+        df_fx = df_fx[df_fx["FX"] > 0].dropna()
+        if df_fx.empty:
+            return pd.DataFrame()
+
+        df = df_shfe.join(df_fx, how="inner")
+        if df.empty:
+            return pd.DataFrame()
+
+        df["SHFE_USD"] = df["Price_CNY"] / df["FX"]
+        df = df[df["SHFE_USD"] > 0]
+        if df.empty:
+            return pd.DataFrame()
+
+        out = df[["SHFE_USD"]].copy()
+        out.index.name = "Date"
+        return out.sort_index()
+    except Exception:
+        return pd.DataFrame()
 
 
 # ==============================================================================
@@ -2560,6 +2673,178 @@ def _render_wm_metal_history_chart(
     )
 
 
+def _lme_shfe_overlap_days(lme_s: pd.Series, shfe_s: pd.Series) -> int:
+    """Počet společných dnů s reálnými hodnotami LME i SHFE."""
+    if lme_s.empty or shfe_s.empty:
+        return 0
+    return len(lme_s.index.intersection(shfe_s.index))
+
+
+def _build_metal_correlation_figure(
+    metal_key: str,
+    period: str,
+    lme_hist_df: pd.DataFrame | None,
+    shfe_df: pd.DataFrame | None = None,
+) -> tuple[go.Figure | None, int]:
+    """Graf LME vs SHFE (USD/t) — SHFE z Nasdaq CHRIS. Bez dat vrací (None, 0)."""
+    metal_code = _METAL_KEY_TO_SHFE_CODE.get(metal_key)
+    if not metal_code:
+        return None, 0
+
+    if lme_hist_df is None or lme_hist_df.empty:
+        lme_hist_df = _wm_lme_history_filtered(metal_key)
+    if lme_hist_df is None or lme_hist_df.empty or "Close" not in lme_hist_df.columns:
+        return None, 0
+
+    if shfe_df is None:
+        shfe_df = get_shfe_historical_usd_nasdaq(metal_code, period)
+    if not _shfe_historical_has_values(shfe_df):
+        return None, 0
+
+    try:
+        lme_s = _clip_series_to_chart_period(_history_to_dated_series(lme_hist_df, "Close", "Date"))
+        shfe_s = _clip_series_to_chart_period(_history_to_dated_series(shfe_df, "SHFE_USD", None))
+        if lme_s.empty or shfe_s.empty:
+            return None, 0
+
+        overlap = _lme_shfe_overlap_days(lme_s, shfe_s)
+        if overlap < 1:
+            return None, 0
+
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=lme_s.index,
+                y=lme_s.values,
+                mode="lines",
+                name="LME (Londýn)",
+                line=dict(color="#0D6EFD", width=2.2, shape="spline", smoothing=0.65),
+                hovertemplate="<b>%{x|%d.%m.%Y}</b><br>LME: %{y:,.0f} USD/t<extra></extra>",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=shfe_s.index,
+                y=shfe_s.values,
+                mode="lines",
+                name="SHFE (Šanghaj - USD)",
+                line=dict(color="#FD7E14", width=2.2, shape="spline", smoothing=0.65),
+                hovertemplate="<b>%{x|%d.%m.%Y}</b><br>SHFE: %{y:,.0f} USD/t<extra></extra>",
+            )
+        )
+
+        y_all = pd.concat([lme_s, shfe_s], ignore_index=True).dropna()
+        if y_all.empty or len(fig.data) != 2:
+            return None, overlap
+
+        y_min, y_max = float(y_all.min()), float(y_all.max())
+        pad = max((y_max - y_min) * 0.06, 50.0) if y_max > y_min else max(abs(y_max) * 0.02, 50.0)
+        period_lbl = get_chart_period_label()
+        metal_titles = {"copper": "Měď", "aluminum": "Hliník"}
+        title_metal = metal_titles.get(metal_key, metal_key)
+
+        fig.update_layout(
+            separators=_PLOT_SEPARATORS,
+            title=dict(
+                text=f"{title_metal} — LME vs SHFE ({period_lbl})",
+                font=dict(family="Syne, sans-serif", size=11, color=_PLOT_TITLE_COLOR),
+                x=0.02,
+                xanchor="left",
+            ),
+            height=300,
+            margin=dict(l=8, r=8, t=40, b=8),
+            paper_bgcolor=_PLOT_PAPER,
+            plot_bgcolor=_PLOT_BG,
+            showlegend=True,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.12,
+                xanchor="right",
+                x=1,
+                font=dict(family="IBM Plex Mono, monospace", size=9, color=_PLOT_TICK_COLOR),
+                bgcolor=_PLOT_PAPER,
+            ),
+            hoverlabel=_HOVER_LABEL,
+            hovermode="x unified",
+            xaxis=dict(**_TICK_AXIS, tickformat="%d.%m.%Y", title=None),
+            yaxis=dict(
+                **_TICK_AXIS,
+                tickformat=",.0f",
+                title=dict(text="USD/t", standoff=6),
+                range=[y_min - pad, y_max + pad],
+                autorange=False,
+            ),
+        )
+        return fig, overlap
+    except Exception:
+        return None, 0
+
+
+def render_metal_correlation_chart(
+    metal_key: str,
+    period: str,
+    lme_hist_df: pd.DataFrame | None,
+) -> None:
+    """Korelace LME (Westmetall) vs SHFE historie (Nasdaq CHRIS) — bez náhradních dat."""
+    metal_code = _METAL_KEY_TO_SHFE_CODE.get(metal_key)
+    if not metal_code:
+        return
+
+    period_lbl = get_chart_period_label()
+    metal_titles = {"copper": "Měď", "aluminum": "Hliník"}
+    title_metal = metal_titles.get(metal_key, metal_key)
+    chris_code = _CHRIS_SHFE_DATASETS.get(metal_code, "")
+
+    st.markdown(
+        "<div style='font-family:Syne,sans-serif;font-size:0.72rem;font-weight:700;"
+        "color:#495057;text-transform:uppercase;letter-spacing:0.8px;margin:12px 0 6px 0;'>"
+        f"📊 Korelace LME vs SHFE — {title_metal} ({period_lbl})</div>",
+        unsafe_allow_html=True,
+    )
+
+    if not _load_nasdaq_api_key():
+        st.warning(
+            "Graf korelace SHFE vyžaduje NASDAQ_API_KEY v souboru "
+            ".streamlit/secrets.toml (zdarma na data.nasdaq.com)."
+        )
+        return
+
+    if lme_hist_df is None or lme_hist_df.empty:
+        lme_hist_df = _wm_lme_history_filtered(metal_key)
+
+    shfe_df = get_shfe_historical_usd_nasdaq(metal_code, period)
+    if not _shfe_historical_has_values(shfe_df):
+        st.warning(_SHFE_CORRELATION_UNAVAILABLE_MSG)
+        return
+
+    if lme_hist_df is None or lme_hist_df.empty or "Close" not in lme_hist_df.columns:
+        st.markdown(
+            '<div class="error-box" style="padding:10px;font-size:0.85rem;">'
+            "Historická data LME (Westmetall) nejsou k dispozici — graf korelace nelze zobrazit."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    try:
+        fig, overlap = _build_metal_correlation_figure(
+            metal_key, period, lme_hist_df, shfe_df=shfe_df
+        )
+        if fig is None or overlap < 1:
+            st.warning(_SHFE_CORRELATION_UNAVAILABLE_MSG)
+            return
+
+        _ensure_plot_separators(fig)
+        _show_plotly(fig)
+        st.caption(
+            f"LME: Westmetall Cash · SHFE: Nasdaq {chris_code} ÷ USDCNY=X (Yahoo) · "
+            f"období {period_lbl} · společných obchodních dnů: {overlap}"
+        )
+    except Exception:
+        st.warning(_SHFE_CORRELATION_UNAVAILABLE_MSG)
+
+
 def interactive_oil_chart(
     df: pd.DataFrame,
     title: str,
@@ -2915,11 +3200,10 @@ def render_global_controls() -> tuple[str, str]:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def render_metals() -> None:
-    """Sekce 1 – LME kovy, ocel (HRC/Scrap), spotové SHFE vs LME, historie Westmetall."""
+    """Sekce 1 – LME kovy, ocel HRC, spotové SHFE vs LME, historie Westmetall + CHRIS."""
 
     wm_data = fetch_westmetall()
     steel_hrc = fetch_steel_yfinance()
-    steel_scrap = fetch_steel_scrap_yfinance()
     period = get_chart_period()
     period_lbl = get_chart_period_label()
 
@@ -2930,14 +3214,13 @@ def render_metals() -> None:
         "🔩", "Metaly — LME, Ocel & SHFE",
         badge_html(has_cu and has_al, "westmetall.com LME Cash"),
         badge_html(steel_hrc is not None, "Yahoo HRC"),
-        badge_html(steel_scrap is not None, "Yahoo Scrap"),
     )
 
     if not wm_data:
         st.warning("Westmetall: LME data se nepodařilo stáhnout — ceny mědi a hliníku nejsou k dispozici.")
 
     ccy = get_display_currency()
-    col_cu, col_al, col_hrc, col_scrap = st.columns(4)
+    col_cu, col_al, col_hrc = st.columns(3)
     cu_cfg, al_cfg = _LME_METAL_CARDS
     with col_cu:
         _render_lme_metal_card(cu_cfg[0], cu_cfg[1], cu_cfg[2], cu_cfg[3], wm_data)
@@ -2945,8 +3228,6 @@ def render_metals() -> None:
         _render_lme_metal_card(al_cfg[0], al_cfg[1], al_cfg[2], al_cfg[3], wm_data)
     with col_hrc:
         _render_steel_metric_card(steel_hrc, "Ocel HRC", "HRC=F")
-    with col_scrap:
-        _render_steel_metric_card(steel_scrap, "Ocel Scrap", "BUS=F")
 
     with st.expander(
         "🧮 Profesionální kabelářská kalkulačka (Metal Surcharge)",
@@ -2972,9 +3253,11 @@ def render_metals() -> None:
 
     with col_cu_hist:
         _render_wm_metal_history_chart("copper", "Měď (Cu)", "#f97316")
+        render_metal_correlation_chart("copper", period, _wm_lme_history_filtered("copper"))
 
     with col_al_hist:
         _render_wm_metal_history_chart("aluminum", "Hliník (Al)", "#10b981")
+        render_metal_correlation_chart("aluminum", period, _wm_lme_history_filtered("aluminum"))
 
     with col_st_hist:
         st_hist = fetch_metal_history(steel_ticker, period)
