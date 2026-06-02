@@ -1181,6 +1181,10 @@ def _safe_float(s: str) -> float | None:
 
 _METAL_KEY_TO_SHFE_CODE: dict[str, str] = {"copper": "CU", "aluminum": "AL"}
 _SHFE_SINA_SYMBOLS: dict[str, str] = {"CU": "CU0", "AL": "AL0"}
+_SHFE_SINA_KLINE_URL = (
+    "https://stock2.finance.sina.com.cn/futures/api/json.php/"
+    "InnerFuturesNewService.getDailyKLine?symbol={symbol}"
+)
 _SHFE_CORRELATION_UNAVAILABLE_MSG = (
     "Historická data z čínské burzy (SHFE) nejsou momentálně dostupná. "
     "Graf korelace trhů nelze zobrazit."
@@ -3198,28 +3202,22 @@ def render_metals() -> None:
         render_metal_correlation_chart("aluminum", period, _wm_lme_history_filtered("aluminum"))
 
     with col_st:
-        if steel_data:
-            st_hist = fetch_metal_history(steel_ticker, period)
-            if st_hist is not None:
-                st_plot = st_hist.copy()
-                st_plot["Close"] = st_plot["Close"] * _ST_TON_FACTOR
-                st_plot = apply_currency_to_df(st_plot)
-                _render_metal_history_with_tabs(
-                    st_plot,
-                    "Ocel (HRC)",
-                    "#64748b",
-                    y_unit,
-                    price_col="Close",
-                    source_note="Yahoo",
-                )
-            else:
-                st.markdown(
-                    '<div class="error-box">Graf oceli momentálně nedostupný</div>',
-                    unsafe_allow_html=True,
-                )
+        st_hist = fetch_metal_history(steel_ticker, period)
+        if st_hist is not None and not st_hist.empty:
+            st_plot = st_hist.copy()
+            st_plot["Close"] = st_plot["Close"] * _ST_TON_FACTOR
+            st_plot = apply_currency_to_df(st_plot)
+            _render_metal_history_with_tabs(
+                st_plot,
+                "Ocel (HRC)",
+                "#64748b",
+                y_unit,
+                price_col="Close",
+                source_note=f"Yahoo {steel_ticker}",
+            )
         else:
             st.markdown(
-                '<div class="error-box">Graf oceli momentálně nedostupný</div>',
+                '<div class="error-box">Graf oceli momentálně nedostupný (Yahoo HRC=F / STRE=F)</div>',
                 unsafe_allow_html=True,
             )
 
