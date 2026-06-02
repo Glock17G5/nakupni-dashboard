@@ -1181,10 +1181,6 @@ def _safe_float(s: str) -> float | None:
 
 _METAL_KEY_TO_SHFE_CODE: dict[str, str] = {"copper": "CU", "aluminum": "AL"}
 _SHFE_SINA_SYMBOLS: dict[str, str] = {"CU": "CU0", "AL": "AL0"}
-_SHFE_SINA_KLINE_URL = (
-    "https://stock2.finance.sina.com.cn/futures/api/json.php/"
-    "InnerFuturesNewService.getDailyKLine?symbol={symbol}"
-)
 _SHFE_CORRELATION_UNAVAILABLE_MSG = (
     "Historická data z čínské burzy (SHFE) nejsou momentálně dostupná. "
     "Graf korelace trhů nelze zobrazit."
@@ -1199,35 +1195,52 @@ def _shfe_historical_has_values(df: pd.DataFrame | None) -> bool:
     return not vals.empty and bool((vals > 0).any())
 
 
-@st.cache_data(ttl=CACHE_TTL)
+@st.cache_data(ttl=3600)
 def get_shfe_historical_usd_sina(metal_code: str, period: str = "1y") -> pd.DataFrame:
-    """
-    Historie SHFE ze Sina Finance → USD/t přes USDCNY=X (Yahoo).
-    Při jakémkoli selhání vrací prázdný DataFrame — žádná náhradní data.
-    """
+    """Stáhne historii SHFE přes veřejný IndexService a přepočte ji na USD."""
     if metal_code not in _SHFE_SINA_SYMBOLS:
         return pd.DataFrame()
 
     symbol = _SHFE_SINA_SYMBOLS[metal_code]
-    url = _SHFE_SINA_KLINE_URL.format(symbol=symbol)
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Referer": "http://finance.sina.com.cn/",
-    }
+    url = (
+        "https://stock2.finance.sina.com.cn/futures/api/json.php/"
+        f"IndexService.getInnerFuturesDailyKLine?symbol={symbol}"
+    )
 
     try:
-        res = requests.get(url, headers=headers, timeout=12)
-        res.raise_for_status()
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Referer": "https://finance.sina.com.cn/futures/quotes/",
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+            "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+        }
+        res = requests.get(url, headers=headers, timeout=10)
+
+        if res.status_code != 200 or not res.text.strip():
+            return pd.DataFrame()
+
         data = res.json()
-        if not isinstance(data, list) or not data:
+        if not data or not isinstance(data, list):
             return pd.DataFrame()
 
         df_shfe = pd.DataFrame(data)
-        if "d" not in df_shfe.columns or "c" not in df_shfe.columns:
-            return pd.DataFrame()
 
-        df_shfe["date"] = pd.to_datetime(df_shfe["d"], errors="coerce").dt.normalize()
-        df_shfe["Price_CNY"] = pd.to_numeric(df_shfe["c"], errors="coerce")
+        if isinstance(data[0], list):
+            df_shfe["date"] = pd.to_datetime(df_shfe[0], errors="coerce").dt.normalize()
+            df_shfe["Price_CNY"] = pd.to_numeric(df_shfe[4], errors="coerce")
+        else:
+            date_col = "d" if "d" in df_shfe.columns else "date"
+            close_col = "c" if "c" in df_shfe.columns else "close"
+            if date_col not in df_shfe.columns or close_col not in df_shfe.columns:
+                return pd.DataFrame()
+            df_shfe["date"] = pd.to_datetime(df_shfe[date_col], errors="coerce").dt.normalize()
+            df_shfe["Price_CNY"] = pd.to_numeric(df_shfe[close_col], errors="coerce")
+
         df_shfe = df_shfe.dropna(subset=["date", "Price_CNY"])
         df_shfe = df_shfe[df_shfe["Price_CNY"] > 0]
         if df_shfe.empty:
@@ -1236,13 +1249,17 @@ def get_shfe_historical_usd_sina(metal_code: str, period: str = "1y") -> pd.Data
         df_shfe = df_shfe.drop_duplicates(subset=["date"], keep="last")
         df_shfe = df_shfe.set_index("date")[["Price_CNY"]]
 
-        df_fx = yf.Ticker("USDCNY=X").history(period=period, auto_adjust=False)
+        df_fx = yf.Ticker("USDCNY=X").history(period=period)
+        if df_fx is None or df_fx.empty:
+            df_fx = yf.Ticker("CNY=X").history(period=period)
         if df_fx is None or df_fx.empty or "Close" not in df_fx.columns:
             return pd.DataFrame()
 
         fx_idx = pd.to_datetime(df_fx.index, utc=True).tz_convert(None).normalize()
-        fx_close = pd.to_numeric(df_fx["Close"], errors="coerce")
-        df_fx = pd.DataFrame({"FX": fx_close.values}, index=fx_idx)
+        df_fx = pd.DataFrame(
+            {"FX": pd.to_numeric(df_fx["Close"], errors="coerce").values},
+            index=fx_idx,
+        )
         df_fx = df_fx[df_fx["FX"] > 0].dropna()
         if df_fx.empty:
             return pd.DataFrame()
@@ -1259,7 +1276,8 @@ def get_shfe_historical_usd_sina(metal_code: str, period: str = "1y") -> pd.Data
         out = df[["SHFE_USD"]].copy()
         out.index.name = "Date"
         return out.sort_index()
-    except Exception:
+    except Exception as e:
+        print(f"Chyba při stahování/zpracování SHFE dat: {e}")
         return pd.DataFrame()
 
 
