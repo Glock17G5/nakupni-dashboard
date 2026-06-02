@@ -1223,88 +1223,6 @@ def _safe_float(s: str) -> float | None:
         return None
 
 
-def _load_nasdaq_key() -> str | None:
-    try:
-        key = st.secrets.get("NASDAQ_API_KEY")
-        if key is None:
-            return None
-        key_str = str(key).strip()
-        return key_str if key_str else None
-    except Exception:
-        return None
-
-
-@st.cache_data(ttl=3600)
-def get_shfe_historical_usd_nasdaq(metal_code: str, period: str = "1y") -> pd.DataFrame:
-    """Stáhne historii SHFE přes Nasdaq Data Link a přepočte ji na USD/t."""
-    api_key = _load_nasdaq_key()
-    if not api_key:
-        return pd.DataFrame()
-
-    symbol = "CU1" if metal_code == "CU" else "AL1"
-    if metal_code not in ("CU", "AL"):
-        return pd.DataFrame()
-
-    url = f"https://data.nasdaq.com/api/v3/datasets/CHRIS/SHFE_{symbol}.json?api_key={api_key}"
-
-    try:
-        res = requests.get(url, timeout=15)
-        if res.status_code != 200:
-            return pd.DataFrame()
-
-        data = res.json()
-        if data.get("quandl_error"):
-            return pd.DataFrame()
-
-        block = data.get("dataset_data") or data.get("dataset")
-        if not isinstance(block, dict) or "data" not in block:
-            return pd.DataFrame()
-
-        cols = block.get("column_names") or []
-        rows = block.get("data") or []
-        if not rows or not cols:
-            return pd.DataFrame()
-
-        df_shfe = pd.DataFrame(rows, columns=cols)
-        price_col = "Settle" if "Settle" in cols else ("Close" if "Close" in cols else cols[1])
-        date_col = "Date" if "Date" in cols else (
-            "Trade Date" if "Trade Date" in cols else cols[0]
-        )
-
-        df_shfe["Date"] = pd.to_datetime(df_shfe[date_col], errors="coerce").dt.date
-        df_shfe["Price_CNY"] = pd.to_numeric(df_shfe[price_col], errors="coerce")
-        df_shfe = df_shfe.dropna(subset=["Price_CNY"])
-        if df_shfe.empty:
-            return pd.DataFrame()
-        df_shfe = df_shfe.drop_duplicates(subset=["Date"], keep="last")
-        df_shfe.set_index("Date", inplace=True)
-
-        df_fx = yf.Ticker("USDCNY=X").history(period=period)
-        if df_fx is None or df_fx.empty:
-            df_fx = yf.Ticker("CNY=X").history(period=period)
-        if df_fx is None or df_fx.empty or "Close" not in df_fx.columns:
-            return pd.DataFrame()
-        df_fx.index = pd.to_datetime(df_fx.index, utc=True).tz_convert(None).normalize().date
-
-        df = df_shfe[["Price_CNY"]].join(
-            df_fx[["Close"]].rename(columns={"Close": "FX"}),
-            how="inner",
-        )
-        if df.empty:
-            return pd.DataFrame()
-
-        df["SHFE_USD"] = df["Price_CNY"] / df["FX"]
-        df = df[df["SHFE_USD"] > 0]
-        if df.empty:
-            return pd.DataFrame()
-
-        min_date = df_fx.index.min()
-        df = df[df.index >= min_date]
-        return df[["SHFE_USD"]]
-    except Exception:
-        return pd.DataFrame()
-
-
 # ==============================================================================
 # ─────────────────────────────────────────────────────────────────────────────
 #  DATOVÉ FUNKCE – FX (ČNB + yfinance trendy)
@@ -2602,18 +2520,6 @@ def interactive_metal_dual_chart(
     return fig
 
 
-def _wm_lme_history_filtered(metal_key: str) -> pd.DataFrame | None:
-    """LME historie z Westmetall oříznutá podle globálního období (USD/t)."""
-    url = WM_HISTORY_URLS.get(metal_key)
-    if not url:
-        return None
-    try:
-        full = fetch_westmetall_history(url)
-        return filter_wm_history_by_period(full)
-    except Exception:
-        return None
-
-
 def _render_wm_metal_history_chart(
     metal_key: str,
     chart_title: str,
@@ -2661,72 +2567,6 @@ def _render_wm_metal_history_chart(
         source_note="Westmetall",
         is_dual=True,
     )
-
-
-def render_metal_correlation_chart(metal_key: str, period: str) -> None:
-    """Zobrazí překrývající se graf LME a SHFE historie v USD/t."""
-    df_lme = _wm_lme_history_filtered(metal_key)
-    if df_lme is None or df_lme.empty:
-        return
-
-    shfe_code = "CU" if metal_key == "copper" else "AL"
-    df_shfe = get_shfe_historical_usd_nasdaq(shfe_code, period)
-
-    if df_shfe.empty:
-        st.warning(
-            f"Historická data SHFE pro {metal_key} nejsou momentálně z Nasdaq API k dispozici."
-        )
-        return
-
-    df_lme_plot = df_lme.copy()
-    if "Date" in df_lme_plot.columns:
-        df_lme_plot["Date"] = pd.to_datetime(df_lme_plot["Date"]).dt.date
-        df_lme_plot.set_index("Date", inplace=True)
-    else:
-        df_lme_plot.index = pd.to_datetime(df_lme_plot.index).dt.date
-
-    df_lme_plot = apply_currency_to_df(df_lme_plot, "Close")
-
-    df_merged = df_lme_plot[["Close"]].rename(columns={"Close": "LME (Západ)"}).join(
-        df_shfe.rename(columns={"SHFE_USD": "SHFE (Čína)"}),
-        how="inner",
-    )
-
-    if df_merged.empty:
-        st.warning("Nepodařilo se spárovat časové osy LME a SHFE.")
-        return
-
-    df_merged = df_merged.reset_index()
-    if df_merged.columns[0] != "Date":
-        df_merged.rename(columns={df_merged.columns[0]: "Date"}, inplace=True)
-
-    metal_name = "Měď" if metal_key == "copper" else "Hliník"
-    period_lbl = get_chart_period_label()
-    fig = px.line(
-        df_merged,
-        x="Date",
-        y=["LME (Západ)", "SHFE (Čína)"],
-        title=f"Korelace trhů ({metal_name}): LME vs SHFE (USD/t) — {period_lbl}",
-        color_discrete_map={"LME (Západ)": "#0D6EFD", "SHFE (Čína)": "#FD7E14"},
-    )
-
-    fig.update_layout(
-        separators=" .",
-        height=350,
-        margin=dict(l=10, r=10, t=40, b=10),
-        paper_bgcolor="#FFFFFF",
-        plot_bgcolor="#F8F9FA",
-        hovermode="x unified",
-        legend_title_text="",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        xaxis=dict(title=None, showgrid=True, gridcolor="#DEE2E6"),
-        yaxis=dict(title="USD/t", showgrid=True, gridcolor="#DEE2E6"),
-    )
-    y_min = df_merged[["LME (Západ)", "SHFE (Čína)"]].min().min() * 0.95
-    y_max = df_merged[["LME (Západ)", "SHFE (Čína)"]].max().max() * 1.05
-    fig.update_yaxes(range=[y_min, y_max])
-
-    st.plotly_chart(fig, use_container_width=True)
 
 
 def interactive_oil_chart(
@@ -3086,7 +2926,7 @@ def render_global_controls() -> tuple[str, str]:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def render_metals() -> None:
-    """Sekce 1 – LME kovy, ocel HRC, spotové SHFE vs LME, historie Westmetall + CHRIS."""
+    """Sekce 1 – LME kovy, ocel HRC, spot CCMN vs LME, historie Westmetall."""
 
     wm_data = fetch_westmetall()
     steel_hrc = fetch_steel_yfinance()
@@ -3170,14 +3010,7 @@ def render_metals() -> None:
     with col_spread_full:
         _render_shfe_spreads(wm_data)
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    c_corr_cu, c_corr_al = st.columns(2)
-    with c_corr_cu:
-        render_metal_correlation_chart("copper", period)
-    with c_corr_al:
-        render_metal_correlation_chart("aluminum", period)
-
-    # ── Aktuální ceny LME vs SHFE (měď, hliník — USD/t, bez oceli) ───────────
+    # ── Aktuální ceny LME vs CCMN (měď, hliník — USD/t, bez oceli) ───────────
     st.markdown("<br>", unsafe_allow_html=True)
     _render_lme_shfe_spot_comparison(wm_data)
 
