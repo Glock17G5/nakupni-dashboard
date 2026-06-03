@@ -1,0 +1,22 @@
+name: Data Robot
+on:
+  schedule:
+    - cron: '0 6,14 * * 1-5' # 06:00 a 14:00 UTC přes pracovní dny
+  workflow_dispatch:
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - run: pip install requests beautifulsoup4 lxml yfinance pandas
+      - run: python data_robot.py
+      - run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add robot_data.json robot_history.csv
+          git diff --quiet && git diff --staged --quiet || (git commit -m "🤖 Automatická aktualizace tržních dat" && git push)
