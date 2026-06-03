@@ -4616,16 +4616,7 @@ def render_domestic_logistics() -> None:
                 )
                 if price_eur is not None and eur_czk:
                     st.caption(
-                        f"**{format_num(price_eur, 0)} EUR** · kurz ČNB {eur_czk:.4f} CZK/EUR · "
-                        f"rozpad: jízda {format_num(quote['km_part'], 0)} + fix {format_num(quote['fix_fee'], 0)} CZK "
-                        f"(manipulace {format_num(quote['fix_handling'], 0)} + dojezd "
-                        f"{quote['fix_hub_km']:.0f} km × {sazba:.1f} = {format_num(quote['fix_positioning'], 0)}) · "
-                        f"min. {format_num(profile.get('min_price', _DOMESTIC_MIN_PRICE_CZK), 0)} CZK"
-                    )
-                else:
-                    st.caption(
-                        f"Rozpad: jízda {format_num(quote['km_part'], 0)} CZK + fix {format_num(quote['fix_fee'], 0)} CZK · "
-                        f"min. {format_num(profile.get('min_price', _DOMESTIC_MIN_PRICE_CZK), 0)} CZK"
+                        f"**{format_num(price_eur, 0)} EUR** (dle kurzu ČNB {eur_czk:.4f} CZK/EUR)"
                     )
             else:
                 m3.metric("Odhadovaná cena k jednání", "—")
