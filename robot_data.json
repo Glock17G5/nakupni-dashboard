@@ -1,0 +1,33 @@
+{
+  "ccmn": {
+    "copper": 106625.0,
+    "aluminum": 24455.0
+  },
+  "yf_spot": {
+    "HRC=F": {
+      "price": 1124.0,
+      "prev": 1124.0,
+      "delta": 0.0,
+      "delta_pct": 0.0
+    },
+    "BZ=F": {
+      "price": 98.269997,
+      "prev": 96.0,
+      "delta": 2.269997,
+      "delta_pct": 2.365
+    },
+    "CL=F": {
+      "price": 96.040001,
+      "prev": 93.760002,
+      "delta": 2.279999,
+      "delta_pct": 2.432
+    },
+    "EURUSD=X": {
+      "price": 1.162115,
+      "prev": 1.163548,
+      "delta": -0.001433,
+      "delta_pct": -0.123
+    }
+  },
+  "_ts": "2026-06-03 13:07"
+}

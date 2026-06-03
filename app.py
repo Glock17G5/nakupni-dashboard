@@ -1076,29 +1076,17 @@ _STEEL_HRC_TICKERS = ("HRC=F", "STRE=F")
 
 @st.cache_data(ttl=CACHE_TTL)
 def fetch_steel_ticker(ticker: str, note: str) -> dict | None:
-    """Jedna ocelová série z Yahoo (USD/short ton → USD/t). Bez náhradních tickerů v rámci řady."""
-    try:
-        hist = yf.Ticker(ticker).history(period="1mo", auto_adjust=True)
-        hist = hist.dropna(subset=["Close"])
-        if hist.empty:
-            return None
-        price_st = float(hist["Close"].iloc[-1])
-        prev_st = float(hist["Close"].iloc[-2]) if len(hist) > 1 else price_st
-        price_t = price_st * _ST_TON_FACTOR
-        prev_t = prev_st * _ST_TON_FACTOR
-        return {
-            "price": round(price_t, 2),
-            "prev_price": round(prev_t, 2),
-            "delta": round(price_t - prev_t, 2),
-            "delta_pct": round((price_t - prev_t) / prev_t * 100, 2) if prev_t else 0,
-            "unit": "USD/t",
-            "ticker": ticker,
-            "note": note,
-            "_source": "Yahoo Finance",
-            "_ts": now_prague().strftime("%Y-%m-%d %H:%M"),
-        }
-    except Exception:
+    spot = fetch_yf_spot(ticker)
+    if not spot:
         return None
+    price_t = spot["price"] * _ST_TON_FACTOR
+    prev_t = spot["prev"] * _ST_TON_FACTOR
+    return {
+        "price": round(price_t, 2), "prev_price": round(prev_t, 2),
+        "delta": round(price_t - prev_t, 2), "delta_pct": spot["delta_pct"],
+        "unit": "USD/t", "ticker": ticker, "note": note,
+        "_source": "Yahoo Finance (Robot)", "_ts": now_prague().strftime("%Y-%m-%d %H:%M"),
+    }
 
 
 @st.cache_data(ttl=CACHE_TTL)
@@ -1113,18 +1101,16 @@ def fetch_steel_yfinance() -> dict | None:
 
 @st.cache_data(ttl=CACHE_TTL)
 def _yf_history(ticker: str) -> pd.DataFrame | None:
-    """Plná historie tickeru (1 rok) — cache nezávislá na přepínači období."""
     try:
-        hist = yf.Ticker(ticker).history(period=_YF_HIST_PERIOD)
-        hist = hist.dropna(subset=["Close"])
-        if hist.empty:
+        import os
+        if not os.path.exists("robot_history.csv"):
             return None
-        out = hist[["Close"]].reset_index()
-        if "Date" not in out.columns and "Datetime" in out.columns:
-            out = out.rename(columns={"Datetime": "Date"})
-        return out
+        df = pd.read_csv("robot_history.csv", parse_dates=["Date"])
+        if ticker in df.columns:
+            return df[["Date", ticker]].rename(columns={ticker: "Close"}).dropna()
     except Exception:
-        return None
+        pass
+    return None
 
 
 def fetch_metal_history(ticker: str = "HG=F", period: str = "6mo") -> pd.DataFrame | None:
@@ -1141,77 +1127,17 @@ def fetch_metal_history(ticker: str = "HG=F", period: str = "6mo") -> pd.DataFra
 
 @st.cache_data(ttl=CACHE_TTL)
 def fetch_ccmn_spot(metal: str = "copper") -> dict | None:
-    """
-    Scrapuje aktuální ceny z fyzického trhu Changjiang (ccmn.cn).
-    Hledá 1#铜 (Měď) a A00铝 (Hliník).
-    """
-    target = "1#铜" if metal == "copper" else "A00铝"
-    fallback = "https://copper.ccmn.cn/" if metal == "copper" else "https://alu.ccmn.cn/"
-    urls = ["https://www.ccmn.cn/", fallback]
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        )
-    }
-
-    def _price_from_table(soup: BeautifulSoup) -> float | None:
-        cell = soup.find(
-            lambda tag: tag.name in ["td", "a", "span"]
-            and tag.get_text(strip=True) == target
-        )
-        if not cell:
-            return None
-        row = cell.find_parent("tr")
-        if not row:
-            return None
-        cols = row.find_all("td")
-        if len(cols) < 3:
-            return None
-        avg_price_str = cols[2].get_text(strip=True)
-        price = float(re.sub(r"[^\d.]", "", avg_price_str))
-        return price if price > 0 else None
-
-    def _price_from_spot_blocks(soup: BeautifulSoup) -> float | None:
-        picked: float | None = None
-        for block in soup.select("div.content1-text-div"):
-            right = block.find("span", class_="right")
-            if not right or right.get_text(strip=True) != target:
-                continue
-            region_el = block.find("span", class_="left")
-            region = region_el.get_text(strip=True) if region_el else ""
-            span = block.select_one("span.up_down_span")
-            if not span:
-                continue
-            match = re.search(r"([\d,]+(?:\.\d+)?)", span.get_text())
-            if not match:
-                continue
-            price = float(match.group(1).replace(",", ""))
-            if price <= 0:
-                continue
-            if "长江综合" in region:
-                return price
-            if picked is None or "上海地区" in region:
-                picked = price
-        return picked
-
     try:
-        for url in urls:
-            res = requests.get(url, headers=headers, timeout=15)
-            res.encoding = "utf-8"
-            soup = BeautifulSoup(res.text, "lxml")
-            price = _price_from_table(soup) or _price_from_spot_blocks(soup)
-            if price and price > 0:
-                return {
-                    "price": price,
-                    "unit": "CNY/t",
-                    "ticker": f"CCMN ({target})",
-                    "source": "ccmn.cn",
-                }
-        return None
-    except Exception as e:
-        print(f"Chyba při scrapování ccmn.cn: {e}")
-        return None
+        import json
+        with open("robot_data.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+        price = data.get("ccmn", {}).get(metal)
+        if price:
+            target = "1#铜" if metal == "copper" else "A00铝"
+            return {"price": price, "unit": "CNY/t", "ticker": f"CCMN ({target})", "source": "ccmn.cn"}
+    except Exception:
+        pass
+    return None
 
 
 def _safe_float(s: str) -> float | None:
@@ -1313,22 +1239,14 @@ def fetch_cny_czk_history(period: str = "3mo") -> tuple[pd.DataFrame | None, boo
 
 @st.cache_data(ttl=CACHE_TTL)
 def fetch_yf_spot(ticker: str) -> dict | None:
-    """Aktuální spot kurz / cena z yfinance (poslední close vs. předchozí den)."""
     try:
-        hist = yf.Ticker(ticker).history(period="10d")
-        hist = hist.dropna(subset=["Close"])
-        if hist.empty:
-            return None
-        price = float(hist["Close"].iloc[-1])
-        prev = float(hist["Close"].iloc[-2]) if len(hist) > 1 else price
-        return {
-            "price":     round(price, 6),
-            "prev":      round(prev, 6),
-            "delta":     round(price - prev, 6),
-            "delta_pct": round((price - prev) / prev * 100, 3) if prev else 0,
-        }
+        import json
+        with open("robot_data.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("yf_spot", {}).get(ticker)
     except Exception:
-        return None
+        pass
+    return None
 
 
 # ==============================================================================
