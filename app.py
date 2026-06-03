@@ -3818,16 +3818,89 @@ def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
     return r_earth_km * c
 
 
-@st.cache_data(ttl=86400, show_spinner=False)
-def search_domestic_location(query: str) -> list[dict]:
+def _resolve_cz_sk_country(country_code: str, country_name: str) -> str | None:
+    """Z ISO kódu nebo názvu země vrátí 'CZ'/'SK', jinak None (mimo ČR/SK)."""
+    cc = str(country_code or "").upper()
+    if cc in ("CZ", "SK"):
+        return cc
+    name = str(country_name or "").lower()
+    if "slovak" in name or "slovensko" in name:
+        return "SK"
+    if "czech" in name or "česko" in name or "czechia" in name:
+        return "CZ"
+    return None
+
+
+def _search_photon(q: str) -> list[dict]:
     """
-    Vyhledání míst v ČR a na Slovensku (Nominatim).
-    Vrací list {lat, lon, display_name, postcode, country}.
+    Geokódování přes Photon (Komoot, OSM data) — funguje i ze sdílených
+    cloudových IP, kde Nominatim blokuje. Filtruje pouze ČR a SK.
     """
-    q = (query or "").strip()
-    if len(q) < 2:
+    url = "https://photon.komoot.io/api/"
+    params = {"q": q, "limit": 15, "lang": "default"}
+    try:
+        resp = requests.get(url, params=params, headers=_NOMINATIM_HEADERS, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+    except (requests.RequestException, ValueError):
         return []
 
+    features = data.get("features") if isinstance(data, dict) else None
+    if not isinstance(features, list):
+        return []
+
+    results: list[dict] = []
+    seen: set[tuple] = set()
+    for feat in features:
+        if not isinstance(feat, dict):
+            continue
+        props = feat.get("properties") or {}
+        geom = feat.get("geometry") or {}
+        coords = geom.get("coordinates") or []
+        country = _resolve_cz_sk_country(props.get("countrycode", ""), props.get("country", ""))
+        if country is None:
+            continue
+        try:
+            lon = float(coords[0])
+            lat = float(coords[1])
+        except (IndexError, TypeError, ValueError):
+            continue
+
+        name = str(props.get("name") or "").strip()
+        street = str(props.get("street") or "").strip()
+        housenr = str(props.get("housenumber") or "").strip()
+        primary = name or (f"{street} {housenr}".strip())
+        locality = str(
+            props.get("city")
+            or props.get("district")
+            or props.get("county")
+            or props.get("state")
+            or ""
+        ).strip()
+        postcode = str(props.get("postcode") or "N/A").strip() or "N/A"
+        country_label = str(props.get("country") or "").strip()
+
+        line_parts = [
+            p for p in (primary, locality, postcode if postcode != "N/A" else "", country_label) if p
+        ]
+        display_name = ", ".join(dict.fromkeys(line_parts)) or q
+
+        key = (round(lat, 4), round(lon, 4), display_name)
+        if key in seen:
+            continue
+        seen.add(key)
+        results.append({
+            "lat": lat,
+            "lon": lon,
+            "display_name": display_name,
+            "postcode": postcode,
+            "country": country,
+        })
+    return results
+
+
+def _search_nominatim(q: str) -> list[dict]:
+    """Geokódování přes OSM Nominatim — záloha (funguje hlavně lokálně)."""
     time.sleep(1)
     url = "https://nominatim.openstreetmap.org/search"
     params = {
@@ -3854,15 +3927,9 @@ def search_domestic_location(query: str) -> list[dict]:
         if not isinstance(item, dict):
             continue
         addr = item.get("address") or {}
-        country = str(addr.get("country_code", "")).upper()
-        if country not in ("CZ", "SK"):
-            country_name = str(addr.get("country", "")).lower()
-            if "slovak" in country_name or "slovensko" in country_name:
-                country = "SK"
-            elif "czech" in country_name or "česko" in country_name or "czechia" in country_name:
-                country = "CZ"
-            else:
-                continue
+        country = _resolve_cz_sk_country(addr.get("country_code", ""), addr.get("country", ""))
+        if country is None:
+            continue
         postcode = addr.get("postcode") or addr.get("postal_code") or "N/A"
         try:
             results.append({
@@ -3875,6 +3942,23 @@ def search_domestic_location(query: str) -> list[dict]:
         except (KeyError, TypeError, ValueError):
             continue
     return results
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def search_domestic_location(query: str) -> list[dict]:
+    """
+    Vyhledání míst v ČR a na Slovensku.
+    Primárně Photon (funguje i z cloudu), záloha Nominatim.
+    Vrací list {lat, lon, display_name, postcode, country}.
+    """
+    q = (query or "").strip()
+    if len(q) < 2:
+        return []
+
+    hits = _search_photon(q)
+    if hits:
+        return hits
+    return _search_nominatim(q)
 
 
 def _location_select_label(loc: dict) -> str:
@@ -3925,7 +4009,7 @@ def get_driving_distance(
     Při selhání API: haversine × 1,3 a druhá hodnota False.
     """
     url = (
-        "http://router.project-osrm.org/route/v1/driving/"
+        "https://router.project-osrm.org/route/v1/driving/"
         f"{lon1},{lat1};{lon2},{lat2}?overview=false"
     )
     try:
