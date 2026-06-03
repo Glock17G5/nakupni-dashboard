@@ -3832,10 +3832,17 @@ _DOMESTIC_ROAD_FACTOR = 1.3
 _DOMESTIC_LDM_PER_EUR_PALLET = 0.4
 _DOMESTIC_MIN_PRICE_CZK = 1200.0
 
+_DOMESTIC_SOLO_MAX_KG = 7500.0
+_DOMESTIC_SOLO_LABEL = "Sólo náklaďák (do 7,5 t)"
+_DOMESTIC_SOLO_LEGACY_LABELS = frozenset({
+    "Sólo náklaďák (do 9.5t)",
+    "Sólo náklaďák (do 9,5 t)",
+})
+
 _DOMESTIC_VEHICLE_ORDER = [
     "Kamion (návěs 24t)",
-    "Sólo náklaďák (do 7.5t)",
-    "Plachtová dodávka (do 1.6t)",
+    _DOMESTIC_SOLO_LABEL,
+    "Plachtová dodávka (do 1,6 t)",
 ]
 
 _DOMESTIC_VEHICLE_PROFILES: dict[str, dict[str, float]] = {
@@ -3851,8 +3858,8 @@ _DOMESTIC_VEHICLE_PROFILES: dict[str, dict[str, float]] = {
         "ltl_floor": 0.48,
         "min_price": 1200.0,
     },
-    "Sólo náklaďák (do 7.5t)": {
-        "max_w": 7500.0,
+    _DOMESTIC_SOLO_LABEL: {
+        "max_w": _DOMESTIC_SOLO_MAX_KG,
         "max_l": 7.2,
         "def_rate": 30.0,
         "fix_handling": 350.0,
@@ -3863,7 +3870,7 @@ _DOMESTIC_VEHICLE_PROFILES: dict[str, dict[str, float]] = {
         "ltl_floor": 0.55,
         "min_price": 1200.0,
     },
-    "Plachtová dodávka (do 1.6t)": {
+    "Plachtová dodávka (do 1,6 t)": {
         "max_w": 1600.0,
         "max_l": 4.0,
         "def_rate": 20.0,
@@ -4027,6 +4034,27 @@ def _domestic_vehicle_key(v_type: str) -> str:
     if "Sólo" in v_type:
         return "solo"
     return "truck"
+
+
+def _domestic_normalize_vehicle_type(v_type: str) -> str:
+    """Mapuje zastaralé názvy vozidel (např. sólo 9,5 t) na aktuální profil."""
+    if v_type in _DOMESTIC_VEHICLE_PROFILES:
+        return v_type
+    if v_type in _DOMESTIC_SOLO_LEGACY_LABELS or "Sólo" in v_type:
+        return _DOMESTIC_SOLO_LABEL
+    if "Dodávka" in v_type:
+        return "Plachtová dodávka (do 1,6 t)"
+    if "Kamion" in v_type:
+        return "Kamion (návěs 24t)"
+    return _DOMESTIC_VEHICLE_ORDER[0]
+
+
+def _domestic_vehicle_option_label(v_type: str) -> str:
+    profile = _DOMESTIC_VEHICLE_PROFILES[v_type]
+    return (
+        f"{v_type} — max {format_num(profile['max_w'], 0)} kg / "
+        f"{profile['max_l']:.1f} LDM"
+    )
 
 
 def _domestic_suggest_vehicle(weight_kg: float, ldm: float) -> str:
@@ -4417,11 +4445,14 @@ def render_domestic_logistics() -> None:
         st.markdown("<br>", unsafe_allow_html=True)
 
         st.markdown("#### Parametry nákladu a vozidla")
-        v_type = st.selectbox(
+        v_type_raw = st.selectbox(
             "Druh vozidla",
             _DOMESTIC_VEHICLE_ORDER,
-            key="domestic_v_type_selector",
+            format_func=_domestic_vehicle_option_label,
+            key="domestic_v_type_selector_v75",
+            help=f"Sólo: pevný limit {_DOMESTIC_SOLO_MAX_KG:.0f} kg (7,5 t).",
         )
+        v_type = _domestic_normalize_vehicle_type(v_type_raw)
         profile = _DOMESTIC_VEHICLE_PROFILES[v_type]
         max_w = profile["max_w"]
         max_l = profile["max_l"]
