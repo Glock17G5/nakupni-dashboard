@@ -3834,7 +3834,7 @@ _DOMESTIC_MIN_PRICE_CZK = 1200.0
 
 _DOMESTIC_VEHICLE_ORDER = [
     "Kamion (návěs 24t)",
-    "Sólo náklaďák (do 9.5t)",
+    "Sólo náklaďák (do 7.5t)",
     "Plachtová dodávka (do 1.6t)",
 ]
 
@@ -3851,8 +3851,8 @@ _DOMESTIC_VEHICLE_PROFILES: dict[str, dict[str, float]] = {
         "ltl_floor": 0.48,
         "min_price": 1200.0,
     },
-    "Sólo náklaďák (do 9.5t)": {
-        "max_w": 9500.0,
+    "Sólo náklaďák (do 7.5t)": {
+        "max_w": 7500.0,
         "max_l": 7.2,
         "def_rate": 30.0,
         "fix_handling": 350.0,
@@ -4029,6 +4029,15 @@ def _domestic_vehicle_key(v_type: str) -> str:
     return "truck"
 
 
+def _domestic_suggest_vehicle(weight_kg: float, ldm: float) -> str:
+    """Nejmenší vozidlo z katalogu, které pojme váhu i LDM (dodávka → sólo → kamion)."""
+    for v_type in reversed(_DOMESTIC_VEHICLE_ORDER):
+        profile = _DOMESTIC_VEHICLE_PROFILES[v_type]
+        if weight_kg <= profile["max_w"] and ldm <= profile["max_l"]:
+            return v_type
+    return _DOMESTIC_VEHICLE_ORDER[0]
+
+
 def _domestic_capacity_info(
     weight_kg: float,
     ldm: float,
@@ -4146,8 +4155,8 @@ def _render_domestic_pallet_cheat_sheet() -> None:
             "**🚚 Typy vozidel a technické specifikace:**<br>"
             "• **Kamion (plachtový návěs 24 t):** délka 13,6 m · šířka 2,48 m · "
             "výška 2,7–3,0 m · **max 24 t / 13,6 LDM** · až 34 EUR palet<br>"
-            "• **Sólo náklaďák (do 9,5 t):** délka cca 7,2 m · šířka 2,48 m · "
-            "výška cca 2,7 m · **max 9,5 t / 7,2 LDM** · cca 18 EUR palet<br>"
+            "• **Sólo náklaďák (do 7,5 t):** délka cca 7,2 m · šířka 2,48 m · "
+            "výška cca 2,7 m · **max 7,5 t / 7,2 LDM** · cca 18 EUR palet<br>"
             "• **Plachtová dodávka (do 1,6 t):** délka 4,2–4,8 m · šířka 2,2 m · "
             "výška 2,0–2,3 m · **max 1,6 t / 4,0 LDM** · 8–10 EUR palet<br><br>"
             "Vzorec: **`1 EUR paleta = 0,4 LDM`**. "
@@ -4323,14 +4332,9 @@ def _format_domestic_transport_request(
     eur_pallets: int,
     road_km: float,
     used_osrm: bool,
-    quote: dict,
-    sazba: float,
     shipment: dict,
-    price_czk: float | None,
-    price_eur: float | None,
-    eur_czk: float | None,
 ) -> str:
-    """Sestaví text poptávky dopravy k odeslání dopravci."""
+    """Sestaví text poptávky dopravy k odeslání dopravci (bez interní kalkulace)."""
     lines = [
         "POPTÁVKA DOPRAVY — pbcable s.r.o.",
         f"Vygenerováno: {now_prague().strftime('%d.%m.%Y %H:%M')}",
@@ -4345,8 +4349,8 @@ def _format_domestic_transport_request(
         f"Vzdálenost: cca {format_num(road_km, 0)} km"
         + (" (OSRM)" if used_osrm else " (odhad)"),
         "",
-        "── Vozidlo a náklad ──",
-        f"Vozidlo: {v_type}",
+        "── Náklad ──",
+        f"Požadovaný typ vozidla: {v_type}",
         f"Zboží: {shipment['cargo_desc']}",
         f"Hmotnost: {format_num(weight_kg, 0)} kg",
         f"Ložné metry: {ldm:.1f} LDM",
@@ -4354,7 +4358,6 @@ def _format_domestic_transport_request(
     if eur_pallets > 0:
         lines.append(f"EUR palety: {eur_pallets} ks")
     lines.extend([
-        f"Využití kapacity vozu: {quote['cap_pct']:.0f} % (limituje {quote['binding']})",
         "",
         "── Termíny ──",
     ])
@@ -4374,18 +4377,6 @@ def _format_domestic_transport_request(
         lines.extend(["", "── Kontakt na vykládce ──", shipment["unload_contact"]])
     if shipment["request_note"]:
         lines.extend(["", "── Poznámka ──", shipment["request_note"]])
-
-    lines.extend(["", "── Orientační kalkulace (interní) ──"])
-    if price_czk is not None and quote.get("price_valid"):
-        lines.append(f"Odhadovaná cena k jednání: {format_num(price_czk, 0)} CZK")
-        if price_eur is not None and eur_czk:
-            lines.append(f"≈ {format_num(price_eur, 0)} EUR (ČNB {eur_czk:.4f} CZK/EUR)")
-        lines.append(
-            f"Rozpad: jízda {format_num(quote['km_part'], 0)} + fix {format_num(quote['fix_fee'], 0)} CZK "
-            f"(sazba {sazba:.1f} CZK/km, LTL {quote['ltl_koef']:.2f})"
-        )
-    else:
-        lines.append("Cena: nutno přepočítat (přetížení nebo chybějící data).")
 
     lines.append("")
     lines.append("Předem děkujeme za Vaši nabídku a zprávu o dostupnosti.")
@@ -4499,6 +4490,12 @@ def render_domestic_logistics() -> None:
         _render_domestic_capacity_bar(
             _domestic_capacity_info(waha, ldm, profile)
         )
+        suggested_v = _domestic_suggest_vehicle(waha, ldm)
+        if suggested_v != v_type:
+            st.info(
+                f"Dle hmotnosti ({format_num(waha, 0)} kg) a LDM ({ldm:.1f}) "
+                f"doporučujeme vozidlo: **{suggested_v}**."
+            )
 
         _render_domestic_pallet_cheat_sheet()
         shipment_form = _render_domestic_shipment_form()
@@ -4612,12 +4609,7 @@ def render_domestic_logistics() -> None:
                 eur_pallets=int(eur_pallets),
                 road_km=road_km,
                 used_osrm=used_osrm,
-                quote=quote,
-                sazba=sazba,
                 shipment=shipment_form,
-                price_czk=price_czk,
-                price_eur=price_eur,
-                eur_czk=eur_czk,
             )
             st.markdown("---")
             st.markdown("**📋 Text poptávky pro dopravce (generováno automaticky)**")
