@@ -5,3 +5,5 @@ beautifulsoup4
 lxml
 plotly
 yfinance
+openpyxl
+xlrd
