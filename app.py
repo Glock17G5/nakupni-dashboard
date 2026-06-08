@@ -3340,7 +3340,7 @@ _HS_DEFAULT_DUTY = {label: pct for label, pct in _HS_CODE_OPTIONS}
 
 _EXACT_HS_DUTIES = {
     "85444995": {"label": "Kabel > 80V <= 1000V (Cu/Al/Solární)", "duty": 3.3},
-    "85444993": {"label": "Kabel <= 80V", "duty": 3.3},
+    "85444993": {"label": "Datový/Komunikační kabel <= 80V", "duty": 0.0},
     "85444290": {"label": "Kabel s konektory", "duty": 3.3},
     "85446010": {"label": "Kabel > 1000V Cu", "duty": 3.7},
     "85446090": {"label": "Kabel > 1000V Ostatní", "duty": 3.7},
@@ -3545,7 +3545,6 @@ def render_landed_cost_pricing() -> None:
             else:
                 df_in = pd.read_excel(uploaded_file, header=None)
 
-            # Nalezení řádku s hlavičkou (CZ i EN verze Pohody)
             header_row_idx = -1
             for r_idx, row in df_in.iterrows():
                 row_str = ' '.join(str(x).lower() for x in row.values if pd.notna(x))
@@ -3553,49 +3552,56 @@ def render_landed_cost_pricing() -> None:
                     header_row_idx = r_idx
                     break
 
-            if header_row_idx == -1:
-                header_row_idx = 0
-
+            if header_row_idx == -1: header_row_idx = 0
             new_rows = []
 
             for i in range(header_row_idx + 1, len(df_in)):
                 row = df_in.iloc[i]
                 vals = [str(x).strip() for x in row.values if pd.notna(x) and str(x).strip() != '']
-
-                if len(vals) < 3:
-                    continue
+                if len(vals) == 0: continue
 
                 name_val = vals[0]
-                if name_val.lower() in ['nan', '', 'celkem', 'total', 'zaokrouhlení', 'dph', 'záloha']:
+                name_lower = name_val.lower()
+
+                # 1. Zahození absolutního balastu (prázdné, součty faktury, stránkování)
+                if name_lower in ['nan', ''] or any(k in name_lower for k in [
+                    'celkem', 'total', 'zaokrouhl', 'dph', 'záloha', 'tax',
+                    'subtotal', 'page', 'strana', 'vystavil', 'slev', 'discount'
+                ]):
+                    continue
+
+                # 2. Zahození informativních řádků o balení (nechceme je lepit do názvu)
+                if 'info:' in name_lower:
                     continue
 
                 num_vals = []
                 hs_val = ""
 
+                # Hledání čísel a HS kódu v řádku
                 for token in vals[1:]:
+                    if '%' in token: continue
                     clean_token = token.replace(' ', '').replace('\xa0', '').replace('€', '').replace('$', '').replace('Kč', '')
 
-                    # Fix pro EN/CZ formátování čísel (např. 5,704.00 vs 5.704,00)
-                    if ',' in clean_token and '.' in clean_token:
-                        clean_token = clean_token.replace(',', '')  # EN formát: odstraníme tisícovou čárku
-                    else:
-                        clean_token = clean_token.replace(',', '.')  # CZ formát: čárka na tečku
-
-                    if '%' in token:
-                        continue
-
                     try:
+                        # Chytré parsování čísel 1.234,56 vs 1,234.56
+                        if '.' in clean_token and ',' in clean_token:
+                            if clean_token.rfind('.') > clean_token.rfind(','):
+                                clean_token = clean_token.replace(',', '')
+                            else:
+                                clean_token = clean_token.replace('.', '').replace(',', '.')
+                        else:
+                            clean_token = clean_token.replace(',', '.')
+
                         f_val = float(clean_token)
                         num_vals.append(f_val)
-
-                        digit_only = ''.join(c for c in clean_token if c.isdigit())
-                        if len(digit_only) == 8:
-                            hs_val = digit_only
                     except ValueError:
-                        digit_only = ''.join(c for c in clean_token if c.isdigit())
-                        if len(digit_only) == 8:
-                            hs_val = digit_only
+                        pass
 
+                    digit_only = ''.join(c for c in token if c.isdigit())
+                    if len(digit_only) == 8:
+                        hs_val = digit_only
+
+                # 3. ROZHODOVACÍ LOGIKA: Má to čísla = Hlavní položka | Nemá čísla = Barva
                 if len(num_vals) >= 2:
                     qty_val = num_vals[0]
                     price_val = num_vals[1]
@@ -3612,7 +3618,6 @@ def render_landed_cost_pricing() -> None:
                                 matched_label = f"Nenalezeno: {hs_val} (Doplňte)"
                                 matched_duty = 0.0
 
-                        # Nulové clo pro turecké zboží
                         if is_atr_turkey:
                             matched_duty = 0.0
 
@@ -3623,12 +3628,16 @@ def render_landed_cost_pricing() -> None:
                             _INVOICE_COL_HS: matched_label,
                             _INVOICE_COL_DUTY: matched_duty
                         })
+                else:
+                    # Nemá to čísla -> Je to doplňující popis (barva) k předchozí položce
+                    if len(new_rows) > 0 and len(name_val) >= 3:
+                        new_rows[-1][_INVOICE_COL_NAME] += f" ({name_val})"
 
             if new_rows:
                 st.session_state.landed_invoice_data = pd.DataFrame(new_rows)
-                st.success(f"Úspěšně nahráno {len(new_rows)} položek (EUR formát) a spárováno clo!")
+                st.success(f"Úspěšně nahráno {len(new_rows)} položek a spárováno clo!")
             else:
-                st.error("V souboru se nepodařilo najít žádné platné položky s cenou a množstvím.")
+                st.warning("Nenalezeny žádné platné položky. Zkontrolujte formát exportu.")
         except Exception as e:
             st.error(f"Chyba při zpracování exportu z Pohody: {e}")
 
