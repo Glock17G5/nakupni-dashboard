@@ -3321,8 +3321,8 @@ TRANSIT_DAYS: dict[str, int] = {
 }
 
 _LANDED_ROUTES = (
-    "🇨🇳 Čína (FCL Železnice)",
-    "🇹🇷 Turecko (Urgent truck)",
+    "🇨🇳 Čína",
+    "🇹🇷 Turecko",
 )
 _ROUTE_TURKEY = _LANDED_ROUTES[1]
 
@@ -3512,6 +3512,56 @@ def render_landed_cost_pricing() -> None:
         )
     with c_fx:
         st.metric("EUR/CZK (ČNB)", f"{eur_czk:.4f}")
+
+    st.markdown("#### Import dat z Pohody")
+    uploaded_file = st.file_uploader(
+        "Nahrát exportní soubor (CSV nebo Excel z Pohody)",
+        type=["csv", "xlsx", "xls"],
+        key="landed_file_uploader"
+    )
+
+    if uploaded_file is not None:
+        try:
+            if uploaded_file.name.lower().endswith('.csv'):
+                df_in = pd.read_csv(uploaded_file, sep=None, engine='python', encoding='utf-8-sig')
+            else:
+                df_in = pd.read_excel(uploaded_file)
+
+            # Heuristické hledání sloupců (Pohoda exporty)
+            col_name = next((c for c in df_in.columns if "text" in str(c).lower() or "název" in str(c).lower()), None)
+            col_qty = next((c for c in df_in.columns if "množ" in str(c).lower()), None)
+            col_price = next((c for c in df_in.columns if "cena" in str(c).lower() and "celk" not in str(c).lower()), None)
+
+            if col_name and col_qty and col_price:
+                new_rows = []
+                for _, r in df_in.iterrows():
+                    name_val = str(r[col_name]).strip()
+                    if not name_val or str(name_val).lower() == 'nan':
+                        continue
+
+                    # Bezpečný převod čísel s českou čárkou
+                    try:
+                        qty_val = float(str(r[col_qty]).replace(' ', '').replace(',', '.')) if pd.notna(r[col_qty]) else 0.0
+                        price_val = float(str(r[col_price]).replace(' ', '').replace(',', '.')) if pd.notna(r[col_price]) else 0.0
+                    except ValueError:
+                        continue
+
+                    if qty_val > 0 and price_val > 0:
+                        new_rows.append({
+                            _INVOICE_COL_NAME: name_val,
+                            _INVOICE_COL_QTY: qty_val,
+                            _INVOICE_COL_PRICE: price_val,
+                            _INVOICE_COL_HS: _HS_LABELS[0],
+                            _INVOICE_COL_DUTY: _HS_DEFAULT_DUTY[_HS_LABELS[0]]
+                        })
+
+                if new_rows:
+                    st.session_state.landed_invoice_data = pd.DataFrame(new_rows)
+                    st.success(f"Úspěšně nahráno {len(new_rows)} položek!")
+            else:
+                st.error("V souboru se nepodařilo najít sloupce pro Text, Množství a Cenu.")
+        except Exception as e:
+            st.error(f"Chyba při čtení souboru: {e}")
 
     st.markdown("#### Položky faktury")
     if "landed_invoice_data" not in st.session_state:
