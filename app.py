@@ -3351,6 +3351,18 @@ _EXACT_HS_DUTIES = {
     "39191080": {"label": "Samosvařovací páska", "duty": 6.5}
 }
 
+_HS_MANUAL_OPTION = "❓ Neznámé / ručně"
+
+
+def _hs_option_label(code: str) -> str:
+    """Popisek HS kategorie pro rozevírací seznam: '85444995 — popis · 3.3 %'."""
+    info = _EXACT_HS_DUTIES[code]
+    return f"{code} — {info['label']} · {info['duty']:.1f} %"
+
+
+_HS_DROPDOWN_OPTIONS = [_hs_option_label(c) for c in _EXACT_HS_DUTIES] + [_HS_MANUAL_OPTION]
+_HS_OPTION_TO_DUTY = {_hs_option_label(c): _EXACT_HS_DUTIES[c]["duty"] for c in _EXACT_HS_DUTIES}
+
 _INVOICE_COL_NAME = "Název / Typ kabelu"
 _INVOICE_COL_QTY = "Množství (m)"
 _INVOICE_COL_PRICE = "Nákupní cena za 1m (EUR)"
@@ -3362,8 +3374,8 @@ _DEFAULT_INVOICE_DF = pd.DataFrame([
         _INVOICE_COL_NAME: "Solární kabel",
         _INVOICE_COL_QTY: 300_000.0,
         _INVOICE_COL_PRICE: 1.85,
-        _INVOICE_COL_HS: _HS_LABELS[0],
-        _INVOICE_COL_DUTY: 3.7,
+        _INVOICE_COL_HS: _hs_option_label("85444995"),
+        _INVOICE_COL_DUTY: _EXACT_HS_DUTIES["85444995"]["duty"],
     },
 ])
 
@@ -3597,7 +3609,9 @@ def render_landed_cost_pricing() -> None:
                     except ValueError:
                         pass
 
-                    digit_only = ''.join(c for c in token if c.isdigit())
+                    # HS kód Excel ukládá jako float ('85444995.0') -> bereme celočíselnou část
+                    hs_int_part = token.replace(' ', '').replace('\xa0', '').replace(',', '.').split('.')[0]
+                    digit_only = ''.join(c for c in hs_int_part if c.isdigit())
                     if len(digit_only) == 8:
                         hs_val = digit_only
 
@@ -3607,16 +3621,12 @@ def render_landed_cost_pricing() -> None:
                     price_val = num_vals[1]
 
                     if qty_val > 0 and price_val > 0:
-                        matched_label = "Neznámý kód (Doplňte)"
-                        matched_duty = 0.0
-
-                        if hs_val:
-                            if hs_val in _EXACT_HS_DUTIES:
-                                matched_label = f"{hs_val} - {_EXACT_HS_DUTIES[hs_val]['label']}"
-                                matched_duty = _EXACT_HS_DUTIES[hs_val]["duty"]
-                            else:
-                                matched_label = f"Nenalezeno: {hs_val} (Doplňte)"
-                                matched_duty = 0.0
+                        if hs_val and hs_val in _EXACT_HS_DUTIES:
+                            matched_label = _hs_option_label(hs_val)
+                            matched_duty = _EXACT_HS_DUTIES[hs_val]["duty"]
+                        else:
+                            matched_label = _HS_MANUAL_OPTION
+                            matched_duty = 0.0
 
                         if is_atr_turkey:
                             matched_duty = 0.0
@@ -3645,8 +3655,22 @@ def render_landed_cost_pricing() -> None:
     if "landed_invoice_data" not in st.session_state:
         st.session_state.landed_invoice_data = _DEFAULT_INVOICE_DF.copy()
 
+    st.caption(
+        "Vyberte u každého řádku **HS kategorii** z rozevíracího seznamu — clo (%) se "
+        "doplní automaticky. Pro zboží mimo seznam zvolte volbu ❓ Neznámé / ručně a clo "
+        "zadejte ručně."
+    )
+
+    # Stará / neplatná HS hodnota (např. ze starého importu) -> spadne na ruční volbu,
+    # aby rozevírací seznam nespadl.
+    df_for_editor = st.session_state.landed_invoice_data.copy()
+    if _INVOICE_COL_HS in df_for_editor.columns:
+        df_for_editor[_INVOICE_COL_HS] = df_for_editor[_INVOICE_COL_HS].apply(
+            lambda v: str(v) if str(v) in _HS_DROPDOWN_OPTIONS else _HS_MANUAL_OPTION
+        )
+
     edited = st.data_editor(
-        st.session_state.landed_invoice_data,
+        df_for_editor,
         num_rows="dynamic",
         use_container_width=True,
         hide_index=True,
@@ -3669,41 +3693,44 @@ def render_landed_cost_pricing() -> None:
                 format="%.4f",
                 required=True,
             ),
-            _INVOICE_COL_HS: st.column_config.TextColumn(
+            _INVOICE_COL_HS: st.column_config.SelectboxColumn(
                 _INVOICE_COL_HS,
-                help="HS kód a popis (z importu nebo ručně). Nenalezené kódy doplňte.",
+                options=_HS_DROPDOWN_OPTIONS,
+                help="Vyberte HS kategorii — clo se doplní automaticky.",
+                width="large",
             ),
             _INVOICE_COL_DUTY: st.column_config.NumberColumn(
                 _INVOICE_COL_DUTY,
                 min_value=0.0,
                 max_value=100.0,
                 format="%.2f",
-                help="Finální % cla pro výpočet (Čína). U Turecka se ignoruje.",
+                help="U vybrané HS kategorie se nastaví automaticky. Ručně jen u volby Neznámé / ručně. U Turecka (A.TR) se ignoruje.",
                 required=True,
             ),
         },
     )
     st.session_state.landed_invoice_data = edited
 
-    if st.button("📋 Doplnit clo (%) dle HS nápovědy", key="landed_fill_duty_hs"):
-        if force_zero_duty:
-            st.info("Turecko (A.TR): clo je vynuceno na 0 % — HS sazby se nepoužijí.")
-        else:
-            filled = _sanitize_invoice_input(edited)
-            if not filled.empty:
-                def _duty_from_hs_label(label, current_duty):
-                    digits = ''.join(c for c in str(label) if c.isdigit())
-                    code8 = digits[:8] if len(digits) >= 8 else ""
-                    if code8 in _EXACT_HS_DUTIES:
-                        return _EXACT_HS_DUTIES[code8]["duty"]
-                    return current_duty
-
-                filled[_INVOICE_COL_DUTY] = [
-                    _duty_from_hs_label(hs, duty)
-                    for hs, duty in zip(filled[_INVOICE_COL_HS], filled[_INVOICE_COL_DUTY])
-                ]
-                st.session_state.landed_invoice_data = filled
-                st.rerun()
+    # Rozevírací seznam HS automaticky řídí clo u známých kategorií.
+    if not force_zero_duty and not edited.empty and _INVOICE_COL_HS in edited.columns:
+        new_duty = []
+        changed = False
+        for hs, duty in zip(edited[_INVOICE_COL_HS], edited[_INVOICE_COL_DUTY]):
+            mapped = _HS_OPTION_TO_DUTY.get(str(hs))
+            if mapped is None:
+                new_duty.append(duty)  # „Neznámé / ručně" -> ponecháme ruční hodnotu
+                continue
+            new_duty.append(mapped)
+            try:
+                if abs(float(duty) - float(mapped)) > 1e-9:
+                    changed = True
+            except (TypeError, ValueError):
+                changed = True
+        if changed:
+            updated = edited.copy()
+            updated[_INVOICE_COL_DUTY] = new_duty
+            st.session_state.landed_invoice_data = updated
+            st.rerun()
 
     invoice = _sanitize_invoice_input(edited)
     if invoice.empty:
