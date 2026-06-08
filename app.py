@@ -3338,6 +3338,19 @@ _HS_CODE_OPTIONS: list[tuple[str, float]] = [
 _HS_LABELS = [label for label, _ in _HS_CODE_OPTIONS]
 _HS_DEFAULT_DUTY = {label: pct for label, pct in _HS_CODE_OPTIONS}
 
+_EXACT_HS_DUTIES = {
+    "85444995": {"label": "Kabel > 80V <= 1000V (Cu/Al/Solární)", "duty": 3.3},
+    "85444993": {"label": "Kabel <= 80V", "duty": 3.3},
+    "85444290": {"label": "Kabel s konektory", "duty": 3.3},
+    "85446010": {"label": "Kabel > 1000V Cu", "duty": 3.7},
+    "85446090": {"label": "Kabel > 1000V Ostatní", "duty": 3.7},
+    "85447000": {"label": "Optický kabel", "duty": 0.0},
+    "85444920": {"label": "Telekomunikační kabel", "duty": 0.0},
+    "85444999": {"label": "Kabel = 1000V (NAYY)", "duty": 3.3},
+    "39173200": {"label": "Termorukávy (Plast)", "duty": 6.5},
+    "39191080": {"label": "Samosvařovací páska", "duty": 6.5}
+}
+
 _INVOICE_COL_NAME = "Název / Typ kabelu"
 _INVOICE_COL_QTY = "Množství (m)"
 _INVOICE_COL_PRICE = "Nákupní cena za 1m (EUR)"
@@ -3380,7 +3393,6 @@ def _sanitize_invoice_input(df: pd.DataFrame) -> pd.DataFrame:
     out[_INVOICE_COL_DUTY] = pd.to_numeric(out[_INVOICE_COL_DUTY], errors="coerce").fillna(0)
     if _INVOICE_COL_HS in out.columns:
         out[_INVOICE_COL_HS] = out[_INVOICE_COL_HS].astype(str)
-        out.loc[~out[_INVOICE_COL_HS].isin(_HS_LABELS), _INVOICE_COL_HS] = _HS_LABELS[0]
     mask = (
         (out[_INVOICE_COL_NAME] != "")
         & (out[_INVOICE_COL_NAME].str.lower() != "nan")
@@ -3514,6 +3526,8 @@ def render_landed_cost_pricing() -> None:
         st.metric("EUR/CZK (ČNB)", f"{eur_czk:.4f}")
 
     st.markdown("#### Import dat z Pohody")
+    is_atr_turkey = st.checkbox("🇹🇷 Aplikovat nulové clo (Zboží z Turecka s certifikátem A.TR)", value=False)
+
     uploaded_file = st.file_uploader(
         "Nahrát exportní soubor (CSV nebo Excel z Pohody)",
         type=["csv", "xlsx", "xls"],
@@ -3587,15 +3601,20 @@ def render_landed_cost_pricing() -> None:
                     price_val = num_vals[1]
 
                     if qty_val > 0 and price_val > 0:
-                        matched_label = _HS_LABELS[0]
-                        matched_duty = _HS_DEFAULT_DUTY[_HS_LABELS[0]]
+                        matched_label = "Neznámý kód (Doplňte)"
+                        matched_duty = 0.0
 
                         if hs_val:
-                            for label, duty in _HS_CODE_OPTIONS:
-                                if hs_val[:4] in label.replace(' ', ''):
-                                    matched_label = label
-                                    matched_duty = duty
-                                    break
+                            if hs_val in _EXACT_HS_DUTIES:
+                                matched_label = f"{hs_val} - {_EXACT_HS_DUTIES[hs_val]['label']}"
+                                matched_duty = _EXACT_HS_DUTIES[hs_val]["duty"]
+                            else:
+                                matched_label = f"Nenalezeno: {hs_val} (Doplňte)"
+                                matched_duty = 0.0
+
+                        # Nulové clo pro turecké zboží
+                        if is_atr_turkey:
+                            matched_duty = 0.0
 
                         new_rows.append({
                             _INVOICE_COL_NAME: name_val,
@@ -3641,11 +3660,9 @@ def render_landed_cost_pricing() -> None:
                 format="%.4f",
                 required=True,
             ),
-            _INVOICE_COL_HS: st.column_config.SelectboxColumn(
+            _INVOICE_COL_HS: st.column_config.TextColumn(
                 _INVOICE_COL_HS,
-                options=_HS_LABELS,
-                help="Nápověda k HS kódu — orientační sazba cla",
-                required=True,
+                help="HS kód a popis (z importu nebo ručně). Nenalezené kódy doplňte.",
             ),
             _INVOICE_COL_DUTY: st.column_config.NumberColumn(
                 _INVOICE_COL_DUTY,
@@ -3665,7 +3682,17 @@ def render_landed_cost_pricing() -> None:
         else:
             filled = _sanitize_invoice_input(edited)
             if not filled.empty:
-                filled[_INVOICE_COL_DUTY] = filled[_INVOICE_COL_HS].map(_HS_DEFAULT_DUTY)
+                def _duty_from_hs_label(label, current_duty):
+                    digits = ''.join(c for c in str(label) if c.isdigit())
+                    code8 = digits[:8] if len(digits) >= 8 else ""
+                    if code8 in _EXACT_HS_DUTIES:
+                        return _EXACT_HS_DUTIES[code8]["duty"]
+                    return current_duty
+
+                filled[_INVOICE_COL_DUTY] = [
+                    _duty_from_hs_label(hs, duty)
+                    for hs, duty in zip(filled[_INVOICE_COL_HS], filled[_INVOICE_COL_DUTY])
+                ]
                 st.session_state.landed_invoice_data = filled
                 st.rerun()
 
