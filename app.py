@@ -3522,7 +3522,7 @@ def render_landed_cost_pricing() -> None:
 
     if uploaded_file is not None:
         try:
-            # 1. Čtení dat bez hlavičky
+            # 1. Načtení hrubých dat bez fixní hlavičky
             if uploaded_file.name.lower().endswith('.csv'):
                 try:
                     df_in = pd.read_csv(uploaded_file, sep=',', encoding='utf-8-sig', header=None)
@@ -3532,61 +3532,68 @@ def render_landed_cost_pricing() -> None:
             else:
                 df_in = pd.read_excel(uploaded_file, header=None)
 
-            # 2. Bulletproof hledání indexů sloupců (ignoruje prázdné mezery z Pohody)
+            # 2. Nalezení řádku, kde začínají položky dokladu
             header_row_idx = -1
-            name_idx = qty_idx = price_idx = hs_idx = -1
-
-            # Najdeme řádek, kde začíná faktura
             for r_idx, row in df_in.iterrows():
-                for c_idx, cell_val in enumerate(row.values):
-                    val_str = str(cell_val).lower().strip()
-                    if val_str in ['označení dodávky', 'název', 'text', 'položka']:
-                        header_row_idx = r_idx
-                        break
-                if header_row_idx != -1:
+                row_str = ' '.join(str(x).lower() for x in row.values if pd.notna(x))
+                if 'označení dodávky' in row_str or 'množství' in row_str or 'j.cena' in row_str:
+                    header_row_idx = r_idx
                     break
 
-            if header_row_idx != -1:
-                # Nyní projdeme tento nalezený řádek a přesně si poznamenáme indexy sloupců
-                header_row = df_in.iloc[header_row_idx].values
-                for c_idx, cell_val in enumerate(header_row):
-                    val_str = str(cell_val).lower().strip()
-                    if 'označení dodávky' in val_str or 'název' in val_str or 'text' in val_str:
-                        name_idx = c_idx
-                    elif 'množ' in val_str:
-                        qty_idx = c_idx
-                    elif 'j.cena' in val_str or ('cena' in val_str and 'celk' not in val_str):
-                        price_idx = c_idx
-                    elif 'hs' in val_str or ('kód' in val_str and 'hs' in val_str):
-                        hs_idx = c_idx
+            if header_row_idx == -1:
+                header_row_idx = 0
 
-            # 3. Vytažení dat podle přesných indexů
-            if name_idx != -1 and qty_idx != -1 and price_idx != -1:
-                new_rows = []
-                # Jedeme od řádku pod hlavičkou
-                for i in range(header_row_idx + 1, len(df_in)):
-                    r = df_in.iloc[i]
-                    name_val = str(r.iloc[name_idx]).strip()
+            new_rows = []
 
-                    if not name_val or name_val.lower() == 'nan' or name_val == '':
+            # 3. Sekvenční parsování vyčištěných řádků
+            for i in range(header_row_idx + 1, len(df_in)):
+                row = df_in.iloc[i]
+                # Vyfiltrujeme pouze buňky, které nejsou prázdné nebo NaN
+                vals = [str(x).strip() for x in row.values if pd.notna(x) and str(x).strip() != '']
+
+                # Ignorujeme prázdné řádky nebo souhrnné patičky dokladu
+                if len(vals) < 3:
+                    continue
+
+                name_val = vals[0]
+                if name_val.lower() in ['nan', '', 'celkem', 'zaokrouhlení', 'dph', 'záloha']:
+                    continue
+
+                # Vytáhneme z řádku čistě číselné hodnoty
+                num_vals = []
+                hs_val = ""
+
+                for token in vals[1:]:
+                    clean_token = token.replace(' ', '').replace('\xa0', '').replace(',', '.')
+
+                    # Přeskočíme procenta (DPH nebo slevy)
+                    if '%' in token:
                         continue
 
                     try:
-                        q_str = str(r.iloc[qty_idx]).replace(' ', '').replace(',', '.')
-                        p_str = str(r.iloc[price_idx]).replace(' ', '').replace(',', '.')
-                        qty_val = float(q_str) if q_str.lower() != 'nan' else 0.0
-                        price_val = float(p_str) if p_str.lower() != 'nan' else 0.0
+                        f_val = float(clean_token)
+                        num_vals.append(f_val)
+
+                        # Pokud má řetězec přesně 8 číslic, uchováme ho jako HS kód
+                        digit_only = ''.join(c for c in clean_token if c.isdigit())
+                        if len(digit_only) == 8:
+                            hs_val = digit_only
                     except ValueError:
-                        continue
+                        # Pokud to není čisté číslo, ale obsahuje 8místný kód
+                        digit_only = ''.join(c for c in clean_token if c.isdigit())
+                        if len(digit_only) == 8:
+                            hs_val = digit_only
+
+                # Validní položka z Pohody má vždy alespoň množství a cenu (2 čísla)
+                if len(num_vals) >= 2:
+                    qty_val = num_vals[0]
+                    price_val = num_vals[1]
 
                     if qty_val > 0 and price_val > 0:
-                        hs_val = str(r.iloc[hs_idx]).replace(' ', '').strip() if hs_idx != -1 else ""
-                        if hs_val.lower() == 'nan':
-                            hs_val = ""
-
                         matched_label = _HS_LABELS[0]
                         matched_duty = _HS_DEFAULT_DUTY[_HS_LABELS[0]]
 
+                        # Automatické spárování cla podle nalezeného HS kódu
                         if hs_val:
                             for label, duty in _HS_CODE_OPTIONS:
                                 if hs_val[:4] in label.replace(' ', ''):
@@ -3602,15 +3609,13 @@ def render_landed_cost_pricing() -> None:
                             _INVOICE_COL_DUTY: matched_duty
                         })
 
-                if new_rows:
-                    st.session_state.landed_invoice_data = pd.DataFrame(new_rows)
-                    st.success(f"Úspěšně nahráno {len(new_rows)} položek a spárováno clo!")
-                else:
-                    st.warning("Záznamy byly nalezeny, ale nenašly se platné položky (Množství/Cena).")
+            if new_rows:
+                st.session_state.landed_invoice_data = pd.DataFrame(new_rows)
+                st.success(f"Úspěšně nahráno {len(new_rows)} položek z Pohody a dopočítáno clo!")
             else:
-                st.error("Nepodařilo se identifikovat sloupce. Export musí obsahovat 'Označení dodávky', 'Množství' a 'J.cena'.")
+                st.error("V souboru se nepodařilo najít žádné platné obchodní položky.")
         except Exception as e:
-            st.error(f"Chyba při čtení souboru: {e}")
+            st.error(f"Chyba při zpracování exportu z Pohody: {e}")
 
     st.markdown("#### Položky faktury")
     if "landed_invoice_data" not in st.session_state:
