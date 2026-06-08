@@ -3522,7 +3522,6 @@ def render_landed_cost_pricing() -> None:
 
     if uploaded_file is not None:
         try:
-            # 1. Načtení hrubých dat bez fixní hlavičky
             if uploaded_file.name.lower().endswith('.csv'):
                 try:
                     df_in = pd.read_csv(uploaded_file, sep=',', encoding='utf-8-sig', header=None)
@@ -3532,11 +3531,11 @@ def render_landed_cost_pricing() -> None:
             else:
                 df_in = pd.read_excel(uploaded_file, header=None)
 
-            # 2. Nalezení řádku, kde začínají položky dokladu
+            # Nalezení řádku s hlavičkou (CZ i EN verze Pohody)
             header_row_idx = -1
             for r_idx, row in df_in.iterrows():
                 row_str = ' '.join(str(x).lower() for x in row.values if pd.notna(x))
-                if 'označení dodávky' in row_str or 'množství' in row_str or 'j.cena' in row_str:
+                if any(k in row_str for k in ['označení', 'množství', 'j.cena', 'description', 'q´ty', 'qty', 'unit price']):
                     header_row_idx = r_idx
                     break
 
@@ -3545,28 +3544,29 @@ def render_landed_cost_pricing() -> None:
 
             new_rows = []
 
-            # 3. Sekvenční parsování vyčištěných řádků
             for i in range(header_row_idx + 1, len(df_in)):
                 row = df_in.iloc[i]
-                # Vyfiltrujeme pouze buňky, které nejsou prázdné nebo NaN
                 vals = [str(x).strip() for x in row.values if pd.notna(x) and str(x).strip() != '']
 
-                # Ignorujeme prázdné řádky nebo souhrnné patičky dokladu
                 if len(vals) < 3:
                     continue
 
                 name_val = vals[0]
-                if name_val.lower() in ['nan', '', 'celkem', 'zaokrouhlení', 'dph', 'záloha']:
+                if name_val.lower() in ['nan', '', 'celkem', 'total', 'zaokrouhlení', 'dph', 'záloha']:
                     continue
 
-                # Vytáhneme z řádku čistě číselné hodnoty
                 num_vals = []
                 hs_val = ""
 
                 for token in vals[1:]:
-                    clean_token = token.replace(' ', '').replace('\xa0', '').replace(',', '.')
+                    clean_token = token.replace(' ', '').replace('\xa0', '').replace('€', '').replace('$', '').replace('Kč', '')
 
-                    # Přeskočíme procenta (DPH nebo slevy)
+                    # Fix pro EN/CZ formátování čísel (např. 5,704.00 vs 5.704,00)
+                    if ',' in clean_token and '.' in clean_token:
+                        clean_token = clean_token.replace(',', '')  # EN formát: odstraníme tisícovou čárku
+                    else:
+                        clean_token = clean_token.replace(',', '.')  # CZ formát: čárka na tečku
+
                     if '%' in token:
                         continue
 
@@ -3574,17 +3574,14 @@ def render_landed_cost_pricing() -> None:
                         f_val = float(clean_token)
                         num_vals.append(f_val)
 
-                        # Pokud má řetězec přesně 8 číslic, uchováme ho jako HS kód
                         digit_only = ''.join(c for c in clean_token if c.isdigit())
                         if len(digit_only) == 8:
                             hs_val = digit_only
                     except ValueError:
-                        # Pokud to není čisté číslo, ale obsahuje 8místný kód
                         digit_only = ''.join(c for c in clean_token if c.isdigit())
                         if len(digit_only) == 8:
                             hs_val = digit_only
 
-                # Validní položka z Pohody má vždy alespoň množství a cenu (2 čísla)
                 if len(num_vals) >= 2:
                     qty_val = num_vals[0]
                     price_val = num_vals[1]
@@ -3593,7 +3590,6 @@ def render_landed_cost_pricing() -> None:
                         matched_label = _HS_LABELS[0]
                         matched_duty = _HS_DEFAULT_DUTY[_HS_LABELS[0]]
 
-                        # Automatické spárování cla podle nalezeného HS kódu
                         if hs_val:
                             for label, duty in _HS_CODE_OPTIONS:
                                 if hs_val[:4] in label.replace(' ', ''):
@@ -3611,9 +3607,9 @@ def render_landed_cost_pricing() -> None:
 
             if new_rows:
                 st.session_state.landed_invoice_data = pd.DataFrame(new_rows)
-                st.success(f"Úspěšně nahráno {len(new_rows)} položek z Pohody a dopočítáno clo!")
+                st.success(f"Úspěšně nahráno {len(new_rows)} položek (EUR formát) a spárováno clo!")
             else:
-                st.error("V souboru se nepodařilo najít žádné platné obchodní položky.")
+                st.error("V souboru se nepodařilo najít žádné platné položky s cenou a množstvím.")
         except Exception as e:
             st.error(f"Chyba při zpracování exportu z Pohody: {e}")
 
