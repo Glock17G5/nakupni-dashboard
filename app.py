@@ -3653,88 +3653,99 @@ def render_landed_cost_pricing() -> None:
 
     st.caption(
         "Vyberte u každého řádku **HS kategorii** z rozevíracího seznamu — clo (%) se "
-        "nastaví automaticky. Pro zboží mimo seznam zvolte ❓ Neznámé / ručně a clo "
-        "zadejte ručně. Nenapárované položky z importu dostanou bezpečných 3,7 % "
-        "(radši vyšší odhad než nemilé překvapení) — zkontrolujte je."
+        "nastaví automaticky. Nenapárované položky z importu dostanou bezpečných 3,7 % "
+        "(radši vyšší odhad než nemilé překvapení) — zkontrolujte HS kategorii u každého řádku."
     )
 
-    # --- ŽIVÁ SYNCHRONIZACE CLA PODLE HS KÓDU ---
-    if "landed_invoice_editor" in st.session_state:
-        edits = st.session_state["landed_invoice_editor"].get("edited_rows", {})
-        if edits and "landed_invoice_data" in st.session_state:
-            df_current = st.session_state.landed_invoice_data
-            data_changed = False
+    # Import může vrátit starou volbu „Neznámé / ručně“ — před editorem sjednotíme na platnou položku seznamu.
+    _valid_hs_options = set(_HS_SELECTBOX_OPTIONS)
+    _df_pre = st.session_state.landed_invoice_data
+    if _INVOICE_COL_HS in _df_pre.columns:
+        _invalid_hs = ~_df_pre[_INVOICE_COL_HS].astype(str).isin(_valid_hs_options)
+        if _invalid_hs.any():
+            _df_pre = _df_pre.copy()
+            _df_pre.loc[_invalid_hs, _INVOICE_COL_HS] = _HS_SELECTBOX_OPTIONS[0]
+            st.session_state.landed_invoice_data = _df_pre
 
-            for row_idx_str, fields in edits.items():
+    def on_invoice_data_change():
+        editor_state = st.session_state.get("landed_invoice_editor")
+        if editor_state and "landed_invoice_data" in st.session_state:
+            df = st.session_state.landed_invoice_data.copy()
+
+            # Zpracování upravených řádků
+            for row_idx_str, changes in editor_state.get("edited_rows", {}).items():
                 row_idx = int(row_idx_str)
-                if _INVOICE_COL_HS in fields:
-                    new_hs_string = str(fields[_INVOICE_COL_HS])
+
+                # Pokud uživatel změnil HS kód, okamžitě mu k tomu přiřadíme správné clo
+                if _INVOICE_COL_HS in changes:
+                    new_hs_string = str(changes[_INVOICE_COL_HS])
                     code_digits = "".join(c for c in new_hs_string if c.isdigit())[:8]
+
                     if code_digits in _EXACT_HS_DUTIES:
-                        # Přepíšeme clo a zarovnáme formát názvu v původním DataFrame
-                        df_current.loc[row_idx, _INVOICE_COL_DUTY] = _EXACT_HS_DUTIES[code_digits]["duty"]
-                        df_current.loc[row_idx, _INVOICE_COL_HS] = f"{code_digits} - {_EXACT_HS_DUTIES[code_digits]['label']}"
-                        data_changed = True
+                        df.at[row_idx, _INVOICE_COL_DUTY] = _EXACT_HS_DUTIES[code_digits]["duty"]
+                        df.at[row_idx, _INVOICE_COL_HS] = f"{code_digits} - {_EXACT_HS_DUTIES[code_digits]['label']}"
+                    else:
+                        df.at[row_idx, _INVOICE_COL_DUTY] = 0.0
 
-            if data_changed:
-                st.session_state.landed_invoice_data = df_current
-                # Vyčistíme starý stav editoru a donutíme aplikaci překreslit tabulku s novými hodnotami
-                del st.session_state["landed_invoice_editor"]
-                st.rerun()
-    # --------------------------------------------
+                # Pokud uživatel změnil jakýkoliv jiný sloupec, uložíme ho také
+                for col, val in changes.items():
+                    if col != _INVOICE_COL_HS:  # HS kód už máme vyřešený výše
+                        df.at[row_idx, col] = val
 
-    # Platné volby pro selectbox (kategorie + ruční volba pro zboží mimo seznam).
-    _hs_valid_options = _HS_SELECTBOX_OPTIONS + [_HS_MANUAL_OPTION]
+            # Zpracování nově přidaných řádků (pokud by někdo kliknul na tlačítko +)
+            for row in editor_state.get("added_rows", []):
+                if _INVOICE_COL_HS in row:
+                    code_digits = "".join(c for c in str(row[_INVOICE_COL_HS]) if c.isdigit())[:8]
+                    if code_digits in _EXACT_HS_DUTIES:
+                        row[_INVOICE_COL_DUTY] = _EXACT_HS_DUTIES[code_digits]["duty"]
+                        row[_INVOICE_COL_HS] = f"{code_digits} - {_EXACT_HS_DUTIES[code_digits]['label']}"
+                df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
 
-    # Stará / neplatná HS hodnota (např. ze starého importu) -> spadne na ruční volbu,
-    # aby rozevírací seznam nespadl.
-    df_for_editor = st.session_state.landed_invoice_data.copy()
-    if _INVOICE_COL_HS in df_for_editor.columns:
-        df_for_editor[_INVOICE_COL_HS] = df_for_editor[_INVOICE_COL_HS].apply(
-            lambda v: str(v) if str(v) in _hs_valid_options else _HS_MANUAL_OPTION
-        )
+            # Zpracování smazaných řádků
+            deleted_indices = editor_state.get("deleted_rows", [])
+            if deleted_indices:
+                df = df.drop(index=deleted_indices).reset_index(drop=True)
+
+            st.session_state.landed_invoice_data = df
 
     edited = st.data_editor(
-        df_for_editor,
-        num_rows="dynamic",
-        use_container_width=True,
-        hide_index=True,
+        st.session_state.landed_invoice_data,
         key="landed_invoice_editor",
+        on_change=on_invoice_data_change,
         column_config={
             _INVOICE_COL_NAME: st.column_config.TextColumn(
-                _INVOICE_COL_NAME,
-                width="medium",
-                required=True,
+                "Název položky",
+                width="large",
+                disabled=False,
             ),
             _INVOICE_COL_QTY: st.column_config.NumberColumn(
-                _INVOICE_COL_QTY,
+                "Množství",
                 min_value=0.0,
-                format="%.0f",
-                required=True,
+                format="%.2f",
             ),
             _INVOICE_COL_PRICE: st.column_config.NumberColumn(
-                _INVOICE_COL_PRICE,
+                "Jednotková cena",
                 min_value=0.0,
-                format="%.4f",
-                required=True,
+                format="%.3f",
             ),
             _INVOICE_COL_HS: st.column_config.SelectboxColumn(
-                _INVOICE_COL_HS,
-                options=_hs_valid_options,
-                help="Vyberte HS kategorii — clo se doplní automaticky.",
+                "HS Kód / Nápověda",
+                help="Vyberte HS kód pro automatické přepsání cla",
                 width="large",
-            ),
-            _INVOICE_COL_DUTY: st.column_config.NumberColumn(
-                _INVOICE_COL_DUTY,
-                min_value=0.0,
-                max_value=100.0,
-                format="%.2f",
-                help="U vybrané HS kategorie se nastaví automaticky. Ručně jen u volby Neznámé / ručně. U Turecka (A.TR) se ignoruje.",
+                options=_HS_SELECTBOX_OPTIONS,
                 required=True,
             ),
+            _INVOICE_COL_DUTY: st.column_config.NumberColumn(
+                "Aplikované clo (%)",
+                min_value=0.0,
+                max_value=100.0,
+                format="%.1f %%",
+            ),
         },
+        disabled=False,
+        num_rows="dynamic",
+        use_container_width=True,
     )
-    st.session_state.landed_invoice_data = edited
 
     invoice = _sanitize_invoice_input(edited)
     if invoice.empty:
