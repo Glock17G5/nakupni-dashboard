@@ -3385,28 +3385,32 @@ def _duty_for_hs_label(hs_label: str, *, force_zero: bool = False) -> float:
     return _DEFAULT_INVOICE_DUTY
 
 
+def _normalize_hs_label(hs_label: object) -> str:
+    """Sjednotí HS popisek na platnou volbu selectboxu."""
+    hs_raw = str(hs_label)
+    code = _extract_hs_code(hs_raw)
+    if code in _EXACT_HS_DUTIES:
+        return _hs_label_for_code(code)
+    if hs_raw in _HS_SELECTBOX_OPTIONS:
+        return hs_raw
+    return _DEFAULT_IMPORT_HS_LABEL
+
+
 def _apply_duty_from_hs_column(df: pd.DataFrame, *, force_zero: bool = False) -> pd.DataFrame:
     """Přepočítá sloupec cla z HS kódů — volat vždy PŘED vykreslením data_editoru."""
     if df is None or df.empty:
         return df
-    out = df.copy()
+    out = df.copy().reset_index(drop=True)
     if _INVOICE_COL_HS not in out.columns:
         out[_INVOICE_COL_HS] = _DEFAULT_IMPORT_HS_LABEL
     if _INVOICE_COL_DUTY not in out.columns:
         out[_INVOICE_COL_DUTY] = 0.0
-    valid_hs = set(_HS_SELECTBOX_OPTIONS)
-    for idx in out.index:
-        hs_raw = str(out.at[idx, _INVOICE_COL_HS])
-        code = _extract_hs_code(hs_raw)
-        if code in _EXACT_HS_DUTIES:
-            out.at[idx, _INVOICE_COL_HS] = _hs_label_for_code(code)
-        elif hs_raw not in valid_hs:
-            out.at[idx, _INVOICE_COL_HS] = _DEFAULT_IMPORT_HS_LABEL
-        out.at[idx, _INVOICE_COL_DUTY] = _duty_for_hs_label(
-            str(out.at[idx, _INVOICE_COL_HS]),
-            force_zero=force_zero,
-        )
-    return out.reset_index(drop=True)
+
+    out[_INVOICE_COL_HS] = out[_INVOICE_COL_HS].apply(_normalize_hs_label)
+    out[_INVOICE_COL_DUTY] = out[_INVOICE_COL_HS].apply(
+        lambda hs: _duty_for_hs_label(hs, force_zero=force_zero)
+    )
+    return out
 
 
 def _normalize_invoice_hs_options(df: pd.DataFrame) -> pd.DataFrame:
