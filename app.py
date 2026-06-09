@@ -3339,25 +3339,20 @@ _HS_LABELS = [label for label, _ in _HS_CODE_OPTIONS]
 _HS_DEFAULT_DUTY = {label: pct for label, pct in _HS_CODE_OPTIONS}
 
 _EXACT_HS_DUTIES = {
-    "85444995": {"label": "Kabel > 80V <= 1000V (Cu/Al)", "duty": 3.3},
     "85446010": {"label": "Solární kabel / Kabel > 1000V Cu", "duty": 3.7},
     "85446090": {"label": "Kabel 3.6/6.6kV (Ostatní)", "duty": 3.7},
     "85444991": {"label": "Silový kabel 0,6/1kV", "duty": 3.3},
-    "85444993": {"label": "Datový/Komunikační kabel <= 80V", "duty": 0.0},
+    "85444995": {"label": "Kabel > 80V <= 1000V (Cu/Al)", "duty": 3.3},
     "85444290": {"label": "Kabel s konektory", "duty": 3.3},
-    "85447000": {"label": "Optický kabel", "duty": 0.0},
+    "85444993": {"label": "Datový/Komunikační kabel <= 80V", "duty": 0.0},
     "85444920": {"label": "Ethernetový kabel v metráži", "duty": 0.0},
+    "85447000": {"label": "Optický kabel", "duty": 0.0},
     "70196990": {"label": "Firesleeve HTFS", "duty": 7.0},
     "39209928": {"label": "HTFT silicone rubber firesleeve tape", "duty": 6.5},
     "39269097": {"label": "Heatshrink end caps", "duty": 6.5}
 }
 
 _HS_SELECTBOX_OPTIONS = [f"{k} - {v['label']}" for k, v in _EXACT_HS_DUTIES.items()]
-
-_HS_MANUAL_OPTION = "❓ Neznámé / ručně"
-
-# Konzervativní clo pro neznámé/nenapárované položky (radši vyšší než překvapení).
-_HS_UNKNOWN_DEFAULT_DUTY = 3.7
 
 _INVOICE_COL_NAME = "Název / Typ kabelu"
 _INVOICE_COL_QTY = "Množství (m)"
@@ -3371,7 +3366,7 @@ _DEFAULT_INVOICE_DF = pd.DataFrame([
         _INVOICE_COL_QTY: 300_000.0,
         _INVOICE_COL_PRICE: 1.85,
         _INVOICE_COL_HS: f"85446010 - {_EXACT_HS_DUTIES['85446010']['label']}",
-        _INVOICE_COL_DUTY: _EXACT_HS_DUTIES["85446010"]["duty"],
+        _INVOICE_COL_DUTY: 3.7,
     },
 ])
 
@@ -3617,13 +3612,18 @@ def render_landed_cost_pricing() -> None:
                     price_val = num_vals[1]
 
                     if qty_val > 0 and price_val > 0:
-                        if hs_val and hs_val in _EXACT_HS_DUTIES:
-                            matched_label = f"{hs_val} - {_EXACT_HS_DUTIES[hs_val]['label']}"
-                            matched_duty = _EXACT_HS_DUTIES[hs_val]["duty"]
-                        else:
-                            matched_label = _HS_MANUAL_OPTION
-                            matched_duty = _HS_UNKNOWN_DEFAULT_DUTY
+                        # VŠECHNO začíná plošně na 3.7 % clu podle zadání
+                        matched_duty = 3.7
+                        matched_label = "85446010 - Solární kabel / Kabel > 1000V Cu"
 
+                        # HS kód z Excelu pouze zkusíme spárovat do nápovědy pro přehled, ale clo NESTAHUJEME automaticy
+                        if hs_val:
+                            if hs_val in _EXACT_HS_DUTIES:
+                                matched_label = f"{hs_val} - {_EXACT_HS_DUTIES[hs_val]['label']}"
+                            else:
+                                matched_label = f"{hs_val} - Neznámý kód"
+
+                        # Výjimka pro Turecko (A.TR certifikát vše vynuluje)
                         if is_atr_turkey:
                             matched_duty = 0.0
 
@@ -3641,7 +3641,7 @@ def render_landed_cost_pricing() -> None:
 
             if new_rows:
                 st.session_state.landed_invoice_data = pd.DataFrame(new_rows)
-                st.success(f"Úspěšně nahráno {len(new_rows)} položek a spárováno clo!")
+                st.success(f"Úspěšně nahráno {len(new_rows)} položek s výchozím claem 3,7 %.")
             else:
                 st.warning("Nenalezeny žádné platné položky. Zkontrolujte formát exportu.")
         except Exception as e:
@@ -3652,12 +3652,11 @@ def render_landed_cost_pricing() -> None:
         st.session_state.landed_invoice_data = _DEFAULT_INVOICE_DF.copy()
 
     st.caption(
-        "Vyberte u každého řádku **HS kategorii** z rozevíracího seznamu — clo (%) se "
-        "nastaví automaticky. Nenapárované položky z importu dostanou bezpečných 3,7 % "
-        "(radši vyšší odhad než nemilé překvapení) — zkontrolujte HS kategorii u každého řádku."
+        "Import z Pohody nastaví u všech položek **výchozí clo 3,7 %**. HS kód slouží jen jako nápověda — "
+        "skutečnou sazbu cla upravíte ručním výběrem kategorie v rozevíracím seznamu."
     )
 
-    # Import může vrátit starou volbu „Neznámé / ručně“ — před editorem sjednotíme na platnou položku seznamu.
+    # Import může vrátit neznámý HS popisek mimo selectbox — sjednotíme na první platnou položku seznamu.
     _valid_hs_options = set(_HS_SELECTBOX_OPTIONS)
     _df_pre = st.session_state.landed_invoice_data
     if _INVOICE_COL_HS in _df_pre.columns:
@@ -3672,11 +3671,11 @@ def render_landed_cost_pricing() -> None:
         if editor_state and "landed_invoice_data" in st.session_state:
             df = st.session_state.landed_invoice_data.copy()
 
-            # Zpracování upravených řádků
+            # Reakce na úpravu řádku uživatelem
             for row_idx_str, changes in editor_state.get("edited_rows", {}).items():
                 row_idx = int(row_idx_str)
 
-                # Pokud uživatel změnil HS kód, okamžitě mu k tomu přiřadíme správné clo
+                # Pokud uživatel ručně změnil HS kód v dropdownu, okamžitě dotáhneme správné clo ze slovníku
                 if _INVOICE_COL_HS in changes:
                     new_hs_string = str(changes[_INVOICE_COL_HS])
                     code_digits = "".join(c for c in new_hs_string if c.isdigit())[:8]
@@ -3685,23 +3684,25 @@ def render_landed_cost_pricing() -> None:
                         df.at[row_idx, _INVOICE_COL_DUTY] = _EXACT_HS_DUTIES[code_digits]["duty"]
                         df.at[row_idx, _INVOICE_COL_HS] = f"{code_digits} - {_EXACT_HS_DUTIES[code_digits]['label']}"
                     else:
-                        df.at[row_idx, _INVOICE_COL_DUTY] = 0.0
+                        df.at[row_idx, _INVOICE_COL_DUTY] = 3.7
 
-                # Pokud uživatel změnil jakýkoliv jiný sloupec, uložíme ho také
+                # Pro ostatní ruční úpravy (např. ruční přepis samotného procenta cla číslem)
                 for col, val in changes.items():
-                    if col != _INVOICE_COL_HS:  # HS kód už máme vyřešený výše
+                    if col != _INVOICE_COL_HS:
                         df.at[row_idx, col] = val
 
-            # Zpracování nově přidaných řádků (pokud by někdo kliknul na tlačítko +)
+            # Reakce na přidání nového řádku tlačítkem "+"
             for row in editor_state.get("added_rows", []):
                 if _INVOICE_COL_HS in row:
                     code_digits = "".join(c for c in str(row[_INVOICE_COL_HS]) if c.isdigit())[:8]
                     if code_digits in _EXACT_HS_DUTIES:
                         row[_INVOICE_COL_DUTY] = _EXACT_HS_DUTIES[code_digits]["duty"]
                         row[_INVOICE_COL_HS] = f"{code_digits} - {_EXACT_HS_DUTIES[code_digits]['label']}"
+                else:
+                    row[_INVOICE_COL_DUTY] = 3.7
                 df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
 
-            # Zpracování smazaných řádků
+            # Reakce na smazání řádku
             deleted_indices = editor_state.get("deleted_rows", [])
             if deleted_indices:
                 df = df.drop(index=deleted_indices).reset_index(drop=True)
