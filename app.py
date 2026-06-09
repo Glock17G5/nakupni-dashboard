@@ -3602,12 +3602,14 @@ def render_landed_cost_pricing() -> None:
         key="landed_file_uploader"
     )
 
-    if uploaded_file is not None:
+    if uploaded_file is None:
+        st.session_state.pop("landed_parsed_file_id", None)
+    elif st.session_state.get("landed_parsed_file_id") != uploaded_file.file_id:
         try:
             if uploaded_file.name.lower().endswith('.csv'):
                 try:
                     df_in = pd.read_csv(uploaded_file, sep=',', encoding='utf-8-sig', header=None)
-                except:
+                except Exception:
                     uploaded_file.seek(0)
                     df_in = pd.read_csv(uploaded_file, sep=';', encoding='utf-8-sig', header=None)
             else:
@@ -3620,13 +3622,15 @@ def render_landed_cost_pricing() -> None:
                     header_row_idx = r_idx
                     break
 
-            if header_row_idx == -1: header_row_idx = 0
+            if header_row_idx == -1:
+                header_row_idx = 0
             new_rows = []
 
             for i in range(header_row_idx + 1, len(df_in)):
                 row = df_in.iloc[i]
                 vals = [str(x).strip() for x in row.values if pd.notna(x) and str(x).strip() != '']
-                if len(vals) == 0: continue
+                if len(vals) == 0:
+                    continue
 
                 name_val = vals[0]
                 name_lower = name_val.lower()
@@ -3695,6 +3699,7 @@ def render_landed_cost_pricing() -> None:
                 st.warning("Nenalezeny žádné platné položky. Zkontrolujte formát exportu.")
         except Exception as e:
             st.error(f"Chyba při zpracování exportu z Pohody: {e}")
+        st.session_state.landed_parsed_file_id = uploaded_file.file_id
 
     st.markdown("#### Položky faktury")
     if "landed_invoice_data" not in st.session_state:
