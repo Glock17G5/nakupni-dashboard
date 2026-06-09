@@ -3339,6 +3339,7 @@ _HS_LABELS = [label for label, _ in _HS_CODE_OPTIONS]
 _HS_DEFAULT_DUTY = {label: pct for label, pct in _HS_CODE_OPTIONS}
 
 _EXACT_HS_DUTIES = {
+    "8544601090": {"label": "Soláry (85446010 90)", "duty": 3.7},
     "85444995": {"label": "Kabel > 80V <= 1000V (Cu/Al/Solární)", "duty": 3.3},
     "85444993": {"label": "Datový/Komunikační kabel <= 80V", "duty": 0.0},
     "85444290": {"label": "Kabel s konektory", "duty": 3.3},
@@ -3348,7 +3349,12 @@ _EXACT_HS_DUTIES = {
     "85444920": {"label": "Telekomunikační kabel", "duty": 0.0},
     "85444999": {"label": "Kabel = 1000V (NAYY)", "duty": 3.3},
     "39173200": {"label": "Termorukávy (Plast)", "duty": 6.5},
-    "39191080": {"label": "Samosvařovací páska", "duty": 6.5}
+    "39191080": {"label": "Samosvařovací páska", "duty": 6.5},
+    "7019699085": {"label": "Firesleeve HTFS (70196990 85)", "duty": 7.0},
+    "3920992890": {"label": "HTFT silicone rubber firesleeve tape (39209928 90)", "duty": 6.5},
+    "3926909790": {"label": "Heatshrink end caps (39269097 90)", "duty": 6.5},
+    "8544492000": {"label": "Ethernetový kabel v metráži (85444920 00)", "duty": 0.0},
+    "8544499100": {"label": "Silový kabel 0,6/1kV (85444991 00)", "duty": 3.7}
 }
 
 _HS_MANUAL_OPTION = "❓ Neznámé / ručně"
@@ -3363,6 +3369,9 @@ def _hs_option_label(code: str) -> str:
 _HS_DROPDOWN_OPTIONS = [_hs_option_label(c) for c in _EXACT_HS_DUTIES] + [_HS_MANUAL_OPTION]
 _HS_OPTION_TO_DUTY = {_hs_option_label(c): _EXACT_HS_DUTIES[c]["duty"] for c in _EXACT_HS_DUTIES}
 
+# Konzervativní clo pro neznámé/nenapárované položky (radši vyšší než překvapení).
+_HS_UNKNOWN_DEFAULT_DUTY = 3.7
+
 _INVOICE_COL_NAME = "Název / Typ kabelu"
 _INVOICE_COL_QTY = "Množství (m)"
 _INVOICE_COL_PRICE = "Nákupní cena za 1m (EUR)"
@@ -3374,8 +3383,8 @@ _DEFAULT_INVOICE_DF = pd.DataFrame([
         _INVOICE_COL_NAME: "Solární kabel",
         _INVOICE_COL_QTY: 300_000.0,
         _INVOICE_COL_PRICE: 1.85,
-        _INVOICE_COL_HS: _hs_option_label("85444995"),
-        _INVOICE_COL_DUTY: _EXACT_HS_DUTIES["85444995"]["duty"],
+        _INVOICE_COL_HS: _hs_option_label("8544601090"),
+        _INVOICE_COL_DUTY: _EXACT_HS_DUTIES["8544601090"]["duty"],
     },
 ])
 
@@ -3626,7 +3635,7 @@ def render_landed_cost_pricing() -> None:
                             matched_duty = _EXACT_HS_DUTIES[hs_val]["duty"]
                         else:
                             matched_label = _HS_MANUAL_OPTION
-                            matched_duty = 0.0
+                            matched_duty = _HS_UNKNOWN_DEFAULT_DUTY
 
                         if is_atr_turkey:
                             matched_duty = 0.0
@@ -3658,7 +3667,8 @@ def render_landed_cost_pricing() -> None:
     st.caption(
         "Vyberte u každého řádku **HS kategorii** z rozevíracího seznamu — clo (%) se "
         "doplní automaticky. Pro zboží mimo seznam zvolte volbu ❓ Neznámé / ručně a clo "
-        "zadejte ručně."
+        "zadejte ručně. Nenapárované položky z importu dostanou bezpečných 3,7 % "
+        "(radši vyšší odhad než nemilé překvapení) — zkontrolujte je."
     )
 
     # Stará / neplatná HS hodnota (např. ze starého importu) -> spadne na ruční volbu,
