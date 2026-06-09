@@ -3355,6 +3355,7 @@ _EXACT_HS_DUTIES = {
 _HS_SELECTBOX_OPTIONS = [f"{k} - {v['label']}" for k, v in _EXACT_HS_DUTIES.items()]
 
 _DEFAULT_INVOICE_DUTY = 3.7
+_DEFAULT_IMPORT_HS_LABEL = "85446010 - Solární kabel / Kabel > 1000V Cu"
 
 _INVOICE_COL_NAME = "Název / Typ kabelu"
 _INVOICE_COL_QTY = "Množství (m)"
@@ -3388,19 +3389,24 @@ def _apply_duty_from_hs_column(df: pd.DataFrame, *, force_zero: bool = False) ->
     """Přepočítá sloupec cla z HS kódů — volat vždy PŘED vykreslením data_editoru."""
     if df is None or df.empty:
         return df
-    out = df.copy().reset_index(drop=True)
+    out = df.copy()
+    if _INVOICE_COL_HS not in out.columns:
+        out[_INVOICE_COL_HS] = _DEFAULT_IMPORT_HS_LABEL
+    if _INVOICE_COL_DUTY not in out.columns:
+        out[_INVOICE_COL_DUTY] = 0.0
     valid_hs = set(_HS_SELECTBOX_OPTIONS)
-    hs_col = out.columns.get_loc(_INVOICE_COL_HS)
-    duty_col = out.columns.get_loc(_INVOICE_COL_DUTY)
-    for i in range(len(out)):
-        hs_raw = str(out.iloc[i, hs_col])
+    for idx in out.index:
+        hs_raw = str(out.at[idx, _INVOICE_COL_HS])
         code = _extract_hs_code(hs_raw)
         if code in _EXACT_HS_DUTIES:
-            out.iloc[i, hs_col] = _hs_label_for_code(code)
+            out.at[idx, _INVOICE_COL_HS] = _hs_label_for_code(code)
         elif hs_raw not in valid_hs:
-            out.iloc[i, hs_col] = _HS_SELECTBOX_OPTIONS[0]
-        out.iloc[i, duty_col] = _duty_for_hs_label(str(out.iloc[i, hs_col]), force_zero=force_zero)
-    return out
+            out.at[idx, _INVOICE_COL_HS] = _DEFAULT_IMPORT_HS_LABEL
+        out.at[idx, _INVOICE_COL_DUTY] = _duty_for_hs_label(
+            str(out.at[idx, _INVOICE_COL_HS]),
+            force_zero=force_zero,
+        )
+    return out.reset_index(drop=True)
 
 
 def _normalize_invoice_hs_options(df: pd.DataFrame) -> pd.DataFrame:
@@ -3411,7 +3417,7 @@ def _normalize_invoice_hs_options(df: pd.DataFrame) -> pd.DataFrame:
     valid_hs = set(_HS_SELECTBOX_OPTIONS)
     invalid = ~out[_INVOICE_COL_HS].astype(str).isin(valid_hs)
     if invalid.any():
-        out.loc[invalid, _INVOICE_COL_HS] = _HS_SELECTBOX_OPTIONS[0]
+        out.loc[invalid, _INVOICE_COL_HS] = _DEFAULT_IMPORT_HS_LABEL
     return out
 
 
@@ -3633,11 +3639,10 @@ def render_landed_cost_pricing() -> None:
                     continue
 
                 num_vals = []
-                hs_val = ""
 
-                # Hledání čísel a HS kódu v řádku
                 for token in vals[1:]:
-                    if '%' in token: continue
+                    if '%' in token:
+                        continue
                     clean_token = token.replace(' ', '').replace('\xa0', '').replace('€', '').replace('$', '').replace('Kč', '')
 
                     try:
@@ -3655,39 +3660,20 @@ def render_landed_cost_pricing() -> None:
                     except ValueError:
                         pass
 
-                    # HS kód Excel ukládá jako float ('85444995.0') -> bereme celočíselnou část
-                    hs_int_part = token.replace(' ', '').replace('\xa0', '').replace(',', '.').split('.')[0]
-                    digit_only = ''.join(c for c in hs_int_part if c.isdigit())
-                    if len(digit_only) == 8:
-                        hs_val = digit_only
-
                 # 3. ROZHODOVACÍ LOGIKA: Má to čísla = Hlavní položka | Nemá čísla = Barva
                 if len(num_vals) >= 2:
                     qty_val = num_vals[0]
                     price_val = num_vals[1]
 
                     if qty_val > 0 and price_val > 0:
-                        # VŠECHNO začíná plošně na 3.7 % clu podle zadání
-                        matched_duty = 3.7
-                        matched_label = "85446010 - Solární kabel / Kabel > 1000V Cu"
-
-                        # HS kód z Excelu pouze zkusíme spárovat do nápovědy pro přehled, ale clo NESTAHUJEME automaticy
-                        if hs_val:
-                            if hs_val in _EXACT_HS_DUTIES:
-                                matched_label = f"{hs_val} - {_EXACT_HS_DUTIES[hs_val]['label']}"
-                            else:
-                                matched_label = f"{hs_val} - Neznámý kód"
-
-                        # Výjimka pro Turecko (A.TR certifikát vše vynuluje)
-                        if is_atr_turkey:
-                            matched_duty = 0.0
+                        matched_duty = 0.0 if is_atr_turkey else 3.7
 
                         new_rows.append({
                             _INVOICE_COL_NAME: name_val,
                             _INVOICE_COL_QTY: qty_val,
                             _INVOICE_COL_PRICE: price_val,
-                            _INVOICE_COL_HS: matched_label,
-                            _INVOICE_COL_DUTY: matched_duty
+                            _INVOICE_COL_HS: _DEFAULT_IMPORT_HS_LABEL,
+                            _INVOICE_COL_DUTY: matched_duty,
                         })
                 else:
                     # Nemá to čísla -> Je to doplňující popis (barva) k předchozí položce
@@ -3695,7 +3681,10 @@ def render_landed_cost_pricing() -> None:
                         new_rows[-1][_INVOICE_COL_NAME] += f" ({name_val})"
 
             if new_rows:
-                st.session_state.landed_invoice_data = pd.DataFrame(new_rows)
+                st.session_state.landed_invoice_data = pd.DataFrame(
+                    new_rows,
+                    columns=list(_DEFAULT_INVOICE_DF.columns),
+                )
                 st.session_state.pop("landed_invoice_editor", None)
                 st.success(f"Úspěšně nahráno {len(new_rows)} položek s výchozím claem 3,7 %.")
             else:
@@ -3708,8 +3697,8 @@ def render_landed_cost_pricing() -> None:
         st.session_state.landed_invoice_data = _DEFAULT_INVOICE_DF.copy()
 
     st.caption(
-        "Import z Pohody nastaví u všech položek **výchozí clo 3,7 %**. HS kód slouží jen jako nápověda — "
-        "po ručním výběru kategorie v seznamu se clo **automaticky přepočítá**."
+        "Import z Pohody nastaví u všech položek výchozí HS kategorii a **clo 3,7 %** (0 % u A.TR). "
+        "Skutečnou sazbu cla upravíte ručním výběrem kategorie v seznamu."
     )
 
     zero_duty = force_zero_duty or is_atr_turkey
