@@ -3354,11 +3354,66 @@ _EXACT_HS_DUTIES = {
 
 _HS_SELECTBOX_OPTIONS = [f"{k} - {v['label']}" for k, v in _EXACT_HS_DUTIES.items()]
 
+_DEFAULT_INVOICE_DUTY = 3.7
+
 _INVOICE_COL_NAME = "Název / Typ kabelu"
 _INVOICE_COL_QTY = "Množství (m)"
 _INVOICE_COL_PRICE = "Nákupní cena za 1m (EUR)"
 _INVOICE_COL_HS = "HS Kód / Nápověda"
 _INVOICE_COL_DUTY = "Aplikované clo (%)"
+
+
+def _extract_hs_code(hs_label: str) -> str:
+    """Vytáhne 8místný HS kód z popisku selectboxu."""
+    return "".join(c for c in str(hs_label) if c.isdigit())[:8]
+
+
+def _hs_label_for_code(code: str) -> str:
+    """Sjednocený popisek HS kategorie pro selectbox."""
+    info = _EXACT_HS_DUTIES[code]
+    return f"{code} - {info['label']}"
+
+
+def _duty_for_hs_label(hs_label: str, *, force_zero: bool = False) -> float:
+    """Clo (%) podle HS popisku; výchozí 3,7 % pokud kód není ve slovníku."""
+    if force_zero:
+        return 0.0
+    code = _extract_hs_code(hs_label)
+    if code in _EXACT_HS_DUTIES:
+        return float(_EXACT_HS_DUTIES[code]["duty"])
+    return _DEFAULT_INVOICE_DUTY
+
+
+def _apply_duty_from_hs_column(df: pd.DataFrame, *, force_zero: bool = False) -> pd.DataFrame:
+    """Přepočítá sloupec cla z HS kódů — volat vždy PŘED vykreslením data_editoru."""
+    if df is None or df.empty:
+        return df
+    out = df.copy().reset_index(drop=True)
+    valid_hs = set(_HS_SELECTBOX_OPTIONS)
+    hs_col = out.columns.get_loc(_INVOICE_COL_HS)
+    duty_col = out.columns.get_loc(_INVOICE_COL_DUTY)
+    for i in range(len(out)):
+        hs_raw = str(out.iloc[i, hs_col])
+        code = _extract_hs_code(hs_raw)
+        if code in _EXACT_HS_DUTIES:
+            out.iloc[i, hs_col] = _hs_label_for_code(code)
+        elif hs_raw not in valid_hs:
+            out.iloc[i, hs_col] = _HS_SELECTBOX_OPTIONS[0]
+        out.iloc[i, duty_col] = _duty_for_hs_label(str(out.iloc[i, hs_col]), force_zero=force_zero)
+    return out
+
+
+def _normalize_invoice_hs_options(df: pd.DataFrame) -> pd.DataFrame:
+    """Neplatné HS popisky (např. z importu) sjednotí na platnou volbu selectboxu."""
+    if df is None or df.empty or _INVOICE_COL_HS not in df.columns:
+        return df
+    out = df.copy()
+    valid_hs = set(_HS_SELECTBOX_OPTIONS)
+    invalid = ~out[_INVOICE_COL_HS].astype(str).isin(valid_hs)
+    if invalid.any():
+        out.loc[invalid, _INVOICE_COL_HS] = _HS_SELECTBOX_OPTIONS[0]
+    return out
+
 
 _DEFAULT_INVOICE_DF = pd.DataFrame([
     {
@@ -3641,6 +3696,7 @@ def render_landed_cost_pricing() -> None:
 
             if new_rows:
                 st.session_state.landed_invoice_data = pd.DataFrame(new_rows)
+                st.session_state.pop("landed_invoice_editor", None)
                 st.success(f"Úspěšně nahráno {len(new_rows)} položek s výchozím claem 3,7 %.")
             else:
                 st.warning("Nenalezeny žádné platné položky. Zkontrolujte formát exportu.")
@@ -3653,25 +3709,23 @@ def render_landed_cost_pricing() -> None:
 
     st.caption(
         "Import z Pohody nastaví u všech položek **výchozí clo 3,7 %**. HS kód slouží jen jako nápověda — "
-        "skutečnou sazbu cla upravíte ručním výběrem kategorie v rozevíracím seznamu."
+        "po ručním výběru kategorie v seznamu se clo **automaticky přepočítá**."
     )
 
-    # Import může vrátit neznámý HS popisek mimo selectbox — sjednotíme na první platnou položku seznamu.
-    _valid_hs_options = set(_HS_SELECTBOX_OPTIONS)
-    _df_pre = st.session_state.landed_invoice_data
-    if _INVOICE_COL_HS in _df_pre.columns:
-        _invalid_hs = ~_df_pre[_INVOICE_COL_HS].astype(str).isin(_valid_hs_options)
-        if _invalid_hs.any():
-            _df_pre = _df_pre.copy()
-            _df_pre.loc[_invalid_hs, _INVOICE_COL_HS] = _HS_SELECTBOX_OPTIONS[0]
-            st.session_state.landed_invoice_data = _df_pre
-
-    # 1. Záloha starých dat před úpravou pro porovnání
-    old_df = st.session_state.landed_invoice_data.copy()
-
-    # 2. Vykreslení tabulky ZCELA BEZ callbacku
-    edited_df = st.data_editor(
+    zero_duty = force_zero_duty or is_atr_turkey
+    st.session_state.landed_invoice_data = _normalize_invoice_hs_options(
+        st.session_state.landed_invoice_data
+    )
+    # Klíčové: clo vypočítat PŘED vykreslením editoru (widget jinak drží starou hodnotu v cache).
+    invoice_df = _apply_duty_from_hs_column(
         st.session_state.landed_invoice_data,
+        force_zero=zero_duty,
+    )
+    st.session_state.landed_invoice_data = invoice_df
+    hs_before_edit = invoice_df[_INVOICE_COL_HS].astype(str).tolist()
+
+    edited_df = st.data_editor(
+        invoice_df,
         key="landed_invoice_editor",
         column_config={
             _INVOICE_COL_NAME: st.column_config.TextColumn("Název položky", width="large"),
@@ -3679,48 +3733,37 @@ def render_landed_cost_pricing() -> None:
             _INVOICE_COL_PRICE: st.column_config.NumberColumn("Jednotková cena", min_value=0.0, format="%.3f"),
             _INVOICE_COL_HS: st.column_config.SelectboxColumn(
                 "HS Kód / Nápověda",
-                help="Vyberte HS kód, clo se automaticky přepíše.",
+                help="Vyberte HS kód — clo (%) se automaticky přepočítá.",
                 width="large",
                 options=_HS_SELECTBOX_OPTIONS,
                 required=True,
             ),
             _INVOICE_COL_DUTY: st.column_config.NumberColumn(
-                "Aplikované clo (%)", min_value=0.0, format="%.1f %%"
+                "Aplikované clo (%)",
+                min_value=0.0,
+                max_value=100.0,
+                format="%.1f %%",
+                help="Automaticky z HS kódu. U Turecka (A.TR) nebo trasy 🇹🇷 je 0 %.",
             ),
         },
+        disabled=[_INVOICE_COL_DUTY],
         num_rows="dynamic",
         use_container_width=True,
+        hide_index=True,
     )
 
-    # 3. TVRDÁ KONTROLA ZMĚN PO VYKRESLENÍ
-    needs_rerun = False
+    edited_df = edited_df.reset_index(drop=True)
+    hs_after_edit = edited_df[_INVOICE_COL_HS].astype(str).tolist()
+    st.session_state.landed_invoice_data = edited_df
 
-    for i in range(len(edited_df)):
-        # Bezpečné přečtení starého kódu (ochrana proti chybě, pokud byl přidán nový řádek tlačítkem +)
-        old_hs = str(old_df.at[i, _INVOICE_COL_HS]) if i < len(old_df) else ""
-        new_hs = str(edited_df.at[i, _INVOICE_COL_HS])
+    # HS se změnil → uložit, smazat cache widgetu, rerun; clo se dopočítá pre-syncem na začátku.
+    if hs_after_edit != hs_before_edit or len(hs_after_edit) != len(hs_before_edit):
+        st.session_state.pop("landed_invoice_editor", None)
+        st.rerun()
 
-        # Rozhodující moment: Uživatel změnil HS kód v rozbalovacím menu
-        if old_hs != new_hs:
-            code_digits = "".join(c for c in new_hs if c.isdigit())[:8]
-            if code_digits in _EXACT_HS_DUTIES:
-                # Natvrdo přepíšeme procento v novém DataFrame
-                edited_df.at[i, _INVOICE_COL_DUTY] = _EXACT_HS_DUTIES[code_digits]["duty"]
-                edited_df.at[i, _INVOICE_COL_HS] = f"{code_digits} - {_EXACT_HS_DUTIES[code_digits]['label']}"
-            needs_rerun = True
-
-    # 4. Propis a vynucený restart
-    if not edited_df.equals(old_df):
-        # Uložíme všechny změny
-        st.session_state.landed_invoice_data = edited_df
-
-        if needs_rerun:
-            # TOTO JE KLÍČOVÉ: Zničí to tvrdohlavou paměť tabulky a donutí ji to vzít naše nová procenta
-            if "landed_invoice_editor" in st.session_state:
-                del st.session_state["landed_invoice_editor"]
-            st.rerun()
-
-    invoice = _sanitize_invoice_input(edited_df)
+    invoice = _sanitize_invoice_input(
+        _apply_duty_from_hs_column(st.session_state.landed_invoice_data, force_zero=zero_duty)
+    )
     if invoice.empty:
         st.info("Přidejte alespoň jeden řádek faktury (název, množství > 0, cena > 0).")
         return
