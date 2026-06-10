@@ -3722,6 +3722,18 @@ def render_landed_cost_pricing() -> None:
     st.session_state.landed_invoice_data = invoice_df
     hs_before_edit = invoice_df[_INVOICE_COL_HS].astype(str).tolist()
 
+    if not st.session_state.landed_invoice_data.empty:
+        df_calc = st.session_state.landed_invoice_data
+        qty = pd.to_numeric(df_calc[_INVOICE_COL_QTY], errors="coerce").fillna(0)
+        price = pd.to_numeric(df_calc[_INVOICE_COL_PRICE], errors="coerce").fillna(0)
+        total_qty = qty.sum()
+        total_val = (qty * price).sum()
+
+        sum_col1, sum_col2 = st.columns(2)
+        sum_col1.metric("Celková metráž / ks", format_num(total_qty, 2))
+        sum_col2.metric("Celková hodnota položek", f"{format_num(total_val, 2)} EUR")
+        st.markdown("---")
+
     edited_df = st.data_editor(
         invoice_df,
         key="landed_invoice_editor",
