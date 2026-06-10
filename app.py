@@ -3729,7 +3729,7 @@ def render_landed_cost_pricing() -> None:
         total_qty = qty.sum()
         total_val = (qty * price).sum()
 
-        sum_col1, sum_col2 = st.columns(2)
+        sum_col1, sum_col2, _sum_col3 = st.columns(3)
         sum_col1.metric("Celková metráž / ks", format_num(total_qty, 2))
         sum_col2.metric("Celková hodnota položek", f"{format_num(total_val, 2)} EUR")
         st.markdown("---")
