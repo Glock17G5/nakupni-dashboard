@@ -4277,13 +4277,18 @@ def _render_location_search(
     return hits[idx]
 
 
+# Průměrná rychlost pro záložní odhad času jízdy (OSRM nedostupné)
+_DOMESTIC_AVG_SPEED_KMH = 65.0
+
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_driving_distance(
     lat1: float, lon1: float, lat2: float, lon2: float
-) -> tuple[float, bool]:
+) -> tuple[float, bool, float | None]:
     """
-    Silniční vzdálenost v km (OSRM). Vrací (km, použito_osrm).
-    Při selhání API: haversine × 1,3 a druhá hodnota False.
+    Silniční vzdálenost v km + doba jízdy v minutách (OSRM).
+    Vrací (km, použito_osrm, minuty | None).
+    Při selhání API: haversine × 1,3, čas None a druhá hodnota False.
     """
     url = (
         "https://router.project-osrm.org/route/v1/driving/"
@@ -4301,10 +4306,25 @@ def get_driving_distance(
         dist_km = float(routes[0]["distance"]) / 1000.0
         if dist_km <= 0:
             raise ValueError("OSRM: invalid distance")
-        return dist_km, True
+        duration_min: float | None
+        try:
+            duration_min = float(routes[0]["duration"]) / 60.0
+            if duration_min <= 0:
+                duration_min = None
+        except (KeyError, TypeError, ValueError):
+            duration_min = None
+        return dist_km, True, duration_min
     except (requests.RequestException, ValueError, KeyError, TypeError, IndexError):
         fallback_km = haversine_distance(lat1, lon1, lat2, lon2) * _DOMESTIC_ROAD_FACTOR
-        return fallback_km, False
+        return fallback_km, False, None
+
+
+def _format_drive_time(minutes: float | None) -> str:
+    """Formát doby jízdy: '4 h 05 min' / '35 min' / '—'."""
+    if minutes is None or minutes <= 0:
+        return "—"
+    h, m = divmod(int(round(minutes)), 60)
+    return f"{h} h {m:02d} min" if h else f"{m} min"
 
 
 def _domestic_vehicle_key(v_type: str) -> str:
@@ -4419,6 +4439,71 @@ def _render_domestic_capacity_bar(cap: dict[str, float | bool | str]) -> None:
     st.caption(
         f"Váha {cap['cap_w_pct']:.0f} % · LDM {cap['cap_l_pct']:.0f} % · "
         f"limituje: **{binding}**"
+    )
+
+
+def _render_domestic_price_breakdown(quote: dict) -> None:
+    """Vizuální rozpad ceny: fixní složky (manipulace + přistavení) vs LTL km složka."""
+    price_czk = quote.get("price_czk")
+    if not quote.get("price_valid") or price_czk is None or price_czk <= 0:
+        return
+
+    parts = [
+        ("Manipulace", float(quote.get("fix_handling", 0.0)), "#64748b"),
+        ("Přistavení k hubu", float(quote.get("fix_positioning", 0.0)), "#94a3b8"),
+        ("Kilometrová složka (LTL)", float(quote.get("km_part", 0.0)), "#0D6EFD"),
+    ]
+    model_total = sum(v for _, v, _ in parts)
+    price = float(price_czk)
+    if price > model_total + 0.5:
+        parts.append(("Dorovnání na min. cenu", price - model_total, "#f59e0b"))
+
+    fig = go.Figure()
+    for name, val, color in parts:
+        if val <= 0:
+            continue
+        pct = val / price * 100.0
+        fig.add_trace(go.Bar(
+            y=[""],
+            x=[val],
+            name=name,
+            orientation="h",
+            marker=dict(color=color),
+            text=f"{pct:.0f} %",
+            textposition="inside",
+            insidetextanchor="middle",
+            textfont=dict(family="IBM Plex Mono, monospace", size=11, color="#ffffff"),
+            hovertemplate=f"<b>{name}</b>: %{{x:,.0f}} CZK ({pct:.0f} %)<extra></extra>",
+        ))
+
+    fig.update_layout(
+        separators=_PLOT_SEPARATORS,
+        barmode="stack",
+        height=120,
+        margin=dict(l=10, r=10, t=10, b=10),
+        paper_bgcolor=_PLOT_PAPER,
+        plot_bgcolor=_PLOT_BG,
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.15,
+            xanchor="left",
+            x=0,
+            font=dict(family="IBM Plex Mono, monospace", size=10, color=_PLOT_TICK_COLOR),
+            bgcolor=_PLOT_PAPER,
+        ),
+        xaxis=dict(visible=False, range=[0, price]),
+        yaxis=dict(visible=False),
+        hoverlabel=_HOVER_LABEL,
+    )
+    st.markdown("**Rozpad ceny — fixní vs kilometrová složka**")
+    _show_plotly(fig, toolbar=False)
+    fix_fee = float(quote.get("fix_fee", 0.0))
+    km_part = float(quote.get("km_part", 0.0))
+    st.caption(
+        f"Fixní složka {format_num(fix_fee, 0)} CZK ({fix_fee / price * 100:.0f} %) · "
+        f"kilometrová LTL složka {format_num(km_part, 0)} CZK ({km_part / price * 100:.0f} %)"
     )
 
 
@@ -4823,7 +4908,7 @@ def render_domestic_logistics() -> None:
             dest_lat, dest_lon = dest_loc["lat"], dest_loc["lon"]
 
             with st.spinner("Počítám silniční trasu (OSRM)…"):
-                road_km, used_osrm = get_driving_distance(
+                road_km, used_osrm, drive_min = get_driving_distance(
                     start_lat, start_lon, dest_lat, dest_lon
                 )
 
@@ -4832,6 +4917,14 @@ def render_domestic_logistics() -> None:
                 if used_osrm
                 else "Záložní odhad: vzdušná vzdálenost × 1,3 (OSRM nedostupné)"
             )
+            if drive_min is not None:
+                eta_help = "Čas jízdy dle OSRM (bez přestávek a nakládky)"
+            else:
+                drive_min = road_km / _DOMESTIC_AVG_SPEED_KMH * 60.0
+                eta_help = (
+                    f"Záložní odhad: {format_num(road_km, 0)} km ÷ "
+                    f"{_DOMESTIC_AVG_SPEED_KMH:.0f} km/h (OSRM čas nedostupný)"
+                )
             dist = road_km
             quote = _domestic_compute_quote(
                 dist, waha, ldm, profile, sazba, vehicle_key
@@ -4855,6 +4948,23 @@ def render_domestic_logistics() -> None:
                 unsafe_allow_html=True,
             )
 
+            # Mapa trasy — nakládka (modrá) a vykládka (červená)
+            map_df = pd.DataFrame([
+                {"lat": float(start_lat), "lon": float(start_lon),
+                 "color": "#0D6EFD", "size": 2500.0},
+                {"lat": float(dest_lat), "lon": float(dest_lon),
+                 "color": "#EF4444", "size": 2500.0},
+            ])
+            st.map(
+                map_df,
+                latitude="lat",
+                longitude="lon",
+                color="color",
+                size="size",
+                height=280,
+            )
+            st.caption("🔵 Nakládka · 🔴 Vykládka")
+
             st.markdown("**Vytížení vozidla (trasa + náklad)**")
             _render_domestic_capacity_bar(quote)
 
@@ -4877,28 +4987,40 @@ def render_domestic_logistics() -> None:
                 help=dist_help,
             )
             m2.metric(
+                "Odhadovaný čas jízdy",
+                _format_drive_time(drive_min),
+                help=eta_help,
+            )
+            m3.metric(
                 "Využití kapacity",
                 f"{cap_pct:.1f} %",
                 help=f"Limituje {quote['binding']} · LTL koef. {ltl_koef:.2f}",
             )
+
             price_eur, eur_czk = _domestic_price_eur(price_czk)
+            p_czk, p_eur = st.columns(2)
             if quote["price_valid"] and price_czk is not None:
-                eur_hint = (
-                    f"≈ {format_num(price_eur, 0)} EUR"
-                    if price_eur is not None
-                    else "EUR: kurz ČNB nedostupný"
-                )
-                m3.metric(
+                p_czk.metric(
                     "Odhadovaná cena k jednání",
                     f"{format_num(price_czk, 0)} CZK",
-                    help=eur_hint,
+                    help="Model: kilometrová LTL složka + fixní poplatky (min. cena)",
                 )
                 if price_eur is not None and eur_czk:
-                    st.caption(
-                        f"**{format_num(price_eur, 0)} EUR** (dle kurzu ČNB {eur_czk:.4f} CZK/EUR)"
+                    p_eur.metric(
+                        "Odhadovaná cena v EUR",
+                        f"{format_num(price_eur, 0)} EUR",
+                        help=f"Kurz ČNB {eur_czk:.4f} CZK/EUR",
                     )
+                else:
+                    p_eur.metric(
+                        "Odhadovaná cena v EUR",
+                        "—",
+                        help="Kurz ČNB EUR/CZK není k dispozici",
+                    )
+                _render_domestic_price_breakdown(quote)
             else:
-                m3.metric("Odhadovaná cena k jednání", "—")
+                p_czk.metric("Odhadovaná cena k jednání", "—")
+                p_eur.metric("Odhadovaná cena v EUR", "—")
                 st.caption("Cena není k dispozici — přetížení vozidla.")
 
             request_text = _format_domestic_transport_request(
