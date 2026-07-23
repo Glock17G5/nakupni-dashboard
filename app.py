@@ -2905,6 +2905,8 @@ def _render_historical_correlation() -> None:
             "dash": "solid",
         }],
         show_legend=True,
+        tight_yaxis=True,
+        y_tickformat=",.0f",
     )
     if fig is not None:
         _show_plotly(fig)
