@@ -2843,6 +2843,73 @@ def render_global_controls() -> tuple[str, str]:
 #  SEKCE 1: METALY
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _render_historical_correlation() -> None:
+    """Historická korelace: LME Cu Cash (Westmetall) vs čínský proxy (CCMN / COMEX) — USD/t."""
+    period_lbl = get_chart_period_label()
+    st.markdown(
+        "<div style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
+        "color:#495057;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
+        f"Historická korelace — LME Cu vs Čína ({period_lbl}, USD/t)</div>",
+        unsafe_allow_html=True,
+    )
+
+    lme = fetch_westmetall_history(WM_HISTORY_URLS["copper"])
+    if lme is None or lme.empty:
+        st.warning("Westmetall: historii LME mědi se nepodařilo stáhnout — korelační graf není k dispozici.")
+        return
+
+    try:
+        robot = pd.read_csv("robot_history.csv", parse_dates=["Date"])
+    except FileNotFoundError:
+        st.warning("Soubor robot_history.csv nenalezen — spusťte datového robota (GitHub Actions).")
+        return
+    except Exception as e:
+        st.warning(f"robot_history.csv se nepodařilo načíst — korelační graf není k dispozici. ({e})")
+        return
+
+    merged = pd.merge(lme[["Date", "Close"]], robot, on="Date", how="inner")
+    merged = filter_history_by_period(merged)
+    if merged is None or merged.empty:
+        st.warning("Pro zvolené období nejsou k dispozici překrývající se data LME a robota.")
+        return
+
+    # Čínský proxy: primárně CCMN spot (CNY/t → USD/t), fallback COMEX HG=F (USD/lb → USD/t)
+    if "CCMN_Cu" in merged.columns and "CNYUSD=X" in merged.columns:
+        merged["Proxy_USD"] = merged["CCMN_Cu"] * merged["CNYUSD=X"]
+        proxy_label = "CCMN (Čína) v USD/t"
+        proxy_color = "#ef4444"
+    elif "HG=F" in merged.columns:
+        merged["Proxy_USD"] = merged["HG=F"] * 2204.62
+        proxy_label = "COMEX HG=F (Proxy) v USD/t"
+        proxy_color = "#8b5cf6"
+    else:
+        st.warning("V robot_history.csv chybí CCMN_Cu/CNYUSD=X i HG=F — korelační graf nelze sestavit.")
+        return
+
+    merged = merged.dropna(subset=["Close", "Proxy_USD"]).reset_index(drop=True)
+    if merged.empty:
+        st.warning("Po odfiltrování chybějících hodnot nezbyla žádná překrývající se data.")
+        return
+
+    fig = interactive_line_chart(
+        merged,
+        f"LME Cu Cash — vs {proxy_label} · {period_lbl}",
+        color="#f97316",
+        y_label="USD/t",
+        height=320,
+        y_column="Close",
+        extra_traces=[{
+            "y": merged["Proxy_USD"],
+            "name": proxy_label,
+            "color": proxy_color,
+            "dash": "solid",
+        }],
+        show_legend=True,
+    )
+    if fig is not None:
+        _show_plotly(fig)
+
+
 def render_metals() -> None:
     """Sekce 1 – LME kovy, ocel HRC, spot CCMN vs LME, historie Westmetall."""
 
@@ -2931,6 +2998,10 @@ def render_metals() -> None:
     # ── Aktuální ceny LME vs CCMN (měď, hliník — USD/t, bez oceli) ───────────
     st.markdown("<br>", unsafe_allow_html=True)
     _render_lme_shfe_spot_comparison(wm_data)
+
+    # ── Historická korelace LME vs Čína (CCMN / COMEX proxy) ─────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    _render_historical_correlation()
 
     if wm_data and wm_data.get("_source") == "westmetall.com":
         st.markdown(
