@@ -1,0 +1,10 @@
+[theme]
+# Grafitový (charcoal) tmavý motiv — sladěno s CUSTOM_CSS v app.py
+base = "dark"
+primaryColor = "#4D9FFF"
+backgroundColor = "#171B22"
+secondaryBackgroundColor = "#1E242E"
+textColor = "#E9EDF3"
+
+[browser]
+gatherUsageStats = false
