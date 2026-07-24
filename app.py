@@ -542,6 +542,29 @@ footer { visibility: hidden; }
     text-align: center;
 }
 
+.success-box {
+    background: rgba(52, 201, 142, 0.12);
+    border: 1px solid rgba(52, 201, 142, 0.45);
+    border-left: 4px solid #34C98E;
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 0.85rem;
+    color: #4ADE9C;
+    font-weight: 600;
+    line-height: 1.55;
+    margin: 8px 0;
+}
+
+.success-box strong { color: #7FEBC0; }
+.warning-box strong { color: #F5DA7A; }
+
+/* Pulzující zvýraznění dosaženého entry pointu */
+.entry-hit { animation: entryPulse 2s ease-in-out infinite; }
+@keyframes entryPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(52, 201, 142, 0.35); }
+    50% { box-shadow: 0 0 0 9px rgba(52, 201, 142, 0); }
+}
+
 .data-table-wrap {
     background: rgba(30, 36, 46, 0.92);
     border: 1px solid #2C3442;
@@ -2963,6 +2986,103 @@ def _render_historical_correlation() -> None:
         _show_plotly(fig)
 
 
+_ENTRY_POINT_METALS = [
+    ("copper", "Měď (Cu)", "#f97316"),
+    ("aluminum", "Hliník (Al)", "#10b981"),
+]
+
+
+def _render_entry_point_tracker(
+    metal_key: str,
+    metal_name: str,
+    accent: str,
+    wm_data: dict | None,
+) -> None:
+    """Jeden sledovač entry pointu: cíl v session_state vs aktuální LME Cash (USD/t)."""
+    current, _, _ = resolve_metal_price(metal_key, wm_data)
+    state_key = f"entry_target_{metal_key}"
+
+    # Výchozí cíl = 95 % živé ceny; nastavuje se jen jednou, pak přetrvává v relaci
+    if state_key not in st.session_state:
+        st.session_state[state_key] = float(round(current * 0.95)) if current else 0.0
+
+    st.markdown(
+        f"<div style='font-family:Syne,sans-serif;font-size:0.8rem;font-weight:700;"
+        f"color:{accent};text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;'>"
+        f"{metal_name}</div>",
+        unsafe_allow_html=True,
+    )
+
+    target = st.number_input(
+        "Cílová nákupní cena (USD/t)",
+        min_value=0.0,
+        step=10.0,
+        format="%.0f",
+        key=state_key,
+        help=(
+            "Výchozí návrh = 95 % aktuální LME Cash ceny (Westmetall). "
+            "Cíl zůstává uložen po dobu relace prohlížeče."
+        ),
+    )
+
+    if current is None:
+        st.markdown(
+            '<div class="info-box">📡 Živé sledování je momentálně offline — '
+            "LME Cash cena (Westmetall) není k dispozici.</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    if not target:
+        st.markdown(
+            f'<div class="info-box">Zadej cílovou cenu — aktuální LME Cash: '
+            f"<strong>{format_num(current, 0)} USD/t</strong>.</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    diff = current - target
+    pct = diff / target * 100.0
+
+    if current <= target:
+        st.markdown(
+            f'<div class="success-box entry-hit">🎯 <strong>ENTRY POINT DOSAŽEN!</strong><br>'
+            f"LME Cash <strong>{format_num(current, 0)} USD/t</strong> je "
+            f"<strong>{format_num(abs(diff), 0)} USD/t ({abs(pct):.1f} %)</strong> "
+            f"pod cílem {format_num(target, 0)} USD/t — "
+            f"vhodný moment pro nákup / fixaci.</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f'<div class="warning-box">⏳ Trh je aktuálně o <strong>{pct:.1f} %</strong> '
+            f"výše než tvůj cíl.<br>"
+            f"LME Cash: <strong>{format_num(current, 0)} USD/t</strong> · "
+            f"cíl: {format_num(target, 0)} USD/t → čeká se na propad o "
+            f"<strong>{format_num(diff, 0)} USD/t</strong>.</div>",
+            unsafe_allow_html=True,
+        )
+
+
+def _render_entry_points(wm_data: dict | None) -> None:
+    """Risk Management — hlídání nákupních entry pointů pro měď a hliník."""
+    section_header(
+        "🎯", "Risk Management — Nákupní Entry Points",
+        badge_html(bool(wm_data), "LME Cash · Westmetall"),
+    )
+    st.markdown(
+        '<div class="info-box">Nastav cílovou nákupní cenu (USD/t). Jakmile LME Cash '
+        "klesne na cíl nebo pod něj, zobrazí se signál k nákupu / fixaci. "
+        "Cíle platí po dobu relace prohlížeče — po obnovení stránky se vrátí na výchozích "
+        "95 % aktuální ceny.</div>",
+        unsafe_allow_html=True,
+    )
+    col_cu, col_al = st.columns(2)
+    for (metal_key, metal_name, accent), col in zip(_ENTRY_POINT_METALS, (col_cu, col_al)):
+        with col:
+            _render_entry_point_tracker(metal_key, metal_name, accent, wm_data)
+
+
 def render_metals() -> None:
     """Sekce 1 – LME kovy, ocel HRC, spot CCMN vs LME, historie Westmetall."""
 
@@ -3001,6 +3121,10 @@ def render_metals() -> None:
 
     st.markdown("<br>", unsafe_allow_html=True)
     render_rsi_signals(steel_hrc)
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Risk Management — nákupní entry points (Cu, Al) ──────────────────────
+    _render_entry_points(wm_data)
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Historické grafy — pod sebou na plnou šířku (mobil-friendly) ─────────
