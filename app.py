@@ -170,16 +170,59 @@ CUSTOM_CSS = """
 
 *, *::before, *::after { box-sizing: border-box; }
 
-.stApp,
-[data-testid="stAppViewContainer"],
-[data-testid="stMain"],
-section[data-testid="stMain"] > div:first-child {
-    background-color: #F8F9FA !important;
-    color: #212529 !important;
+/* ── Základ: grafitový (charcoal) gradient s barevnými zářemi ─────────── */
+.stApp {
+    background:
+        radial-gradient(1100px 520px at 88% -8%, rgba(77,159,255,0.10), transparent 60%),
+        radial-gradient(900px 480px at -8% 28%, rgba(253,126,20,0.07), transparent 55%),
+        radial-gradient(1000px 640px at 108% 82%, rgba(52,201,142,0.06), transparent 60%),
+        linear-gradient(180deg, #171B22 0%, #14181F 55%, #191C22 100%) !important;
+    color: #E9EDF3 !important;
     font-family: 'Syne', sans-serif !important;
 }
 
-p, span, label, .stMarkdown { color: #212529; }
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"],
+section[data-testid="stMain"] > div:first-child {
+    background: transparent !important;
+    color: #E9EDF3 !important;
+    font-family: 'Syne', sans-serif !important;
+}
+
+h1, h2, h3, h4, h5 { color: #F2F5F9 !important; }
+
+/* ── Dekorativní "kabelové svazky" po krajích obrazovky ───────────────── */
+.stApp::before,
+.stApp::after {
+    content: '';
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    width: 300px;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.5;
+    background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='300'%20height='900'%20viewBox='0%200%20300%20900'%20fill='none'%3E%3Cpath%20d='M70%200C150%20112%20-10%20338%2070%20450C150%20562%20-10%20788%2070%20900'%20stroke='%230D6EFD'%20stroke-width='5'%20stroke-linecap='round'%20opacity='0.5'/%3E%3Cpath%20d='M82%200C162%20112%202%20338%2082%20450C162%20562%202%20788%2082%20900'%20stroke='%230D6EFD'%20stroke-width='5'%20opacity='0.32'/%3E%3Cpath%20d='M150%200C70%20112%20230%20338%20150%20450C70%20562%20230%20788%20150%20900'%20stroke='%23FD7E14'%20stroke-width='4'%20opacity='0.45'/%3E%3Cpath%20d='M220%200C300%20112%20140%20338%20220%20450C300%20562%20140%20788%20220%20900'%20stroke='%23198754'%20stroke-width='4'%20opacity='0.40'/%3E%3Cpath%20d='M35%200C-45%20112%20115%20338%2035%20450C-45%20562%20115%20788%2035%20900'%20stroke='%23DC3545'%20stroke-width='3'%20opacity='0.35'/%3E%3Cpath%20d='M265%200C185%20112%20345%20338%20265%20450C185%20562%20345%20788%20265%20900'%20stroke='%236C757D'%20stroke-width='3'%20opacity='0.30'/%3E%3C/svg%3E");
+    background-repeat: repeat-y;
+    background-size: 300px 900px;
+}
+
+.stApp::before { left: -60px; }
+.stApp::after { right: -60px; transform: scaleX(-1); }
+
+@media (max-width: 1200px) {
+    .stApp::before, .stApp::after { display: none; }
+}
+
+/* Obsah nad dekorací + decentní vycentrování na velkých monitorech */
+[data-testid="stMain"] { position: relative; z-index: 1; }
+[data-testid="stMainBlockContainer"],
+.block-container {
+    max-width: 1680px;
+    margin: 0 auto;
+}
+
+p, span, label, .stMarkdown { color: #D6DDE7; }
 
 #MainMenu { visibility: hidden; }
 header[data-testid="stHeader"] { visibility: hidden; height: 0; }
@@ -189,22 +232,26 @@ footer { visibility: hidden; }
 
 [data-testid="stSidebar"],
 [data-testid="stSidebarContent"] {
-    background-color: #FFFFFF !important;
-    border-right: 2px solid #CED4DA !important;
+    background-color: #1A1F28 !important;
+    border-right: 1px solid #2C3442 !important;
 }
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: #F8F9FA; }
-::-webkit-scrollbar-thumb { background: #ADB5BD; border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #3A4454; border-radius: 4px; }
 
+/* ── Hlavička: tmavé sklo + gradientní linka ───────────────────────────── */
 .dash-header {
-    background: #FFFFFF;
-    border: 2px solid #343A40;
-    border-radius: 14px;
+    background: rgba(30, 36, 46, 0.82);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(77, 159, 255, 0.16);
+    border-radius: 20px;
     padding: 24px 32px 20px;
     margin-bottom: 20px;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25), 0 18px 40px -18px rgba(0, 0, 0, 0.5);
     position: relative;
+    overflow: hidden;
 }
 
 .dash-header::before {
@@ -212,8 +259,8 @@ footer { visibility: hidden; }
     position: absolute;
     top: 0; left: 0; right: 0;
     height: 4px;
-    background: linear-gradient(90deg, #0D6EFD, #198754, #FD7E14);
-    border-radius: 14px 14px 0 0;
+    background: linear-gradient(90deg, #4D9FFF, #8B5CF6, #FD7E14, #34C98E);
+    border-radius: 20px 20px 0 0;
 }
 
 .dash-header-content {
@@ -228,16 +275,21 @@ footer { visibility: hidden; }
     font-family: 'Syne', sans-serif;
     font-size: 2rem;
     font-weight: 800;
-    color: #000000;
+    color: #F2F5F9;
     margin: 0 0 6px 0;
 }
 
-.dash-title span { color: #0D6EFD; }
+.dash-title span {
+    background: linear-gradient(120deg, #4D9FFF, #A78BFA);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
 
 .dash-subtitle {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.72rem;
-    color: #495057;
+    color: #8D99AB;
     letter-spacing: 1.5px;
     text-transform: uppercase;
 }
@@ -245,11 +297,11 @@ footer { visibility: hidden; }
 .dash-timestamp {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.75rem;
-    color: #212529;
+    color: #B8C2D0;
     line-height: 1.7;
 }
 
-.dash-timestamp strong { color: #000000; }
+.dash-timestamp strong { color: #F2F5F9; }
 
 .badge {
     display: inline-flex;
@@ -257,13 +309,14 @@ footer { visibility: hidden; }
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.65rem;
     font-weight: 600;
-    padding: 4px 10px;
+    padding: 4px 12px;
     border-radius: 100px;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
 }
 
-.badge-live { background: #D1E7DD; color: #0F5132; border: 1px solid #198754; }
-.badge-offline { background: #F8D7DA; color: #842029; border: 1px solid #DC3545; }
-.badge-model { background: #FFF3CD; color: #664D03; border: 1px solid #FFC107; }
+.badge-live { background: rgba(52, 201, 142, 0.14); color: #4ADE9C; border: 1px solid rgba(52, 201, 142, 0.4); }
+.badge-offline { background: rgba(240, 86, 94, 0.14); color: #F58489; border: 1px solid rgba(240, 86, 94, 0.4); }
+.badge-model { background: rgba(250, 204, 21, 0.12); color: #E8C654; border: 1px solid rgba(250, 204, 21, 0.35); }
 
 .section-header {
     display: flex;
@@ -272,56 +325,76 @@ footer { visibility: hidden; }
     gap: 10px 12px;
     margin: 24px 0 16px 0;
     padding-bottom: 12px;
-    border-bottom: 2px solid #343A40;
+    position: relative;
+    border-bottom: 1px solid #2C3442;
+}
+
+.section-header::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    bottom: -1px;
+    width: 96px;
+    height: 3px;
+    border-radius: 3px;
+    background: linear-gradient(90deg, #4D9FFF, #8B5CF6);
 }
 
 .section-title {
     font-family: 'Syne', sans-serif;
     font-size: 1rem;
     font-weight: 700;
-    color: #000000;
+    color: #F2F5F9;
     text-transform: uppercase;
     letter-spacing: 1.2px;
 }
 
 .metric-card {
     position: relative;
-    background: #FFFFFF;
-    border: 2px solid #495057;
-    border-radius: 12px;
-    padding: 16px;
+    background: linear-gradient(160deg, rgba(35, 42, 54, 0.95), rgba(27, 32, 41, 0.95));
+    border: 1px solid #2C3442;
+    border-radius: 16px;
+    padding: 16px 16px 16px 20px;
     margin-bottom: 10px;
-    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25), 0 14px 28px -16px rgba(0, 0, 0, 0.45);
+    transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+    overflow: hidden;
+}
+
+.metric-card:hover {
+    transform: translateY(-2px);
+    border-color: #3D4859;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3), 0 22px 40px -18px rgba(0, 0, 0, 0.6);
 }
 
 .metric-card::before {
     content: '';
     position: absolute;
     top: 0; left: 0;
-    width: 4px;
+    width: 5px;
     height: 100%;
-    border-radius: 12px 0 0 12px;
+    border-radius: 16px 0 0 16px;
 }
 
 .card-copper::before { background: #FD7E14; }
-.card-aluminum::before { background: #198754; }
-.card-steel::before { background: #6C757D; }
-.card-usd::before { background: #198754; }
-.card-eur::before { background: #0D6EFD; }
-.card-cny::before { background: #DC3545; }
-.card-oil::before { background: #FFC107; }
-.card-plastic::before { background: #20C997; }
-.card-logistics::before { background: #6F42C1; }
-.card-neutral::before { background: #495057; }
-.card-lead::before { background: #6F42C1; }
-.card-zinc::before { background: #6610F2; }
-.card-tin::before { background: #D63384; }
-.card-nickel::before { background: #0DCAF0; }
+.card-aluminum::before { background: #34C98E; }
+.card-steel::before { background: #8D99AB; }
+.card-usd::before { background: #34C98E; }
+.card-eur::before { background: #4D9FFF; }
+.card-cny::before { background: #F0565E; }
+.card-oil::before { background: #FACC15; }
+.card-plastic::before { background: #2DD4BF; }
+.card-logistics::before { background: #A78BFA; }
+.card-neutral::before { background: #64748B; }
+.card-lead::before { background: #A78BFA; }
+.card-zinc::before { background: #818CF8; }
+.card-tin::before { background: #F472B6; }
+.card-nickel::before { background: #22D3EE; }
 
 .card-label {
     font-size: 0.68rem;
     font-weight: 700;
-    color: #495057;
+    color: #8D99AB;
     text-transform: uppercase;
     margin-bottom: 8px;
 }
@@ -330,7 +403,7 @@ footer { visibility: hidden; }
     font-family: 'IBM Plex Mono', monospace;
     font-size: 1.45rem;
     font-weight: 700;
-    color: #000000;
+    color: #F7FAFD;
     margin-bottom: 6px;
 }
 
@@ -339,14 +412,14 @@ footer { visibility: hidden; }
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.85rem;
     font-weight: 600;
-    color: #343a40;
+    color: #B8C2D0;
     margin: 4px 0 8px 0;
     letter-spacing: 0.4px;
 }
 .card-unit-emphasis {
     font-size: 1.2rem;
     font-weight: 700;
-    color: #000000;
+    color: #F2F5F9;
     margin: 8px 0 12px 0;
     letter-spacing: 0.6px;
     text-transform: uppercase;
@@ -354,17 +427,17 @@ footer { visibility: hidden; }
 .card-extra {
     font-size: 0.78rem;
     font-weight: 500;
-    color: #495057;
+    color: #9AA6B8;
     line-height: 1.45;
     margin-top: 8px;
 }
 .card-extra-emphasis {
     font-size: 1rem;
     font-weight: 700;
-    color: #212529;
+    color: #E9EDF3;
     margin-top: 14px;
     padding-top: 10px;
-    border-top: 2px solid #DEE2E6;
+    border-top: 1px solid #2C3442;
     line-height: 1.5;
 }
 .card-delta-row { margin-top: 6px; }
@@ -376,100 +449,125 @@ footer { visibility: hidden; }
     border-radius: 6px;
 }
 
-.delta-up { background: #D1E7DD; color: #0F5132; }
-.delta-down { background: #F8D7DA; color: #842029; }
-.delta-flat { background: #E9ECEF; color: #495057; }
+.delta-up { background: rgba(52, 201, 142, 0.14); color: #4ADE9C; }
+.delta-down { background: rgba(240, 86, 94, 0.14); color: #F58489; }
+.delta-flat { background: rgba(141, 153, 171, 0.14); color: #9AA6B8; }
 
 .spread-card {
-    background: #FFFFFF;
-    border: 2px solid #ADB5BD;
-    border-radius: 10px;
+    background: linear-gradient(160deg, rgba(35, 42, 54, 0.95), rgba(27, 32, 41, 0.95));
+    border: 1px solid #2C3442;
+    border-radius: 14px;
     padding: 12px 14px;
     margin-bottom: 8px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25), 0 10px 22px -14px rgba(0, 0, 0, 0.4);
 }
 
-.spread-label { font-size: 0.65rem; font-weight: 700; color: #495057; text-transform: uppercase; }
-.spread-value { font-family: 'IBM Plex Mono', monospace; font-size: 1.2rem; font-weight: 700; color: #000000; }
-.spread-details { font-size: 0.68rem; color: #495057; }
+.spread-label { font-size: 0.65rem; font-weight: 700; color: #8D99AB; text-transform: uppercase; }
+.spread-value { font-family: 'IBM Plex Mono', monospace; font-size: 1.2rem; font-weight: 700; color: #F7FAFD; }
+.spread-details { font-size: 0.68rem; color: #9AA6B8; }
 
 .chart-wrap {
-    background: #FFFFFF;
-    border: 2px solid #CED4DA;
-    border-radius: 12px;
+    background: rgba(30, 36, 46, 0.92);
+    border: 1px solid #2C3442;
+    border-radius: 16px;
     padding: 16px 12px;
     margin-bottom: 12px;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25), 0 12px 26px -16px rgba(0, 0, 0, 0.4);
 }
 
+/* ── Mobil & tablet: kompaktní rozvržení, posuvné taby ─────────────────── */
 @media (max-width: 768px) {
-    .dash-title { font-size: 1.35rem; }
-    .metric-card { padding: 12px; }
+    .block-container {
+        padding-left: 0.8rem !important;
+        padding-right: 0.8rem !important;
+        padding-top: 1rem !important;
+    }
+    .dash-title { font-size: 1.3rem; }
+    .dash-header { padding: 16px 18px 14px; border-radius: 16px; }
+    .metric-card { padding: 12px 12px 12px 16px; }
     .card-value { font-size: 1.2rem; }
     .card-unit-emphasis { font-size: 1.05rem; }
     .card-extra-emphasis { font-size: 0.92rem; }
+    .section-title { font-size: 0.85rem; }
     [data-testid="stHorizontalBlock"] { flex-direction: column !important; }
     [data-testid="stHorizontalBlock"] > div { width: 100% !important; }
+    [data-testid="stTabs"] { padding: 6px 8px 14px 8px; border-radius: 14px; }
+    [data-testid="stTabs"] button {
+        font-size: 0.88rem !important;
+        padding: 6px 10px !important;
+        white-space: nowrap !important;
+    }
+    [data-testid="stTabs"] [data-baseweb="tab-list"] {
+        overflow-x: auto !important;
+        flex-wrap: nowrap !important;
+        scrollbar-width: none;
+    }
+    [data-testid="stTabs"] [data-baseweb="tab-list"]::-webkit-scrollbar { display: none; }
+    .chart-wrap { padding: 10px 4px; border-radius: 12px; }
+    .currency-bar { padding: 10px 12px; }
 }
 
 .info-box {
-    background: #E7F1FF;
-    border: 1px solid #0D6EFD;
-    border-left: 4px solid #0D6EFD;
-    border-radius: 8px;
+    background: rgba(77, 159, 255, 0.08);
+    border: 1px solid rgba(77, 159, 255, 0.28);
+    border-left: 4px solid #4D9FFF;
+    border-radius: 10px;
     padding: 10px 14px;
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.78rem;
-    color: #212529;
+    color: #C9D3E0;
     line-height: 1.55;
     margin: 8px 0;
 }
 
+.info-box strong { color: #E9EDF3; }
+
 .warning-box {
-    background: #FFF3CD;
-    border: 1px solid #FFC107;
-    border-left: 4px solid #FFC107;
-    border-radius: 8px;
+    background: rgba(250, 204, 21, 0.09);
+    border: 1px solid rgba(250, 204, 21, 0.35);
+    border-left: 4px solid #FACC15;
+    border-radius: 10px;
     padding: 10px 14px;
     font-size: 0.78rem;
-    color: #664D03;
+    color: #E8C654;
 }
 
 .error-box {
-    background: #F8D7DA;
-    border: 1px solid #DC3545;
-    border-radius: 8px;
+    background: rgba(240, 86, 94, 0.10);
+    border: 1px solid rgba(240, 86, 94, 0.32);
+    border-radius: 10px;
     padding: 10px 14px;
     font-size: 0.75rem;
-    color: #842029;
+    color: #F58489;
     text-align: center;
 }
 
 .data-table-wrap {
-    background: #FFFFFF;
-    border: 2px solid #CED4DA;
-    border-radius: 12px;
+    background: rgba(30, 36, 46, 0.92);
+    border: 1px solid #2C3442;
+    border-radius: 16px;
     padding: 16px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25), 0 12px 26px -16px rgba(0, 0, 0, 0.4);
 }
 
 .data-table-wrap table { width: 100%; border-collapse: collapse; }
-.data-table-wrap th { color: #000000; border-bottom: 2px solid #343A40; padding: 8px 12px; }
-.data-table-wrap td { color: #212529; border-bottom: 1px solid #DEE2E6; padding: 9px 12px; }
-.data-table-wrap tr:hover td { background: #F1F3F5; }
+.data-table-wrap th { color: #F2F5F9; border-bottom: 2px solid #3D4859; padding: 8px 12px; }
+.data-table-wrap td { color: #C9D3E0; border-bottom: 1px solid #262D39; padding: 9px 12px; }
+.data-table-wrap tr:hover td { background: #232A36; }
 
 .calc-result {
-    background: #FFFFFF;
-    border: 2px solid #495057;
-    border-radius: 10px;
+    background: linear-gradient(160deg, rgba(35, 42, 54, 0.95), rgba(27, 32, 41, 0.95));
+    border: 1px solid #2C3442;
+    border-radius: 14px;
     padding: 14px;
     text-align: center;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25), 0 10px 22px -14px rgba(0, 0, 0, 0.4);
 }
 
 .calc-result-label {
     font-size: 0.65rem;
     font-weight: 700;
-    color: #495057;
+    color: #8D99AB;
     text-transform: uppercase;
 }
 
@@ -477,131 +575,161 @@ footer { visibility: hidden; }
     font-family: 'IBM Plex Mono', monospace;
     font-size: 1.2rem;
     font-weight: 700;
-    color: #000000;
+    color: #F7FAFD;
 }
 
-.section-divider { height: 2px; background: #CED4DA; margin: 24px 0; }
+.section-divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #3A4454 20%, #3A4454 80%, transparent);
+    margin: 24px 0;
+}
 
 .dash-footer {
     text-align: center;
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.68rem;
-    color: #495057;
+    color: #8D99AB;
     padding: 20px 0;
-    border-top: 2px solid #CED4DA;
+    border-top: 1px solid #2C3442;
     margin-top: 32px;
 }
 
 button[kind="primary"],
 button[data-testid="baseButton-primary"] {
-    background: #0D6EFD !important;
+    background: linear-gradient(135deg, #2E7CE8, #4D9FFF) !important;
     color: #FFFFFF !important;
-    border: 2px solid #0A58CA !important;
+    border: none !important;
     font-weight: 700 !important;
-    border-radius: 8px !important;
+    border-radius: 10px !important;
+    box-shadow: 0 6px 16px -6px rgba(77, 159, 255, 0.5) !important;
 }
 
 button[kind="secondary"],
 .stButton > button {
-    background: #FFFFFF !important;
-    border: 2px solid #0D6EFD !important;
-    color: #0D6EFD !important;
+    background: rgba(35, 42, 54, 0.9) !important;
+    border: 1.5px solid #3A4454 !important;
+    color: #7DB8FF !important;
     font-weight: 600 !important;
-    border-radius: 8px !important;
+    border-radius: 10px !important;
+    transition: background 0.15s ease, border-color 0.15s ease !important;
 }
 
-button[kind="secondary"]:hover { background: #E7F1FF !important; }
+button[kind="secondary"]:hover { background: rgba(77, 159, 255, 0.12) !important; border-color: #4D9FFF !important; }
 
 [data-testid="stExpander"] {
-    background: #FFFFFF !important;
-    border: 2px solid #495057 !important;
-    border-radius: 10px !important;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06) !important;
+    background: rgba(30, 36, 46, 0.9) !important;
+    border: 1px solid #2C3442 !important;
+    border-radius: 14px !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25), 0 10px 22px -14px rgba(0, 0, 0, 0.35) !important;
 }
 
 [data-testid="stTabs"] {
-    background: #FFFFFF;
+    background: rgba(28, 33, 43, 0.85);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     padding: 10px 20px 20px 20px;
-    border-radius: 12px;
-    border: 2px solid #CED4DA;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+    border-radius: 18px;
+    border: 1px solid #2C3442;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25), 0 18px 38px -20px rgba(0, 0, 0, 0.5);
 }
 [data-testid="stTabs"] button {
     font-family: 'Syne', sans-serif !important;
     font-weight: 700 !important;
     font-size: 1.05rem !important;
+    border-radius: 10px 10px 0 0 !important;
 }
+[data-testid="stTabs"] button:hover { background: rgba(77, 159, 255, 0.08) !important; }
+[data-testid="stTabs"] [data-baseweb="tab-highlight"] {
+    background: linear-gradient(90deg, #4D9FFF, #8B5CF6) !important;
+    height: 3px !important;
+    border-radius: 3px !important;
+}
+[data-testid="stTabs"] [data-baseweb="tab-border"] { background: #2C3442 !important; }
 
 details summary {
     font-family: 'Syne', sans-serif !important;
     font-weight: 700 !important;
-    color: #000000 !important;
+    color: #F2F5F9 !important;
 }
 
 [data-testid="stNumberInput"] input,
-[data-testid="stDateInput"] input {
-    background: #FFFFFF !important;
-    border: 2px solid #495057 !important;
-    color: #000000 !important;
+[data-testid="stDateInput"] input,
+[data-testid="stTextInput"] input {
+    background: #171C24 !important;
+    border: 1.5px solid #323B4A !important;
+    border-radius: 10px !important;
+    color: #E9EDF3 !important;
     font-family: 'IBM Plex Mono', monospace !important;
 }
 
 [data-testid="stSelectbox"] > div > div {
-    background: #FFFFFF !important;
-    border: 2px solid #495057 !important;
-    color: #000000 !important;
+    background: #171C24 !important;
+    border: 1.5px solid #323B4A !important;
+    border-radius: 10px !important;
+    color: #E9EDF3 !important;
+}
+
+[data-baseweb="popover"] [data-baseweb="menu"],
+[data-baseweb="popover"] ul {
+    background: #1E242E !important;
+    color: #E9EDF3 !important;
 }
 
 [data-testid="stDataFrame"] {
-    border: 2px solid #CED4DA !important;
-    border-radius: 10px !important;
+    border: 1px solid #2C3442 !important;
+    border-radius: 14px !important;
 }
 
 [data-testid="stRadio"] label {
-    background: #FFFFFF !important;
-    border: 2px solid #ADB5BD !important;
-    color: #212529 !important;
+    background: rgba(35, 42, 54, 0.9) !important;
+    border: 1.5px solid #3A4454 !important;
+    border-radius: 100px !important;
+    color: #C9D3E0 !important;
     font-weight: 600 !important;
     padding: 4px 14px !important;
+    transition: border-color 0.15s ease, background 0.15s ease !important;
 }
 
 [data-testid="stRadio"] label[data-checked="true"],
 [data-testid="stRadio"] div[aria-checked="true"] label {
-    border-color: #0D6EFD !important;
+    border-color: #4D9FFF !important;
     color: #FFFFFF !important;
-    background: #0D6EFD !important;
+    background: linear-gradient(135deg, #2E7CE8, #4D9FFF) !important;
+    box-shadow: 0 4px 12px -4px rgba(77, 159, 255, 0.45) !important;
 }
 
 [data-testid="stSegmentedControl"] {
-    background: #E9ECEF !important;
-    border: 2px solid #495057 !important;
-    border-radius: 10px !important;
+    background: #1A1F28 !important;
+    border: 1px solid #2C3442 !important;
+    border-radius: 12px !important;
 }
 
 .currency-bar {
-    background: #FFFFFF;
-    border: 2px solid #343A40;
-    border-radius: 12px;
+    background: rgba(28, 33, 43, 0.88);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid #2C3442;
+    border-radius: 16px;
     padding: 14px 18px;
     margin-bottom: 16px;
-    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25), 0 14px 30px -18px rgba(0, 0, 0, 0.45);
 }
 
 .currency-bar-label {
     font-weight: 700;
-    color: #000000;
+    color: #F2F5F9;
     text-transform: uppercase;
 }
 
-.currency-bar-hint { color: #495057; }
+.currency-bar-hint { color: #8D99AB; }
 
-[data-testid="stMetricLabel"] { color: #495057 !important; font-weight: 700 !important; }
-[data-testid="stMetricValue"] { color: #000000 !important; font-weight: 700 !important; }
+[data-testid="stMetricLabel"] { color: #8D99AB !important; font-weight: 700 !important; }
+[data-testid="stMetricValue"] { color: #F7FAFD !important; font-weight: 700 !important; }
 
 .stProgress > div > div > div > div {
-    background: linear-gradient(90deg, #0D6EFD, #198754) !important;
+    background: linear-gradient(90deg, #4D9FFF, #34C98E) !important;
 }
-.stProgress > div > div > div { background-color: #E9ECEF !important; }
+.stProgress > div > div > div { background-color: #262D39 !important; }
 
 [data-testid="stHorizontalBlock"] { gap: 0.65rem !important; }
 div[data-testid="column"] {
@@ -722,13 +850,22 @@ def error_card(label: str, card_class: str = "card-neutral", msg: str = "Data mo
     """
 
 
-def _show_plotly(fig: go.Figure | None, *, toolbar: bool = True) -> None:
-    """Vykreslí Plotly graf v chart-wrap kontejneru."""
+def _show_plotly(fig: go.Figure | None, *, toolbar: bool = False) -> None:
+    """Vykreslí Plotly graf v chart-wrap kontejneru (bez modebaru — mobil-friendly)."""
     if fig is None:
         return
     _ensure_plot_separators(fig)
     st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": toolbar})
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        config={
+            "displayModeBar": toolbar,
+            "displaylogo": False,
+            "responsive": True,
+            "scrollZoom": False,
+        },
+    )
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -867,14 +1004,6 @@ _WM_PERIOD_DAYS: dict[str, int] = {
     "6mo": 183,
     "1y":  365,
 }
-
-# Pevné pořadí sloupcového grafu kovů
-_BAR_CHART_ORDER: list[tuple[str, str]] = [
-    ("copper",   "Copper"),
-    ("aluminum", "Aluminum"),
-    ("steel",    "Steel"),
-]
-
 
 def _parse_westmetall_price(text: str) -> float | None:
     """Parsuje čísla z westmetall: '13,545.00' (USD/t) i '391,900' (tuny zásob)."""
@@ -1140,15 +1269,6 @@ def fetch_ccmn_spot(metal: str = "copper") -> dict | None:
     return None
 
 
-def _safe_float(s: str) -> float | None:
-    """Bezpečný převod řetězce na float; vrátí None při selhání."""
-    try:
-        v = float(s.strip())
-        return v if v != 0.0 else None
-    except (ValueError, AttributeError):
-        return None
-
-
 # ==============================================================================
 # ─────────────────────────────────────────────────────────────────────────────
 #  DATOVÉ FUNKCE – FX (ČNB + yfinance trendy)
@@ -1234,6 +1354,37 @@ def _cny_czk_history_full() -> tuple[pd.DataFrame | None, bool]:
 def fetch_cny_czk_history(period: str = "3mo") -> tuple[pd.DataFrame | None, bool]:
     """Historie CNY/CZK oříznutá podle globálního období."""
     full, derived = _cny_czk_history_full()
+    return filter_history_by_period(full), derived
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def _eur_cny_history_full() -> tuple[pd.DataFrame | None, bool]:
+    """Plná historie EUR/CNY — přímý ticker, jinak odvozeno EURUSD ÷ CNYUSD."""
+    direct = _yf_history("EURCNY=X")
+    if direct is not None and not direct.empty:
+        return direct, False
+
+    eur_usd = _yf_history("EURUSD=X")
+    cny_usd = _yf_history("CNYUSD=X")
+    if eur_usd is None or cny_usd is None or eur_usd.empty or cny_usd.empty:
+        return None, False
+
+    merged = pd.merge(
+        eur_usd.rename(columns={"Close": "eur_usd"}),
+        cny_usd.rename(columns={"Close": "cny_usd"}),
+        on="Date",
+        how="inner",
+    )
+    merged = merged[merged["cny_usd"] > 0]
+    if merged.empty:
+        return None, False
+    merged["Close"] = merged["eur_usd"] / merged["cny_usd"]
+    return merged[["Date", "Close"]].copy(), True
+
+
+def fetch_eur_cny_history(period: str = "3mo") -> tuple[pd.DataFrame | None, bool]:
+    """Historie EUR/CNY oříznutá podle globálního období."""
+    full, derived = _eur_cny_history_full()
     return filter_history_by_period(full), derived
 
 
@@ -1443,13 +1594,6 @@ CHART_PERIODS: dict[str, str] = {
     "6M": "6mo",
     "1Y": "1y",
 }
-
-# Kovové položky v souhrnné tabulce — Westmetall LME Cash
-SUMMARY_WM_METALS: dict[str, str] = {
-    "copper":   "Copper",
-    "aluminum": "Aluminum",
-}
-
 
 def get_eurusd_rate() -> float | None:
     """Kurz EURUSD z Yahoo (USD za 1 EUR)."""
@@ -1666,7 +1810,7 @@ def render_metal_surcharge_calculator(cnb: dict | None) -> None:
 
     st.markdown(
         "<div style='font-family:Syne,sans-serif;font-size:0.72rem;font-weight:700;"
-        "color:#495057;text-transform:uppercase;letter-spacing:1px;margin:12px 0 8px 0;'>"
+        "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;margin:12px 0 8px 0;'>"
         "Burzovní data kovu (za tunu)</div>",
         unsafe_allow_html=True,
     )
@@ -1803,7 +1947,7 @@ def render_metal_surcharge_calculator(cnb: dict | None) -> None:
                 f'<div class="calc-result-label">{title}</div>'
                 f'<div class="calc-result-value">{format_num(val, 4)} {sym}</div>'
                 f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.65rem;'
-                f'color:#6C757D;margin-top:4px;">{hint}</div></div>',
+                f'color:#8D99AB;margin-top:4px;">{hint}</div></div>',
                 unsafe_allow_html=True,
             )
 
@@ -1831,7 +1975,7 @@ def render_metal_surcharge_calculator(cnb: dict | None) -> None:
             f'<div class="calc-result-value" style="color:{color};">'
             f'{sign}{format_num(diff_out, 4)} {sym}/m</div>'
             f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.65rem;'
-            f'color:#6C757D;margin-top:4px;">'
+            f'color:#8D99AB;margin-top:4px;">'
             f'Kladné = férový model dražší než plošné zdražení celé nabídky</div></div>',
             unsafe_allow_html=True,
         )
@@ -1967,11 +2111,11 @@ def fetch_oil_history(period: str = "6mo") -> pd.DataFrame | None:
 # ─────────────────────────────────────────────────────────────────────────────
 # ==============================================================================
 
-_PLOT_PAPER = "#FFFFFF"
-_PLOT_BG = "#F8F9FA"
-_PLOT_TITLE_COLOR = "#212529"
-_PLOT_TICK_COLOR = "#000000"
-_PLOT_GRID = "#DEE2E6"
+_PLOT_PAPER = "#1E242E"
+_PLOT_BG = "#1A1F28"
+_PLOT_TITLE_COLOR = "#E9EDF3"
+_PLOT_TICK_COLOR = "#B8C2D0"
+_PLOT_GRID = "#2C3442"
 
 _TICK_AXIS = dict(
     gridcolor=_PLOT_GRID,
@@ -1979,24 +2123,17 @@ _TICK_AXIS = dict(
     showgrid=True,
     zeroline=False,
     showline=True,
-    linecolor="#ADB5BD",
+    linecolor="#3A4454",
 )
 
 _HOVER_LABEL = dict(
-    bgcolor="#FFFFFF",
-    bordercolor="#495057",
-    font=dict(family="IBM Plex Mono, monospace", size=11, color="#212529"),
+    bgcolor="#232A36",
+    bordercolor="#3D4859",
+    font=dict(family="IBM Plex Mono, monospace", size=11, color="#E9EDF3"),
 )
 
 # Mezera = tisíce, tečka = desetinná (český standard v Plotly)
 _PLOT_SEPARATORS = " ."
-
-
-def _chart_period_cutoff() -> pd.Timestamp:
-    """Spodní hranice data podle globálního přepínače období (1W–1Y)."""
-    days = _WM_PERIOD_DAYS.get(get_chart_period(), 92)
-    prague_now = now_prague()
-    return pd.Timestamp(prague_now.replace(tzinfo=None)).normalize() - pd.Timedelta(days=days)
 
 
 def _ensure_plot_separators(fig: go.Figure | None) -> go.Figure | None:
@@ -2034,40 +2171,6 @@ def _tight_yaxis_range(
         span = min_span
     pad = span * padding_ratio
     return lo - pad, hi + pad
-
-
-def _history_to_dated_series(
-    df: pd.DataFrame,
-    value_col: str,
-    date_col: str | None = "Date",
-) -> pd.Series:
-    """Normalizuje historii na Series (index = datum, hodnoty = float)."""
-    if df is None or df.empty:
-        return pd.Series(dtype=float)
-    work = df.copy()
-    if date_col and date_col in work.columns:
-        dates = pd.to_datetime(work[date_col], errors="coerce").dt.normalize()
-        values = pd.to_numeric(work[value_col], errors="coerce")
-    else:
-        work = work.reset_index()
-        col0 = work.columns[0]
-        dates = pd.to_datetime(work[col0], errors="coerce").dt.normalize()
-        values = pd.to_numeric(work[value_col], errors="coerce")
-    out = pd.Series(values.values, index=dates, name=value_col)
-    out = out[out.index.notna()]
-    out = out[~out.index.duplicated(keep="last")]
-    return out.sort_index().dropna()
-
-
-def _clip_series_to_chart_period(series: pd.Series) -> pd.Series:
-    """Ořízne časovou řadu podle aktivního období v UI."""
-    if series is None or series.empty:
-        return pd.Series(dtype=float)
-    cutoff = _chart_period_cutoff()
-    idx = pd.to_datetime(series.index, errors="coerce").normalize()
-    clipped = series.copy()
-    clipped.index = idx
-    return clipped[clipped.index >= cutoff].dropna()
 
 
 def _apply_financial_y_axis(fig: go.Figure, df: pd.DataFrame, y_col: str) -> go.Figure:
@@ -2212,7 +2315,16 @@ def _render_metal_history_with_tabs(
             )
         if fig:
             _ensure_plot_separators(fig)
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
+            st.plotly_chart(
+                fig,
+                use_container_width=True,
+                config={
+                    "displayModeBar": False,
+                    "displaylogo": False,
+                    "responsive": True,
+                    "scrollZoom": False,
+                },
+            )
         else:
             st.markdown('<div class="error-box">Graf nelze vykreslit</div>', unsafe_allow_html=True)
 
@@ -2639,7 +2751,7 @@ def _render_lme_shfe_spot_comparison(wm_data: dict | None) -> None:
 
     st.markdown(
         "<div style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
-        "color:#495057;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
+        "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
         "Aktuální ceny LME vs CCMN (Čína) (USD/t)</div>",
         unsafe_allow_html=True,
     )
@@ -2666,67 +2778,6 @@ def _render_lme_shfe_spot_comparison(wm_data: dict | None) -> None:
         st.caption(
             "LME: Westmetall Cash · CCMN: ccmn.cn spot + přepočet CNY→USD (ČNB) · vše v USD/t"
         )
-
-
-def bar_metals(
-    data: dict,
-    title: str | None = None,
-    currency: str | None = None,
-) -> go.Figure | None:
-    """
-    Vodorovný sloupcový graf pro vizuální porovnání cen kovů.
-    """
-    currency = currency or get_display_currency()
-    if title is None:
-        title = f"Porovnání LME cen kovů ({currency}/t)"
-    color_map = {
-        "copper":   "#f97316",
-        "aluminum": "#10b981",
-        "steel":    "#64748b",
-    }
-    metals, prices, colors = [], [], []
-    for key, label in _BAR_CHART_ORDER:
-        v = data.get(key)
-        if isinstance(v, dict) and "price" in v and float(v["price"]) > 0:
-            metals.append(label)
-            prices.append(float(v["price"]))
-            colors.append(color_map.get(key, "#475569"))
-    if not metals:
-        return None
-
-    fig = go.Figure(go.Bar(
-        y=metals,
-        x=prices,
-        orientation="h",
-        marker=dict(color=colors, line_width=0),
-        text=[f" {format_num(p, 0)} {currency}/t" for p in prices],
-        textposition="outside",
-        textfont=dict(family="IBM Plex Mono, monospace", size=9.5, color=_PLOT_TITLE_COLOR),
-        hovertemplate=f"<b>%{{y}}</b><br>%{{x:,.0f}} {currency}/t<extra></extra>",
-    ))
-    fig.update_layout(
-        separators=_PLOT_SEPARATORS,
-        title=dict(text=title, font=dict(family="Syne, sans-serif", size=13, color=_PLOT_TITLE_COLOR)),
-        height=220,
-        margin=dict(l=10, r=10, t=36, b=12),
-        paper_bgcolor=_PLOT_PAPER,
-        plot_bgcolor=_PLOT_BG,
-        showlegend=False,
-        xaxis=dict(
-            gridcolor=_PLOT_GRID,
-            tickfont=dict(family="IBM Plex Mono, monospace", size=10, color=_PLOT_TICK_COLOR),
-            tickformat=",.0f",
-            showgrid=True,
-            zeroline=False,
-        ),
-        yaxis=dict(
-            tickfont=dict(family="Syne, sans-serif", size=10, color=_PLOT_TICK_COLOR),
-            showgrid=False,
-        ),
-        bargap=0.35,
-        hoverlabel=_HOVER_LABEL,
-    )
-    return fig
 
 
 # ==============================================================================
@@ -2769,7 +2820,7 @@ def render_header() -> None:
     with c2:
         st.markdown(
             '<div style="padding:8px 0;font-family:\'IBM Plex Mono\',monospace;'
-            'font-size:0.7rem;color:#495057;">'
+            'font-size:0.7rem;color:#8D99AB;">'
             'Data se automaticky obnovují každou hodinu · '
             'Všechny ceny jsou orientační · Žádné placené API</div>',
             unsafe_allow_html=True,
@@ -2848,7 +2899,7 @@ def _render_historical_correlation() -> None:
     period_lbl = get_chart_period_label()
     st.markdown(
         "<div style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
-        "color:#495057;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
+        "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
         f"Historická korelace — LME Cu vs Čína ({period_lbl}, USD/t)</div>",
         unsafe_allow_html=True,
     )
@@ -2952,58 +3003,50 @@ def render_metals() -> None:
     render_rsi_signals(steel_hrc)
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Historické grafy — měď & hliník (Westmetall), ocel HRC (Yahoo) ────────
+    # ── Historické grafy — pod sebou na plnou šířku (mobil-friendly) ─────────
     st.markdown(
         "<div style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
-        "color:#495057;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
+        "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
         f"Historické grafy — Měď & Hliník (Westmetall, {period_lbl}) · "
         f"Ocel HRC (Yahoo, {ccy}/t)</div>",
         unsafe_allow_html=True,
     )
-    col_cu_hist, col_al_hist, col_st_hist = st.columns(3)
     y_unit = f"{ccy}/t"
     steel_ticker = (steel_hrc or {}).get("ticker", "HRC=F")
 
-    with col_cu_hist:
-        _render_wm_metal_history_chart("copper", "Měď (Cu)", "#f97316")
+    _render_wm_metal_history_chart("copper", "Měď (Cu)", "#f97316")
+    _render_wm_metal_history_chart("aluminum", "Hliník (Al)", "#10b981")
 
-    with col_al_hist:
-        _render_wm_metal_history_chart("aluminum", "Hliník (Al)", "#10b981")
-
-    with col_st_hist:
-        st_hist = fetch_metal_history(steel_ticker, period)
-        if st_hist is not None and not st_hist.empty:
-            st_plot = st_hist.copy()
-            st_plot["Close"] = st_plot["Close"] * _ST_TON_FACTOR
-            st_plot = apply_currency_to_df(st_plot)
-            _render_metal_history_with_tabs(
-                st_plot,
-                "Ocel HRC",
-                "#64748b",
-                y_unit,
-                price_col="Close",
-                source_note=f"Yahoo {steel_ticker}",
-            )
-        else:
-            st.markdown(
-                '<div class="error-box">Graf oceli HRC momentálně nedostupný (Yahoo HRC=F / STRE=F)</div>',
-                unsafe_allow_html=True,
-            )
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # ── SHFE spread panel ─────────────────────────────────────────────────────
-    col_spread_full, _ = st.columns([1, 2])
-    with col_spread_full:
-        _render_shfe_spreads(wm_data)
-
-    # ── Aktuální ceny LME vs CCMN (měď, hliník — USD/t, bez oceli) ───────────
-    st.markdown("<br>", unsafe_allow_html=True)
-    _render_lme_shfe_spot_comparison(wm_data)
+    st_hist = fetch_metal_history(steel_ticker, period)
+    if st_hist is not None and not st_hist.empty:
+        st_plot = st_hist.copy()
+        st_plot["Close"] = st_plot["Close"] * _ST_TON_FACTOR
+        st_plot = apply_currency_to_df(st_plot)
+        _render_metal_history_with_tabs(
+            st_plot,
+            "Ocel HRC",
+            "#64748b",
+            y_unit,
+            price_col="Close",
+            source_note=f"Yahoo {steel_ticker}",
+        )
+    else:
+        st.markdown(
+            '<div class="error-box">Graf oceli HRC momentálně nedostupný (Yahoo HRC=F / STRE=F)</div>',
+            unsafe_allow_html=True,
+        )
 
     # ── Historická korelace LME vs Čína (CCMN / COMEX proxy) ─────────────────
     st.markdown("<br>", unsafe_allow_html=True)
     _render_historical_correlation()
+
+    # ── Porovnání LME vs CCMN (měď, hliník — USD/t, bez oceli) ───────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    _render_lme_shfe_spot_comparison(wm_data)
+
+    # ── CCMN vs LME spread — na závěr sekce ──────────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    _render_shfe_spreads(wm_data)
 
     if wm_data and wm_data.get("_source") == "westmetall.com":
         st.markdown(
@@ -3073,7 +3116,7 @@ def _render_shfe_spreads(wm_data: dict | None) -> None:
     st.markdown(
         f"<div style='margin-bottom:10px;'>"
         f"<span style='font-family:Syne,sans-serif;font-size:0.7rem;font-weight:700;"
-        f"color:#495057;text-transform:uppercase;letter-spacing:1px;'>"
+        f"color:#8D99AB;text-transform:uppercase;letter-spacing:1px;'>"
         f"CCMN (Čína) vs LME Spread ({ccy}/t)</span></div>",
         unsafe_allow_html=True,
     )
@@ -3081,8 +3124,10 @@ def _render_shfe_spreads(wm_data: dict | None) -> None:
         st.warning(
             "Spread: chybí kurz CNY z ČNB — přepočet CCMN (CNY/t) na USD/EUR nelze spočítat."
         )
-    for metal_key, metal_name in _SHFE_SPREAD_METALS:
-        _render_shfe_spread_item(metal_key, metal_name, wm_data)
+    spread_cols = st.columns(len(_SHFE_SPREAD_METALS))
+    for (metal_key, metal_name), col in zip(_SHFE_SPREAD_METALS, spread_cols):
+        with col:
+            _render_shfe_spread_item(metal_key, metal_name, wm_data)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -3111,10 +3156,10 @@ def render_fx() -> None:
     period = get_chart_period()
     period_lbl = get_chart_period_label()
 
+    cnb_date_note = f" ze dne {cnb.get('_date', 'N/A')}" if cnb else ""
     st.markdown(
         f'<div class="info-box">'
-        f'Karty CZK párů: oficiální kurzovní lístek <strong>ČNB</strong>'
-        f'{f" ze dne {cnb.get('_date', 'N/A')}" if cnb else ""} · '
+        f'Karty CZK párů: oficiální kurzovní lístek <strong>ČNB</strong>{cnb_date_note} · '
         f'Historické grafy ({period_lbl}) a křížové kurzy: <strong>Yahoo Finance</strong> · '
         f'CNY/CZK graf: CNYCZK=X nebo odvozeno USDCZK×CNYUSD'
         f'</div>',
@@ -3122,7 +3167,8 @@ def render_fx() -> None:
     )
 
     eur_usd_spot = fetch_yf_spot("EURUSD=X")
-    cols = st.columns(5)
+    # 2 kurzy vedle sebe na řádek (3 řady × 2 karty) — čitelné na PC i mobilu
+    cols = [*st.columns(2), *st.columns(2), *st.columns(2)]
 
     for (code, pair, subtitle, cls), col in zip(_CNB_METRIC_CARDS, cols[:3]):
         with col:
@@ -3163,6 +3209,21 @@ def render_fx() -> None:
         else:
             st.markdown(error_card("USD/EUR", "card-usd", "Kurz nedostupný"), unsafe_allow_html=True)
 
+    with cols[5]:
+        cny_info = (cnb or {}).get("CNY")
+        eur_info = (cnb or {}).get("EUR")
+        if cny_info and eur_info and eur_info.get("rate"):
+            cny_eur = float(cny_info["rate"]) / float(eur_info["rate"])
+            st.markdown(
+                metric_card(
+                    "CNY/EUR", f"{cny_eur:.4f}", "Jüan / Euro (ČNB kříž)",
+                    card_class="card-cny",
+                ),
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(error_card("CNY/EUR", "card-cny", "Data nedostupná · ČNB"), unsafe_allow_html=True)
+
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Interaktivní grafy (globální období, Yahoo) ───────────────────────────
@@ -3171,9 +3232,10 @@ def render_fx() -> None:
         ("EUR/CZK", "#3b82f6", "CZK", "eur"),
         ("USD/CZK", "#22c55e", "CZK", "usd"),
         ("EUR/USD", "#8b5cf6", "USD", "eurusd"),
+        ("EUR/CNY", "#f59e0b", "CNY", "eurcny"),
     ]
     col_a, col_b = st.columns(2)
-    chart_cols = [col_a, col_b, col_a, col_b]
+    chart_cols = [col_a, col_b, col_a, col_b, col_a]
 
     for (pair, color, unit, kind), col in zip(fx_charts, chart_cols):
         with col:
@@ -3184,10 +3246,17 @@ def render_fx() -> None:
                 hist = fetch_fx_history("EURCZK=X", period)
             elif kind == "usd":
                 hist = fetch_fx_history("USDCZK=X", period)
+            elif kind == "eurcny":
+                hist, derived = fetch_eur_cny_history(period)
             else:
                 hist = fetch_fx_history("EURUSD=X", period)
             if hist is not None and not hist.empty:
-                sub = " · odvozeno USDCZK×CNYUSD" if kind == "cny" and derived else ""
+                if kind == "cny" and derived:
+                    sub = " · odvozeno USDCZK×CNYUSD"
+                elif kind == "eurcny" and derived:
+                    sub = " · odvozeno EURUSD÷CNYUSD"
+                else:
+                    sub = ""
                 fig = interactive_line_chart(
                     hist,
                     f"{pair} — {period_lbl}{sub}",
@@ -3316,7 +3385,7 @@ def render_oil_plastics() -> None:
     # ── Brent graf (BZ=F) + SMA 30d trend + přepínač období ─────────────────
     st.markdown(
         "<div style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
-        "color:#495057;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
+        "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
         "Brent Crude (BZ=F) — historie &amp; SMA 30d</div>",
         unsafe_allow_html=True,
     )
@@ -3370,9 +3439,9 @@ def render_oil_plastics() -> None:
                     </tbody>
                 </table>
                 <div style="margin-top:12px;font-family:'IBM Plex Mono',monospace;
-                            font-size:0.65rem;color:#6C757D;line-height:1.7;">
+                            font-size:0.65rem;color:#8D99AB;line-height:1.7;">
                     Základ (Brent):<br>
-                    <strong style="color:#212529;">${plastics['_brent']:.2f}/bbl</strong><br><br>
+                    <strong style="color:#E9EDF3;">${plastics['_brent']:.2f}/bbl</strong><br><br>
                     Model: lineární proxy<br>
                     Zdroj: Yahoo Finance
                 </div>
@@ -3994,7 +4063,7 @@ def render_logistics() -> None:
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown(
         f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-        f"color:#212529;margin-bottom:6px;'>"
+        f"color:#E9EDF3;margin-bottom:6px;'>"
         f"Průběh cesty · odesláno {ship_date.strftime('%d.%m.%Y')} → "
         f"doručení {delivery_date.strftime('%d.%m.%Y')} · dnes {today.strftime('%d.%m.%Y')}"
         f"</div>",
@@ -4933,16 +5002,16 @@ def render_domestic_logistics() -> None:
             start_short = start_loc["display_name"].split(",")[0].strip()
             dest_short = dest_loc["display_name"].split(",")[0].strip()
             st.markdown(
-                "<div style='background:#E7F1FF; padding:12px; border-radius:8px; "
-                "border-left:4px solid #0D6EFD; margin-bottom:16px;'>"
+                "<div style='background:rgba(77,159,255,0.10); padding:12px; border-radius:10px; "
+                "border:1px solid rgba(77,159,255,0.28); border-left:4px solid #4D9FFF; margin-bottom:16px;'>"
                 "<span style='font-family:Syne, sans-serif; font-size:1.1rem; "
-                "font-weight:700; color:#000000;'>"
+                "font-weight:700; color:#F7FAFD;'>"
                 f"📍 {start_short} "
-                f"<span style='font-size:0.85rem; color:#495057;'>"
+                f"<span style='font-size:0.85rem; color:#8D99AB;'>"
                 f"(PSČ: {start_loc.get('postcode', 'N/A')})</span> "
                 f"&nbsp;➡️&nbsp; "
                 f"{dest_short} "
-                f"<span style='font-size:0.85rem; color:#495057;'>"
+                f"<span style='font-size:0.85rem; color:#8D99AB;'>"
                 f"(PSČ: {dest_loc.get('postcode', 'N/A')})</span>"
                 "</span></div>",
                 unsafe_allow_html=True,
@@ -5065,145 +5134,6 @@ def render_domestic_logistics() -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  SEKCE 5: SOUHRNNÁ PŘEHLEDOVÁ TABULKA
-# ──────────────────────────────────────────────────────────────────────────────
-
-def render_summary_table() -> None:
-    """Souhrnná tabulka všech klíčových indikátorů dashboardu."""
-
-    section_header("📊", "Souhrnný Přehled — Klíčové Indikátory")
-
-    rows = []
-    ccy = get_display_currency()
-
-    # Kovy — Copper, Aluminum: Westmetall LME Cash
-    wm = fetch_westmetall()
-    for mk, label in SUMMARY_WM_METALS.items():
-        if wm and mk in wm:
-            price_disp = usd_to_display(wm[mk]["price"], ccy)
-            if price_disp is not None:
-                rows.append({
-                    "Kategorie": "⚙️ Kov",
-                    "Indikátor": label,
-                    "Hodnota":   f"{format_num(price_disp, 0)} {ccy}/t",
-                    "Δ %":       "LME Cash",
-                    "Trend":     "—",
-                    "Zdroj":     "Westmetall",
-                })
-
-    # Ocel — Yahoo HRC
-    steel = fetch_steel_yfinance()
-    if steel:
-        dp = steel.get("delta_pct", 0) or 0
-        p_disp = usd_to_display(steel["price"], ccy)
-        rows.append({
-            "Kategorie": "⚙️ Kov",
-            "Indikátor": "Steel (HRC)",
-            "Hodnota":   f"{format_num(p_disp, 0)} {ccy}/t" if p_disp else "N/A",
-            "Δ %":       f"{dp:+.2f}%",
-            "Trend":     "▲" if steel.get("delta", 0) > 0 else "▼",
-            "Zdroj":     "Yahoo Finance",
-        })
-
-    # Měny — ČNB pro CZK páry
-    cnb = fetch_cnb_rates()
-    if cnb:
-        for code, label in [("USD", "USD/CZK"), ("EUR", "EUR/CZK"), ("CNY", "CNY/CZK")]:
-            info = cnb.get(code)
-            if info:
-                rows.append({
-                    "Kategorie": "💱 Měna",
-                    "Indikátor": label,
-                    "Hodnota":   f"{info['rate']:.4f} CZK",
-                    "Δ %":       "ČNB denní",
-                    "Trend":     "—",
-                    "Zdroj":     "ČNB",
-                })
-
-    # Křížové kurzy — Yahoo
-    eur_usd = fetch_yf_spot("EURUSD=X")
-    if eur_usd:
-        dp = eur_usd.get("delta_pct", 0) or 0
-        rows.append({
-            "Kategorie": "💱 Měna",
-            "Indikátor": "EUR/USD",
-            "Hodnota":   f"{eur_usd['price']:.4f}",
-            "Δ %":       f"{dp:+.3f}%",
-            "Trend":     "▲" if dp > 0 else ("▼" if dp < 0 else "—"),
-            "Zdroj":     "Yahoo Finance",
-        })
-    if eur_usd and eur_usd["price"]:
-        ue = 1.0 / eur_usd["price"]
-        rows.append({
-            "Kategorie": "💱 Měna",
-            "Indikátor": "USD/EUR",
-            "Hodnota":   f"{ue:.4f}",
-            "Δ %":       "inverze EUR/USD",
-            "Trend":     "—",
-            "Zdroj":     "Yahoo Finance",
-        })
-
-    # Ropa — Brent v zvolené měně
-    oil = fetch_oil_data()
-    if oil and "brent" in oil:
-        o = oil["brent"]
-        p_disp = usd_to_display(o["price"], ccy)
-        rows.append({
-            "Kategorie": "🛢️ Energie",
-            "Indikátor": o["name"],
-            "Hodnota":   f"{format_oil_price(o['price'])}/bbl",
-            "Δ %":       f"{o['delta_pct']:+.2f}%",
-            "Trend":     "▲" if o["delta"] > 0 else "▼",
-            "Zdroj":     "Yahoo Finance",
-        })
-    if oil and "wti" in oil:
-        o = oil["wti"]
-        rows.append({
-            "Kategorie": "🛢️ Energie",
-            "Indikátor": o["name"],
-            "Hodnota":   f"${o['price']:.2f}/bbl",
-            "Δ %":       f"{o['delta_pct']:+.2f}%",
-            "Trend":     "▲" if o["delta"] > 0 else "▼",
-            "Zdroj":     "Yahoo Finance",
-        })
-
-    # Logistika — výchozí železnice
-    rows.append({
-        "Kategorie": "🚚 Logistika",
-        "Indikátor": "Transit Čína→ČR (vlak)",
-        "Hodnota":   f"{TRANSIT_DAYS['Železniční doprava']} dní",
-        "Δ %":       "ETA kalkulačka",
-        "Trend":     "—",
-        "Zdroj":     "Model",
-    })
-
-    if rows:
-        df = pd.DataFrame(rows)
-        st.dataframe(
-            df,
-            use_container_width=True,
-            hide_index=True,
-            height=min(len(df) * 38 + 42, 600),
-            column_config={
-                "Kategorie": st.column_config.TextColumn("Kategorie",    width="small"),
-                "Indikátor": st.column_config.TextColumn("Indikátor",    width="medium"),
-                "Hodnota":   st.column_config.TextColumn("Hodnota",      width="medium"),
-                "Δ %":       st.column_config.TextColumn("Δ den/den",    width="small"),
-                "Trend":     st.column_config.TextColumn("↕",            width="small"),
-                "Zdroj":     st.column_config.TextColumn("Zdroj",        width="small"),
-            },
-        )
-    else:
-        st.markdown(
-            '<div class="error-box" style="padding:20px;">'
-            'Souhrnná data nejsou k dispozici.</div>',
-            unsafe_allow_html=True,
-        )
-
-    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
 #  FOOTER
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -5250,7 +5180,6 @@ def main() -> None:
         "💱 Měnové kurzy",
         "🛢️ Plasty & Ropa",
         "🚛 Logistika ČR & SK",
-        "📊 Souhrnný přehled",
     ]
 
     if not is_supplier:
@@ -5273,13 +5202,9 @@ def main() -> None:
             render_logistics()
         with tabs[4]:
             render_domestic_logistics()
-        with tabs[5]:
-            render_summary_table()
     else:
         with tabs[3]:
             render_domestic_logistics()
-        with tabs[4]:
-            render_summary_table()
 
     render_footer()
 
