@@ -3147,6 +3147,207 @@ def _render_historical_correlation() -> None:
         _render_metal_correlation(cfg, robot, period_lbl)
 
 
+# ── Predikce trendu (statistický model) ──────────────────────────────────────
+_FORECAST_HORIZON = 21     # obchodních dní ≈ 1 kalendářní měsíc
+_FORECAST_FIT_WINDOW = 45  # dní pro odhad trendu (OLS)
+_FORECAST_VOL_WINDOW = 90  # dní pro odhad denní volatility
+_FORECAST_BAND_Z = 1.28    # ±1.28σ ≈ 80% interval spolehlivosti
+
+
+def _price_forecast(
+    hist: pd.DataFrame | None,
+    price_col: str = "Close",
+    horizon: int = _FORECAST_HORIZON,
+) -> pd.DataFrame | None:
+    """
+    Projekce trendu: OLS přímka posledních _FORECAST_FIT_WINDOW dní ukotvená
+    na poslední ceně + pásmo nejistoty z denní volatility (šířka roste s √h).
+    Vrací DataFrame: Date, Forecast, Lo, Hi. MODEL — ne předpověď budoucnosti.
+    """
+    if hist is None or hist.empty or price_col not in hist.columns:
+        return None
+    s = pd.to_numeric(hist[price_col], errors="coerce").dropna()
+    if len(s) < _FORECAST_FIT_WINDOW + 1:
+        return None
+
+    y = s.iloc[-_FORECAST_FIT_WINDOW:].reset_index(drop=True).astype(float)
+    x = pd.Series(range(len(y)), dtype=float)
+    x_dev = x - x.mean()
+    denom = float((x_dev ** 2).sum())
+    if denom == 0:
+        return None
+    slope = float((x_dev * (y - y.mean())).sum()) / denom
+
+    daily_changes = s.diff().dropna().iloc[-_FORECAST_VOL_WINDOW:]
+    sigma = float(daily_changes.std()) if len(daily_changes) > 1 else 0.0
+
+    last_price = float(s.iloc[-1])
+    last_date = pd.to_datetime(hist["Date"]).max()
+    future_dates = pd.bdate_range(last_date + pd.Timedelta(days=1), periods=horizon)
+
+    rows = []
+    for h in range(1, horizon + 1):
+        center = last_price + slope * h
+        band = _FORECAST_BAND_Z * sigma * math.sqrt(h)
+        rows.append({
+            "Date": future_dates[h - 1],
+            "Forecast": center,
+            "Lo": center - band,
+            "Hi": center + band,
+        })
+    return pd.DataFrame(rows)
+
+
+def _forecast_chart(
+    hist: pd.DataFrame,
+    fc: pd.DataFrame,
+    title: str,
+    color: str,
+    y_label: str,
+    height: int = 300,
+) -> go.Figure:
+    """Vějířový graf: 60 dní historie + projekce trendu s pásmem nejistoty."""
+    tail = hist.tail(60).copy()
+    tail["Date"] = pd.to_datetime(tail["Date"])
+
+    # Napojení projekce na poslední známý bod (bez vizuální mezery)
+    last_date = tail["Date"].iloc[-1]
+    last_price = float(pd.to_numeric(tail["Close"], errors="coerce").dropna().iloc[-1])
+    bridge = pd.DataFrame([{"Date": last_date, "Forecast": last_price, "Lo": last_price, "Hi": last_price}])
+    fc_full = pd.concat([bridge, fc], ignore_index=True)
+
+    fig = go.Figure()
+
+    # Pásmo nejistoty (fialový vějíř)
+    fig.add_trace(go.Scatter(
+        x=fc_full["Date"], y=fc_full["Hi"], mode="lines",
+        line=dict(width=0), showlegend=False, hoverinfo="skip",
+    ))
+    fig.add_trace(go.Scatter(
+        x=fc_full["Date"], y=fc_full["Lo"], mode="lines",
+        line=dict(width=0), fill="tonexty", fillcolor="rgba(167,139,250,0.16)",
+        name="Pásmo nejistoty (80 %)", hoverinfo="skip",
+    ))
+
+    # Historie (plná čára v barvě kovu)
+    fig.add_trace(go.Scatter(
+        x=tail["Date"], y=tail["Close"], mode="lines",
+        name="Historie", line=dict(color=color, width=2.2),
+        hovertemplate=f"<b>%{{x|%d.%m.%Y}}</b><br>{y_label}: %{{y:,.0f}}<extra></extra>",
+    ))
+
+    # Projekce (fialová čárkovaná)
+    fig.add_trace(go.Scatter(
+        x=fc_full["Date"], y=fc_full["Forecast"], mode="lines",
+        name="Projekce trendu", line=dict(color="#A78BFA", width=2, dash="dash"),
+        hovertemplate=f"<b>%{{x|%d.%m.%Y}}</b><br>Projekce: %{{y:,.0f}}<extra></extra>",
+    ))
+
+    # Těsný rozsah osy Y přes historii i pásmo
+    all_vals = pd.concat([
+        pd.to_numeric(tail["Close"], errors="coerce"),
+        pd.to_numeric(fc_full["Lo"], errors="coerce"),
+        pd.to_numeric(fc_full["Hi"], errors="coerce"),
+    ]).dropna()
+    y_min, y_max = float(all_vals.min()), float(all_vals.max())
+    pad = (y_max - y_min) * 0.05 or 1.0
+
+    fig.update_layout(
+        separators=_PLOT_SEPARATORS,
+        title=dict(text=title, font=dict(family="Syne, sans-serif", size=13, color=_PLOT_TITLE_COLOR), y=0.97),
+        height=height,
+        margin=dict(l=10, r=10, t=46, b=12),
+        paper_bgcolor=_PLOT_PAPER,
+        plot_bgcolor=_PLOT_BG,
+        showlegend=True,
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.08, xanchor="right", x=1,
+            font=dict(family="IBM Plex Mono, monospace", size=10, color=_PLOT_TICK_COLOR),
+            bgcolor=_PLOT_PAPER,
+        ),
+        xaxis=dict(**_TICK_AXIS, tickformat="%d.%m."),
+        yaxis=dict(**_TICK_AXIS, tickformat=",.0f", title=dict(text=y_label, standoff=8),
+                   range=[y_min - pad, y_max + pad], autorange=False),
+        hoverlabel=_HOVER_LABEL,
+        hovermode="x unified",
+    )
+    return fig
+
+
+def _render_forecast_for_metal(name: str, color: str, hist: pd.DataFrame | None, y_unit: str) -> None:
+    """Jedna predikce: graf + shrnutí očekávané ceny za horizont."""
+    if hist is None or hist.empty:
+        st.markdown(
+            f'<div class="error-box">Predikce {name}: historická data nejsou k dispozici</div>',
+            unsafe_allow_html=True,
+        )
+        return
+    fc = _price_forecast(hist)
+    if fc is None:
+        st.markdown(
+            f'<div class="error-box">Predikce {name}: nedostatek dat pro odhad trendu '
+            f'(potřeba ≥ {_FORECAST_FIT_WINDOW} dní)</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    last_price = float(pd.to_numeric(hist["Close"], errors="coerce").dropna().iloc[-1])
+    end = fc.iloc[-1]
+    delta_pct = (float(end["Forecast"]) / last_price - 1.0) * 100.0
+    sign = "+" if delta_pct >= 0 else ""
+
+    fig = _forecast_chart(hist, fc, f"{name} — projekce {_FORECAST_HORIZON} obch. dní", color, y_unit)
+    _show_plotly(fig)
+    st.markdown(
+        f'<div class="card-extra" style="margin:-6px 0 12px 4px;">'
+        f'Projekce za ~1 měsíc: <strong>{format_num(end["Forecast"], 0)} {y_unit}</strong> '
+        f'({sign}{delta_pct:.1f} % vůči poslední ceně) · '
+        f'80% pásmo: {format_num(end["Lo"], 0)} – {format_num(end["Hi"], 0)} {y_unit}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_price_forecast_section() -> None:
+    """Sekce predikcí trendu pro Cu, Al a ocel HRC — statistický MODEL."""
+    ccy = get_display_currency()
+    y_unit = f"{ccy}/t"
+    st.markdown(
+        "<div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;'>"
+        "<span style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
+        "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;'>"
+        f"Predikce trendu — ~1 měsíc dopředu ({y_unit})</span>"
+        f"{badge_html(False, 'statistická extrapolace', model=True)}</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="warning-box">⚠️ <strong>Toto není předpověď budoucnosti.</strong> '
+        f"Model pouze prodlužuje trend posledních {_FORECAST_FIT_WINDOW} obchodních dní "
+        f"a šířku pásma odvozuje ze skutečné volatility posledních {_FORECAST_VOL_WINDOW} dní. "
+        "Neumí zohlednit zprávy, cla, výpadky hutí ani obraty trendu — berte jako orientační "
+        "scénář „kdyby trh pokračoval jako dosud“, ne jako podklad pro spekulaci.</div>",
+        unsafe_allow_html=True,
+    )
+
+    if get_display_currency() == "EUR" and not get_eurusd_rate():
+        st.warning("Predikce: chybí kurz EUR/USD pro přepočet — přepněte na USD.")
+        return
+
+    # Měď a hliník — Westmetall LME Cash
+    for wm_key, name, color in [("copper", "Měď (Cu)", "#f97316"), ("aluminum", "Hliník (Al)", "#10b981")]:
+        full = fetch_westmetall_history(WM_HISTORY_URLS[wm_key])
+        conv = apply_currency_to_df(full.copy()) if full is not None and not full.empty else None
+        _render_forecast_for_metal(name, color, conv, y_unit)
+
+    # Ocel HRC — Yahoo
+    st_full = _yf_history("HRC=F")
+    st_conv = None
+    if st_full is not None and not st_full.empty:
+        st_conv = st_full.copy()
+        st_conv["Close"] = st_conv["Close"] * _ST_TON_FACTOR
+        st_conv = apply_currency_to_df(st_conv)
+    _render_forecast_for_metal("Ocel HRC", "#64748b", st_conv, y_unit)
+
+
 def render_metals() -> None:
     """Sekce 1 – LME kovy, ocel HRC, spot CCMN vs LME, historie Westmetall."""
 
@@ -3228,6 +3429,10 @@ def render_metals() -> None:
     # ── Historická korelace LME vs Čína (CCMN / COMEX proxy) ─────────────────
     st.markdown("<br>", unsafe_allow_html=True)
     _render_historical_correlation()
+
+    # ── Predikce trendu (statistický MODEL) ──────────────────────────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    _render_price_forecast_section()
 
     # ── Porovnání LME vs CCMN (měď, hliník — USD/t, bez oceli) ───────────────
     st.markdown("<br>", unsafe_allow_html=True)
