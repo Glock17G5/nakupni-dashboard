@@ -571,29 +571,6 @@ footer { visibility: hidden; }
 .data-table-wrap td { color: #C9D3E0; border-bottom: 1px solid #262D39; padding: 9px 12px; }
 .data-table-wrap tr:hover td { background: #232A36; }
 
-.calc-result {
-    background: linear-gradient(160deg, rgba(35, 42, 54, 0.95), rgba(27, 32, 41, 0.95));
-    border: 1px solid #2C3442;
-    border-radius: 14px;
-    padding: 14px;
-    text-align: center;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25), 0 10px 22px -14px rgba(0, 0, 0, 0.4);
-}
-
-.calc-result-label {
-    font-size: 0.65rem;
-    font-weight: 700;
-    color: #8D99AB;
-    text-transform: uppercase;
-}
-
-.calc-result-value {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 1.2rem;
-    font-weight: 700;
-    color: #F7FAFD;
-}
-
 .section-divider {
     height: 1px;
     background: linear-gradient(90deg, transparent, #3A4454 20%, #3A4454 80%, transparent);
@@ -1680,321 +1657,6 @@ def get_usd_per_cny() -> float | None:
         return float(cny_czk) / float(usd_czk)
     return None
 
-
-_CALC_CURRENCIES = ("EUR", "USD", "CZK", "CNY")
-_EXCHANGE_CURRENCIES = ("USD", "CNY", "EUR")
-_SURCHARGE_METAL_OPTIONS = {"Měď (Cu)": "copper", "Hliník (Al)": "aluminum"}
-
-
-def _build_fx_rates(cnb: dict | None) -> dict | None:
-    """Kurzy pro kalkulačku: ČNB (CZK páry) + EUR/USD (Yahoo) + USD/CNY (ČNB)."""
-    if not cnb:
-        return None
-    usd_czk = (cnb.get("USD") or {}).get("rate")
-    eur_czk = (cnb.get("EUR") or {}).get("rate")
-    if not usd_czk or not eur_czk:
-        return None
-    return {
-        "usd_czk": float(usd_czk),
-        "eur_czk": float(eur_czk),
-        "cny_czk": float((cnb.get("CNY") or {}).get("rate") or 0) or None,
-        "eur_usd": get_eurusd_rate(),
-        "usd_per_cny": get_usd_per_cny(),
-    }
-
-
-def _to_usd(amount: float, currency: str, rates: dict) -> float | None:
-    """Převod libovolné měny na USD (základ pro výpočet)."""
-    if currency == "USD":
-        return amount
-    if currency == "EUR":
-        eur_usd = rates.get("eur_usd")
-        return amount * eur_usd if eur_usd else None
-    if currency == "CZK":
-        return amount / rates["usd_czk"]
-    if currency == "CNY":
-        upc = rates.get("usd_per_cny")
-        return amount * upc if upc else None
-    return None
-
-
-def _from_usd(amount_usd: float, currency: str, rates: dict) -> float | None:
-    """Převod z USD do cílové měny."""
-    if currency == "USD":
-        return amount_usd
-    if currency == "EUR":
-        eur_usd = rates.get("eur_usd")
-        return amount_usd / eur_usd if eur_usd else None
-    if currency == "CZK":
-        return amount_usd * rates["usd_czk"]
-    if currency == "CNY":
-        upc = rates.get("usd_per_cny")
-        return amount_usd / upc if upc else None
-    return None
-
-
-def _metal_value_per_meter_usd(price_per_ton_usd: float, kg_per_km: float) -> float:
-    """Hodnota kovu v 1 m kabelu: (USD/t / 1000) × (kg/km / 1000)."""
-    return (price_per_ton_usd / 1000.0) * (kg_per_km / 1000.0)
-
-
-def _live_metal_price_in_currency(
-    metal_key: str,
-    currency: str,
-    wm_data: dict | None,
-    rates: dict,
-) -> float | None:
-    """Aktuální burzovní cena kovu v zvolené měně burzy (LME USD nebo SHFE CNY)."""
-    try:
-        if currency == "CNY":
-            shfe = fetch_ccmn_spot(metal_key)
-            return float(shfe["price"]) if shfe and shfe.get("price") else None
-        price_usd, _, _ = resolve_metal_price(metal_key, wm_data)
-        if price_usd is None:
-            return None
-        if currency == "USD":
-            return float(price_usd)
-        if currency == "EUR":
-            eur_usd = rates.get("eur_usd")
-            return float(price_usd) / eur_usd if eur_usd else None
-    except Exception:
-        return None
-    return None
-
-
-def render_metal_surcharge_calculator(cnb: dict | None) -> None:
-    """Profesionální kabelářská kalkulačka — dutá cena + metal surcharge."""
-    rates = _build_fx_rates(cnb)
-    wm_data = fetch_westmetall()
-
-    st.markdown(
-        '<div class="info-box">'
-        "Cena za 1 m = <strong>dutá cena</strong> (práce + plasty, fixní) + "
-        "<strong>přirážka za kov</strong> (dle burzy a hmotnosti v kabelu). "
-        "Převody měn: kurzy <strong>ČNB</strong> + <strong>EUR/USD</strong> (Yahoo)."
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
-    if not rates:
-        st.warning(
-            "Kalkulačka vyžaduje kurzy ČNB (USD/CZK, EUR/CZK) a ideálně EUR/USD z Yahoo."
-        )
-        return
-
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        metal_label = st.selectbox(
-            "Výběr kovu",
-            options=list(_SURCHARGE_METAL_OPTIONS.keys()),
-            key="surcharge_metal",
-        )
-        metal_key = _SURCHARGE_METAL_OPTIONS[metal_label]
-        kg_per_km = st.number_input(
-            "Hmotnost kovu v kabelu (kg/km)",
-            min_value=0.0,
-            value=500.0,
-            step=10.0,
-            format="%.1f",
-            key="surcharge_kg_km",
-        )
-    with c2:
-        orig_total = st.number_input(
-            "Původní celková cena za 1 m",
-            min_value=0.0,
-            value=2.50,
-            step=0.01,
-            format="%.4f",
-            key="surcharge_orig_total",
-        )
-        offer_currency = st.selectbox(
-            "Měna původní nabídky",
-            options=_CALC_CURRENCIES,
-            index=0,
-            key="surcharge_offer_ccy",
-        )
-    with c3:
-        output_currency = st.selectbox(
-            "Výstupní měna výsledku",
-            options=_CALC_CURRENCIES,
-            index=0,
-            key="surcharge_output_ccy",
-        )
-
-    lme_live = _live_metal_price_in_currency(metal_key, "USD", wm_data, rates)
-    shfe_live = _live_metal_price_in_currency(metal_key, "CNY", wm_data, rates)
-
-    st.markdown(
-        "<div style='font-family:Syne,sans-serif;font-size:0.72rem;font-weight:700;"
-        "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;margin:12px 0 8px 0;'>"
-        "Burzovní data kovu (za tunu)</div>",
-        unsafe_allow_html=True,
-    )
-
-    price_source = st.radio(
-        "Zdroj aktuální ceny:",
-        options=["LME (Live)", "SHFE (Live)", "Manuální (Predikce)"],
-        horizontal=True,
-        key="surcharge_price_source",
-    )
-
-    if price_source == "LME (Live)":
-        _orig_ccy_hint = "USD"
-        _default_orig = (lme_live * 0.92) if lme_live else 8000.0
-    elif price_source == "SHFE (Live)":
-        _orig_ccy_hint = "CNY"
-        _default_orig = (shfe_live * 0.92) if shfe_live else 70000.0
-    else:
-        _orig_ccy_hint = "dle měny burzy"
-        _default_orig = (lme_live * 0.92) if lme_live else 8000.0
-
-    orig_metal_ex = st.number_input(
-        f"Původní cena kovu na burze ({_orig_ccy_hint}/t)",
-        min_value=0.0,
-        value=float(_default_orig),
-        step=50.0,
-        format="%.2f",
-        key="surcharge_orig_metal_ex",
-        help="Referenční cena v měně odpovídající zvolenému zdroji aktuální ceny.",
-    )
-
-    curr_metal_ex: float | None = None
-    exchange_currency: str = "USD"
-
-    if price_source == "LME (Live)":
-        exchange_currency = "USD"
-        curr_metal_ex = lme_live
-        if curr_metal_ex is not None:
-            st.metric(
-                "Aktuální cena LME (live)",
-                f"{format_num(curr_metal_ex, 2)} USD/t",
-                help="Westmetall LME Cash — automaticky v výpočtu",
-            )
-        else:
-            st.warning(
-                f"LME live cena pro {metal_label} není k dispozici (Westmetall)."
-            )
-    elif price_source == "SHFE (Live)":
-        exchange_currency = "CNY"
-        curr_metal_ex = shfe_live
-        if curr_metal_ex is not None:
-            st.metric(
-                "Aktuální cena SHFE (live)",
-                f"{format_num(curr_metal_ex, 2)} CNY/t",
-                help="Sina Finance / SHFE — automaticky v výpočtu",
-            )
-        else:
-            st.warning(
-                f"SHFE live cena pro {metal_label} není k dispozici (Sina / kurz CNY)."
-            )
-    else:
-        m1, m2 = st.columns(2)
-        with m1:
-            curr_metal_ex = st.number_input(
-                "Aktuální cena kovu na burze (manuální)",
-                min_value=0.0,
-                value=float(lme_live or shfe_live or 9000.0),
-                step=50.0,
-                format="%.2f",
-                key="surcharge_curr_metal_manual",
-            )
-        with m2:
-            exchange_currency = st.selectbox(
-                "Měna burzy",
-                options=_EXCHANGE_CURRENCIES,
-                index=0,
-                key="surcharge_exchange_ccy",
-            )
-
-    if curr_metal_ex is None:
-        st.info("Pro výpočet zvolte dostupný live zdroj nebo přepněte na manuální predikci.")
-        return
-
-    if kg_per_km <= 0 or orig_total <= 0 or orig_metal_ex <= 0 or curr_metal_ex <= 0:
-        st.info("Vyplňte kladné hodnoty ceny, hmotnosti a burzovních cen.")
-        return
-
-    orig_metal_usd = _to_usd(orig_metal_ex, exchange_currency, rates)
-    curr_metal_usd = _to_usd(curr_metal_ex, exchange_currency, rates)
-    orig_total_usd = _to_usd(orig_total, offer_currency, rates)
-    if orig_metal_usd is None or curr_metal_usd is None or orig_total_usd is None:
-        st.error("Chybí kurz pro zvolenou kombinaci měn (zkontrolujte ČNB / EUR/USD / CNY).")
-        return
-
-    orig_metal_per_m_usd = _metal_value_per_meter_usd(orig_metal_usd, kg_per_km)
-    curr_metal_per_m_usd = _metal_value_per_meter_usd(curr_metal_usd, kg_per_km)
-    hollow_usd = orig_total_usd - orig_metal_per_m_usd
-
-    fair_usd = hollow_usd + curr_metal_per_m_usd
-    orig_metal_ex_usd = _to_usd(orig_metal_ex, exchange_currency, rates)
-    if not orig_metal_ex_usd:
-        st.error("Nelze převést původní burzovní cenu do USD pro výpočet růstu.")
-        return
-    metal_change_pct = (curr_metal_usd - orig_metal_ex_usd) / orig_metal_ex_usd
-    simple_total_usd = orig_total_usd * (1.0 + metal_change_pct)
-    diff_usd = fair_usd - simple_total_usd
-
-    def _out(usd_val: float) -> float | None:
-        return _from_usd(usd_val, output_currency, rates)
-
-    hollow_out = _out(hollow_usd)
-    new_metal_out = _out(curr_metal_per_m_usd)
-    fair_out = _out(fair_usd)
-    simple_out = _out(simple_total_usd)
-    diff_out = _out(diff_usd)
-    orig_total_out = _out(orig_total_usd)
-
-    if any(v is None for v in (hollow_out, new_metal_out, fair_out, simple_out, diff_out)):
-        st.error("Nelze převést výsledek do výstupní měny — chybí kurz.")
-        return
-
-    sym = output_currency
-    st.markdown("<br>", unsafe_allow_html=True)
-    r1, r2, r3 = st.columns(3)
-    results = [
-        (r1, "1. Dutá cena (fixní)", hollow_out, "Práce + plasty — nemění se"),
-        (r2, "2. Nová přirážka za kov", new_metal_out, f"Aktuální burza ({exchange_currency}/t)"),
-        (r3, "3. Férová cena za 1 m", fair_out, "Dutá + nový kov"),
-    ]
-    for col, title, val, hint in results:
-        with col:
-            st.markdown(
-                f'<div class="calc-result">'
-                f'<div class="calc-result-label">{title}</div>'
-                f'<div class="calc-result-value">{format_num(val, 4)} {sym}</div>'
-                f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.65rem;'
-                f'color:#8D99AB;margin-top:4px;">{hint}</div></div>',
-                unsafe_allow_html=True,
-            )
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown(
-        f'<div class="info-box">'
-        f'<strong>Původní nabídka:</strong> {format_num(orig_total_out, 4)} {sym}/m · '
-        f'<strong>Růst burzy kovu:</strong> {metal_change_pct * 100:+.2f} %</div>',
-        unsafe_allow_html=True,
-    )
-    c_simp, c_diff = st.columns(2)
-    with c_simp:
-        st.markdown(
-            f'<div class="calc-result">'
-            f'<div class="calc-result-label">Prostá přímá úměra (celá cena × růst burzy)</div>'
-            f'<div class="calc-result-value">{format_num(simple_out, 4)} {sym}/m</div></div>',
-            unsafe_allow_html=True,
-        )
-    with c_diff:
-        color = "#10b981" if diff_out >= 0 else "#ef4444"
-        sign = "+" if diff_out >= 0 else ""
-        st.markdown(
-            f'<div class="calc-result">'
-            f'<div class="calc-result-label">Rozdíl: férová vs. prostá úměra</div>'
-            f'<div class="calc-result-value" style="color:{color};">'
-            f'{sign}{format_num(diff_out, 4)} {sym}/m</div>'
-            f'<div style="font-family:IBM Plex Mono,monospace;font-size:0.65rem;'
-            f'color:#8D99AB;margin-top:4px;">'
-            f'Kladné = férový model dražší než plošné zdražení celé nabídky</div></div>',
-            unsafe_allow_html=True,
-        )
 
 
 def get_chart_period() -> str:
@@ -3147,29 +2809,27 @@ def _render_historical_correlation() -> None:
         _render_metal_correlation(cfg, robot, period_lbl)
 
 
-# ── Predikce trendu (statistický model) ──────────────────────────────────────
-_FORECAST_HORIZON = 21     # obchodních dní ≈ 1 kalendářní měsíc
-_FORECAST_FIT_WINDOW = 45  # dní pro odhad trendu (OLS)
-_FORECAST_VOL_WINDOW = 90  # dní pro odhad denní volatility
-_FORECAST_BAND_Z = 1.28    # ±1.28σ ≈ 80% interval spolehlivosti
+# ── Predikce trendu (ensemble statistických modelů) ──────────────────────────
+_FORECAST_HORIZON = 21       # obchodních dní ≈ 1 kalendářní měsíc
+_FORECAST_FIT_WINDOW = 45    # dní pro odhad trendu (OLS regrese)
+_FORECAST_VOL_WINDOW = 90    # dní pro odhad denní volatility
+_FORECAST_BAND_Z = 1.28      # ±1.28σ ≈ 80% interval spolehlivosti
+_FORECAST_HOLT_WINDOW = 120  # dní pro fit Holtova vyhlazování
+_FORECAST_MR_HALF_LIFE = 20.0  # poločas návratu k SMA50 (dny)
+_FORECAST_DIR_THRESHOLD = 0.5  # ± % — pod tím bereme výhled jako stagnaci
+
+# (název modelu, barva, styl čáry) — pořadí odpovídá _forecast_models()
+_FORECAST_MODEL_STYLES = [
+    ("Trend (regrese 45d)", "#A78BFA", "dash"),
+    ("Holt (adaptivní trend)", "#7DB8FF", "dot"),
+    ("Návrat k SMA50", "#2DD4BF", "dashdot"),
+]
 
 
-def _price_forecast(
-    hist: pd.DataFrame | None,
-    price_col: str = "Close",
-    horizon: int = _FORECAST_HORIZON,
-) -> pd.DataFrame | None:
-    """
-    Projekce trendu: OLS přímka posledních _FORECAST_FIT_WINDOW dní ukotvená
-    na poslední ceně + pásmo nejistoty z denní volatility (šířka roste s √h).
-    Vrací DataFrame: Date, Forecast, Lo, Hi. MODEL — ne předpověď budoucnosti.
-    """
-    if hist is None or hist.empty or price_col not in hist.columns:
-        return None
-    s = pd.to_numeric(hist[price_col], errors="coerce").dropna()
+def _forecast_trend_ols(s: pd.Series, horizon: int) -> list[float] | None:
+    """Model 1: OLS přímka posledních _FORECAST_FIT_WINDOW dní ukotvená na poslední ceně."""
     if len(s) < _FORECAST_FIT_WINDOW + 1:
         return None
-
     y = s.iloc[-_FORECAST_FIT_WINDOW:].reset_index(drop=True).astype(float)
     x = pd.Series(range(len(y)), dtype=float)
     x_dev = x - x.mean()
@@ -3177,55 +2837,116 @@ def _price_forecast(
     if denom == 0:
         return None
     slope = float((x_dev * (y - y.mean())).sum()) / denom
+    last_price = float(s.iloc[-1])
+    return [last_price + slope * h for h in range(1, horizon + 1)]
+
+
+def _forecast_holt(s: pd.Series, horizon: int, alpha: float = 0.3, beta: float = 0.1) -> list[float] | None:
+    """
+    Model 2: Holtovo dvojité exponenciální vyhlazování — adaptivní trend,
+    který dává větší váhu novějším datům (rychleji zachytí obrat než regrese).
+    """
+    vals = [float(v) for v in s.iloc[-_FORECAST_HOLT_WINDOW:]]
+    if len(vals) < 10:
+        return None
+    level, trend = vals[0], vals[1] - vals[0]
+    for v in vals[1:]:
+        prev_level = level
+        level = alpha * v + (1 - alpha) * (level + trend)
+        trend = beta * (level - prev_level) + (1 - beta) * trend
+    return [level + h * trend for h in range(1, horizon + 1)]
+
+
+def _forecast_mean_reversion(s: pd.Series, horizon: int) -> list[float] | None:
+    """
+    Model 3: návrat k průměru — cena exponenciálně konverguje k SMA50
+    (poločas _FORECAST_MR_HALF_LIFE dní). Zachycuje „gumičkový“ efekt trhu.
+    """
+    if len(s) < 50:
+        return None
+    sma50 = float(s.rolling(50).mean().iloc[-1])
+    last = float(s.iloc[-1])
+    return [
+        sma50 + (last - sma50) * (0.5 ** (h / _FORECAST_MR_HALF_LIFE))
+        for h in range(1, horizon + 1)
+    ]
+
+
+def _forecast_models(
+    hist: pd.DataFrame | None,
+    price_col: str = "Close",
+    horizon: int = _FORECAST_HORIZON,
+) -> dict | None:
+    """
+    Spočítá všechny modely + ensemble (průměr modelů) + pásmo nejistoty
+    z reálné denní volatility (šířka roste s √h). MODEL — ne předpověď budoucnosti.
+    Vrací: {"dates", "last_price", "models": {název: [ceny]}, "ensemble", "lo", "hi"}.
+    """
+    if hist is None or hist.empty or price_col not in hist.columns:
+        return None
+    s = pd.to_numeric(hist[price_col], errors="coerce").dropna()
+    if len(s) < _FORECAST_FIT_WINDOW + 1:
+        return None
+
+    paths = {
+        "Trend (regrese 45d)": _forecast_trend_ols(s, horizon),
+        "Holt (adaptivní trend)": _forecast_holt(s, horizon),
+        "Návrat k SMA50": _forecast_mean_reversion(s, horizon),
+    }
+    models = {name: p for name, p in paths.items() if p is not None}
+    if not models:
+        return None
+
+    ensemble = [
+        sum(p[h] for p in models.values()) / len(models)
+        for h in range(horizon)
+    ]
 
     daily_changes = s.diff().dropna().iloc[-_FORECAST_VOL_WINDOW:]
     sigma = float(daily_changes.std()) if len(daily_changes) > 1 else 0.0
+    lo = [ensemble[h] - _FORECAST_BAND_Z * sigma * math.sqrt(h + 1) for h in range(horizon)]
+    hi = [ensemble[h] + _FORECAST_BAND_Z * sigma * math.sqrt(h + 1) for h in range(horizon)]
 
-    last_price = float(s.iloc[-1])
     last_date = pd.to_datetime(hist["Date"]).max()
-    future_dates = pd.bdate_range(last_date + pd.Timedelta(days=1), periods=horizon)
-
-    rows = []
-    for h in range(1, horizon + 1):
-        center = last_price + slope * h
-        band = _FORECAST_BAND_Z * sigma * math.sqrt(h)
-        rows.append({
-            "Date": future_dates[h - 1],
-            "Forecast": center,
-            "Lo": center - band,
-            "Hi": center + band,
-        })
-    return pd.DataFrame(rows)
+    return {
+        "dates": pd.bdate_range(last_date + pd.Timedelta(days=1), periods=horizon),
+        "last_price": float(s.iloc[-1]),
+        "models": models,
+        "ensemble": ensemble,
+        "lo": lo,
+        "hi": hi,
+    }
 
 
 def _forecast_chart(
     hist: pd.DataFrame,
-    fc: pd.DataFrame,
+    fc: dict,
     title: str,
     color: str,
     y_label: str,
-    height: int = 300,
+    height: int = 320,
 ) -> go.Figure:
-    """Vějířový graf: 60 dní historie + projekce trendu s pásmem nejistoty."""
+    """Vějířový graf: 60 dní historie + projekce všech modelů s pásmem nejistoty."""
     tail = hist.tail(60).copy()
     tail["Date"] = pd.to_datetime(tail["Date"])
 
-    # Napojení projekce na poslední známý bod (bez vizuální mezery)
+    # Napojení projekcí na poslední známý bod (bez vizuální mezery)
     last_date = tail["Date"].iloc[-1]
-    last_price = float(pd.to_numeric(tail["Close"], errors="coerce").dropna().iloc[-1])
-    bridge = pd.DataFrame([{"Date": last_date, "Forecast": last_price, "Lo": last_price, "Hi": last_price}])
-    fc_full = pd.concat([bridge, fc], ignore_index=True)
+    last_price = fc["last_price"]
+    x_fc = [last_date] + list(fc["dates"])
+    lo_full = [last_price] + fc["lo"]
+    hi_full = [last_price] + fc["hi"]
 
     fig = go.Figure()
 
-    # Pásmo nejistoty (fialový vějíř)
+    # Pásmo nejistoty kolem ensemble (fialový vějíř)
     fig.add_trace(go.Scatter(
-        x=fc_full["Date"], y=fc_full["Hi"], mode="lines",
+        x=x_fc, y=hi_full, mode="lines",
         line=dict(width=0), showlegend=False, hoverinfo="skip",
     ))
     fig.add_trace(go.Scatter(
-        x=fc_full["Date"], y=fc_full["Lo"], mode="lines",
-        line=dict(width=0), fill="tonexty", fillcolor="rgba(167,139,250,0.16)",
+        x=x_fc, y=lo_full, mode="lines",
+        line=dict(width=0), fill="tonexty", fillcolor="rgba(167,139,250,0.14)",
         name="Pásmo nejistoty (80 %)", hoverinfo="skip",
     ))
 
@@ -3236,18 +2957,22 @@ def _forecast_chart(
         hovertemplate=f"<b>%{{x|%d.%m.%Y}}</b><br>{y_label}: %{{y:,.0f}}<extra></extra>",
     ))
 
-    # Projekce (fialová čárkovaná)
-    fig.add_trace(go.Scatter(
-        x=fc_full["Date"], y=fc_full["Forecast"], mode="lines",
-        name="Projekce trendu", line=dict(color="#A78BFA", width=2, dash="dash"),
-        hovertemplate=f"<b>%{{x|%d.%m.%Y}}</b><br>Projekce: %{{y:,.0f}}<extra></extra>",
-    ))
+    # Jednotlivé modely (přerušované čáry)
+    for name, mdl_color, dash in _FORECAST_MODEL_STYLES:
+        path = fc["models"].get(name)
+        if path is None:
+            continue
+        fig.add_trace(go.Scatter(
+            x=x_fc, y=[last_price] + path, mode="lines",
+            name=name, line=dict(color=mdl_color, width=1.7, dash=dash),
+            hovertemplate=f"<b>%{{x|%d.%m.%Y}}</b><br>{name}: %{{y:,.0f}}<extra></extra>",
+        ))
 
-    # Těsný rozsah osy Y přes historii i pásmo
+    # Těsný rozsah osy Y přes historii, modely i pásmo
     all_vals = pd.concat([
         pd.to_numeric(tail["Close"], errors="coerce"),
-        pd.to_numeric(fc_full["Lo"], errors="coerce"),
-        pd.to_numeric(fc_full["Hi"], errors="coerce"),
+        pd.Series(lo_full, dtype=float),
+        pd.Series(hi_full, dtype=float),
     ]).dropna()
     y_min, y_max = float(all_vals.min()), float(all_vals.max())
     pad = (y_max - y_min) * 0.05 or 1.0
@@ -3274,15 +2999,28 @@ def _forecast_chart(
     return fig
 
 
+def _forecast_direction(end_price: float, last_price: float) -> str:
+    """Směr výhledu modelu: up / down / flat (práh _FORECAST_DIR_THRESHOLD %)."""
+    pct = (end_price / last_price - 1.0) * 100.0
+    if pct > _FORECAST_DIR_THRESHOLD:
+        return "up"
+    if pct < -_FORECAST_DIR_THRESHOLD:
+        return "down"
+    return "flat"
+
+
+_DIR_WORDS = {"up": "růst 📈", "down": "pokles 📉", "flat": "stagnaci ➡️"}
+
+
 def _render_forecast_for_metal(name: str, color: str, hist: pd.DataFrame | None, y_unit: str) -> None:
-    """Jedna predikce: graf + shrnutí očekávané ceny za horizont."""
+    """Jedna predikce: graf všech modelů + konsenzus a shrnutí za horizont."""
     if hist is None or hist.empty:
         st.markdown(
             f'<div class="error-box">Predikce {name}: historická data nejsou k dispozici</div>',
             unsafe_allow_html=True,
         )
         return
-    fc = _price_forecast(hist)
+    fc = _forecast_models(hist)
     if fc is None:
         st.markdown(
             f'<div class="error-box">Predikce {name}: nedostatek dat pro odhad trendu '
@@ -3291,18 +3029,52 @@ def _render_forecast_for_metal(name: str, color: str, hist: pd.DataFrame | None,
         )
         return
 
-    last_price = float(pd.to_numeric(hist["Close"], errors="coerce").dropna().iloc[-1])
-    end = fc.iloc[-1]
-    delta_pct = (float(end["Forecast"]) / last_price - 1.0) * 100.0
-    sign = "+" if delta_pct >= 0 else ""
+    last_price = fc["last_price"]
 
     fig = _forecast_chart(hist, fc, f"{name} — projekce {_FORECAST_HORIZON} obch. dní", color, y_unit)
     _show_plotly(fig)
+
+    # Konsenzus: na čem se modely shodují?
+    directions = {
+        mdl_name: _forecast_direction(path[-1], last_price)
+        for mdl_name, path in fc["models"].items()
+    }
+    counts = {d: list(directions.values()).count(d) for d in ("up", "down", "flat")}
+    top_dir, top_count = max(counts.items(), key=lambda kv: kv[1])
+    n_models = len(directions)
+
+    ens_end = fc["ensemble"][-1]
+    ens_pct = (ens_end / last_price - 1.0) * 100.0
+    ens_sign = "+" if ens_pct >= 0 else ""
+
+    model_bits = " · ".join(
+        f"{mdl_name.split(' (')[0]}: <strong>{format_num(path[-1], 0)}</strong>"
+        for mdl_name, path in fc["models"].items()
+    )
+
+    if top_count == n_models and n_models >= 2:
+        verdict_cls, verdict = "success-box", (
+            f"🎯 <strong>Shoda {top_count}/{n_models} modelů na {_DIR_WORDS[top_dir]}</strong> — "
+            "silnější signál (modely s různou logikou míří stejným směrem)."
+        )
+    elif top_count >= 2:
+        verdict_cls, verdict = "info-box", (
+            f"<strong>Převaha {top_count}/{n_models} modelů: {_DIR_WORDS[top_dir]}.</strong> "
+            "Menšinový model se odchyluje — signál ber s rezervou."
+        )
+    else:
+        verdict_cls, verdict = "warning-box", (
+            "<strong>Modely se neshodují</strong> — trh bez jasného směru, "
+            "výhledu nepřikládej velkou váhu."
+        )
+
     st.markdown(
-        f'<div class="card-extra" style="margin:-6px 0 12px 4px;">'
-        f'Projekce za ~1 měsíc: <strong>{format_num(end["Forecast"], 0)} {y_unit}</strong> '
-        f'({sign}{delta_pct:.1f} % vůči poslední ceně) · '
-        f'80% pásmo: {format_num(end["Lo"], 0)} – {format_num(end["Hi"], 0)} {y_unit}</div>',
+        f'<div class="{verdict_cls}" style="margin:-4px 0 6px 0;">{verdict}</div>'
+        f'<div class="card-extra" style="margin:0 0 14px 4px;">'
+        f'Průměr modelů za ~1 měsíc: <strong>{format_num(ens_end, 0)} {y_unit}</strong> '
+        f'({ens_sign}{ens_pct:.1f} % vůči poslední ceně) · '
+        f'80% pásmo: {format_num(fc["lo"][-1], 0)} – {format_num(fc["hi"][-1], 0)} {y_unit}<br>'
+        f'{model_bits} {y_unit}</div>',
         unsafe_allow_html=True,
     )
 
@@ -3321,10 +3093,12 @@ def _render_price_forecast_section() -> None:
     )
     st.markdown(
         '<div class="warning-box">⚠️ <strong>Toto není předpověď budoucnosti.</strong> '
-        f"Model pouze prodlužuje trend posledních {_FORECAST_FIT_WINDOW} obchodních dní "
-        f"a šířku pásma odvozuje ze skutečné volatility posledních {_FORECAST_VOL_WINDOW} dní. "
-        "Neumí zohlednit zprávy, cla, výpadky hutí ani obraty trendu — berte jako orientační "
-        "scénář „kdyby trh pokračoval jako dosud“, ne jako podklad pro spekulaci.</div>",
+        "Tři nezávislé statistické modely s odlišnou logikou: "
+        f"<strong>Trend</strong> (regrese posledních {_FORECAST_FIT_WINDOW} dní — „trh pokračuje stejným tempem“), "
+        "<strong>Holt</strong> (adaptivní vyhlazování — větší váha nejnovějším dnům, rychleji chytá obraty) a "
+        "<strong>Návrat k SMA50</strong> (cena se stahuje zpět ke klouzavému průměru). "
+        f"Pásmo nejistoty vychází z reálné volatility posledních {_FORECAST_VOL_WINDOW} dní. "
+        "Shoda modelů = silnější signál; žádný z nich neumí zohlednit zprávy, cla ani výpadky hutí.</div>",
         unsafe_allow_html=True,
     )
 
@@ -3376,12 +3150,6 @@ def render_metals() -> None:
         _render_lme_metal_card(al_cfg[0], al_cfg[1], al_cfg[2], al_cfg[3], wm_data)
     with col_hrc:
         _render_steel_metric_card(steel_hrc, "Ocel HRC", "HRC=F")
-
-    with st.expander(
-        "🧮 Profesionální kabelářská kalkulačka (Metal Surcharge)",
-        expanded=False,
-    ):
-        render_metal_surcharge_calculator(fetch_cnb_rates())
 
     st.markdown("<br>", unsafe_allow_html=True)
     render_rsi_signals(steel_hrc)
