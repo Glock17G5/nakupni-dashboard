@@ -399,7 +399,7 @@ footer { visibility: hidden; }
 }
 
 .card-copper::before { background: #FD7E14; }
-.card-aluminum::before { background: #34C98E; }
+.card-aluminum::before { background: #A8B2C1; }
 .card-usd::before { background: #34C98E; }
 .card-eur::before { background: #4D9FFF; }
 .card-cny::before { background: #F0565E; }
@@ -464,33 +464,54 @@ footer { visibility: hidden; }
 .card-delta-row { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
 
 .metal-price-grid {
-    display: flex;
-    gap: 26px;
-    flex-wrap: wrap;
-    margin-top: 4px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    margin-top: 8px;
+    border: 1px solid #2C3442;
+    border-radius: 12px;
+    overflow: hidden;
+    background: rgba(20, 24, 31, 0.35);
 }
 
-.metal-price-col { min-width: 140px; }
+.metal-price-col {
+    min-width: 0;
+    padding: 12px 14px 14px;
+}
+
+.metal-price-col-lme {
+    background: rgba(77, 159, 255, 0.05);
+}
 
 .metal-price-col-ccmn {
     border-left: 1px solid #2C3442;
-    padding-left: 26px;
+    background: rgba(250, 204, 21, 0.04);
+}
+
+.metal-price-region {
+    font-family: 'Syne', sans-serif;
+    font-size: 0.72rem;
+    font-weight: 800;
+    color: #F2F5F9;
+    letter-spacing: 1.1px;
+    text-transform: uppercase;
+    margin-bottom: 2px;
 }
 
 .metal-price-src {
-    font-size: 0.6rem;
-    font-weight: 700;
+    font-size: 0.58rem;
+    font-weight: 600;
     color: #8D99AB;
     text-transform: uppercase;
-    letter-spacing: 0.7px;
-    margin-bottom: 3px;
+    letter-spacing: 0.6px;
+    margin-bottom: 6px;
 }
 
 .metal-price-sub {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.68rem;
     color: #9AA6B8;
-    margin-top: 3px;
+    margin-top: 4px;
 }
 
 .card-spark {
@@ -550,8 +571,14 @@ footer { visibility: hidden; }
     .dash-brand { gap: 12px; }
     .dash-logo { border-radius: 10px; padding: 5px 8px; }
     .dash-logo img { height: 34px; }
-    .metal-price-grid { gap: 14px; }
-    .metal-price-col-ccmn { border-left: none; padding-left: 0; }
+    .metal-price-grid {
+        grid-template-columns: 1fr;
+        gap: 0;
+    }
+    .metal-price-col-ccmn {
+        border-left: none;
+        border-top: 1px solid #2C3442;
+    }
     .metric-card { padding: 12px 12px 12px 16px; }
     .card-value { font-size: 1.2rem; }
     .card-unit-emphasis { font-size: 1.05rem; }
@@ -1069,13 +1096,15 @@ def _render_lme_metal_card(
     <div class="metric-card {card_class}">
         <div class="card-label">{label}</div>
         <div class="metal-price-grid">
-            <div class="metal-price-col">
-                <div class="metal-price-src">LME Cash · Westmetall</div>
+            <div class="metal-price-col metal-price-col-lme">
+                <div class="metal-price-region">LME</div>
+                <div class="metal-price-src">Londýn · Westmetall Cash</div>
                 <div class="card-value">{format_num(price_disp, 0)}</div>
                 <div class="card-unit card-unit-emphasis">{unit}</div>
             </div>
             <div class="metal-price-col metal-price-col-ccmn">
-                <div class="metal-price-src">Čína spot · ccmn.cn</div>
+                <div class="metal-price-region">Čína</div>
+                <div class="metal-price-src">Changjiang spot · ccmn.cn</div>
                 {_ccmn_price_block(metal_key, price_usd, unit, ccy)}
             </div>
         </div>
@@ -2748,7 +2777,7 @@ _CORRELATION_METALS = [
         "fallback_ticker": "ALI=F",
         "fallback_factor": 1.0,  # ALI=F je kótován přímo v USD/t
         "fallback_label": "COMEX ALI=F (Proxy) v USD/t",
-        "color": "#10b981",
+        "color": "#A8B2C1",
     },
 ]
 
@@ -3237,7 +3266,7 @@ def _render_price_forecast_section() -> None:
         return
 
     # Měď a hliník — Westmetall LME Cash
-    for wm_key, name, color in [("copper", "Měď (Cu)", "#f97316"), ("aluminum", "Hliník (Al)", "#10b981")]:
+    for wm_key, name, color in [("copper", "Měď (Cu)", "#f97316"), ("aluminum", "Hliník (Al)", "#A8B2C1")]:
         full = fetch_westmetall_history(WM_HISTORY_URLS[wm_key])
         conv = apply_currency_to_df(full.copy()) if full is not None and not full.empty else None
         _render_forecast_for_metal(name, color, conv, y_unit)
@@ -3280,7 +3309,7 @@ def render_metals() -> None:
     )
 
     _render_wm_metal_history_chart("copper", "Měď (Cu)", "#f97316")
-    _render_wm_metal_history_chart("aluminum", "Hliník (Al)", "#10b981")
+    _render_wm_metal_history_chart("aluminum", "Hliník (Al)", "#A8B2C1")
 
     # ── Historická korelace LME vs Čína (CCMN / COMEX proxy) ─────────────────
     st.markdown("<br>", unsafe_allow_html=True)
