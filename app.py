@@ -9,6 +9,7 @@
 # ==============================================================================
 
 # ── Standardní knihovny ────────────────────────────────────────────────────────
+import base64
 import math
 import re
 import time
@@ -266,9 +267,30 @@ footer { visibility: hidden; }
 .dash-header-content {
     display: flex;
     justify-content: space-between;
-    align-items: flex-start;
+    align-items: center;
     flex-wrap: wrap;
     gap: 16px;
+}
+
+.dash-brand {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+}
+
+.dash-logo {
+    flex-shrink: 0;
+    background: #FFFFFF;
+    border-radius: 14px;
+    padding: 7px 12px;
+    display: flex;
+    align-items: center;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.dash-logo img {
+    height: 52px;
+    display: block;
 }
 
 .dash-title {
@@ -378,7 +400,6 @@ footer { visibility: hidden; }
 
 .card-copper::before { background: #FD7E14; }
 .card-aluminum::before { background: #34C98E; }
-.card-steel::before { background: #8D99AB; }
 .card-usd::before { background: #34C98E; }
 .card-eur::before { background: #4D9FFF; }
 .card-cny::before { background: #F0565E; }
@@ -484,6 +505,9 @@ footer { visibility: hidden; }
     }
     .dash-title { font-size: 1.3rem; }
     .dash-header { padding: 16px 18px 14px; border-radius: 16px; }
+    .dash-brand { gap: 12px; }
+    .dash-logo { border-radius: 10px; padding: 5px 8px; }
+    .dash-logo img { height: 34px; }
     .metric-card { padding: 12px 12px 12px 16px; }
     .card-value { font-size: 1.2rem; }
     .card-unit-emphasis { font-size: 1.05rem; }
@@ -736,16 +760,18 @@ div[data-testid="column"] {
 
 
 def _render_app_branding() -> None:
-    """Logo a titulek + globální CSS (až po ověření přístupu)."""
+    """Globální CSS (až po ověření přístupu). Logo je součástí dash-headeru."""
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        try:
-            st.image("logo.png", width=150)
-        except Exception:
-            pass
-    with col2:
-        st.title("pbcable s.r.o.")
+
+
+@st.cache_data
+def _logo_data_uri() -> str | None:
+    """logo.png jako base64 data-URI pro vložení do HTML záhlaví."""
+    try:
+        raw = Path("logo.png").read_bytes()
+        return "data:image/png;base64," + base64.b64encode(raw).decode("ascii")
+    except Exception:
+        return None
 
 
 # ==============================================================================
@@ -910,39 +936,6 @@ def _render_lme_metal_card(
     else:
         st.markdown(
             error_card(label, card_class, "Data nedostupná · Westmetall"),
-            unsafe_allow_html=True,
-        )
-
-
-def _render_steel_metric_card(
-    steel_data: dict | None,
-    label: str,
-    default_ticker: str,
-) -> None:
-    """Metrická karta oceli (HRC) — Yahoo."""
-    unit = metal_unit_label()
-    ccy = get_display_currency()
-    d_suffix = currency_delta_suffix()
-    if steel_data:
-        st_price = usd_to_display(steel_data["price"], ccy)
-        st_delta = usd_to_display(steel_data.get("delta"), ccy)
-        st.markdown(
-            metric_card(
-                label,
-                format_num(st_price, 0) if st_price is not None else "N/A",
-                unit,
-                delta=st_delta,
-                delta_suffix=d_suffix if st_delta is not None else "",
-                card_class="card-steel",
-                extra=f'{steel_data.get("ticker", default_ticker)} · Yahoo',
-                emphasis=True,
-            ),
-            unsafe_allow_html=True,
-        )
-    else:
-        st.warning(f"{label}: Yahoo Finance nevrátilo živou cenu ({default_ticker}).")
-        st.markdown(
-            error_card(label, "card-steel", "Data nedostupná"),
             unsafe_allow_html=True,
         )
 
@@ -1190,37 +1183,6 @@ def fetch_westmetall() -> dict | None:
         return None
 
 
-# Převod CME HRC (USD / short ton) → USD / metrická tuna
-_ST_TON_FACTOR = 2204.623 / 2000.0
-
-_STEEL_HRC_TICKERS = ("HRC=F", "STRE=F")
-
-
-@st.cache_data(ttl=CACHE_TTL)
-def fetch_steel_ticker(ticker: str, note: str) -> dict | None:
-    spot = fetch_yf_spot(ticker)
-    if not spot:
-        return None
-    price_t = spot["price"] * _ST_TON_FACTOR
-    prev_t = spot["prev"] * _ST_TON_FACTOR
-    return {
-        "price": round(price_t, 2), "prev_price": round(prev_t, 2),
-        "delta": round(price_t - prev_t, 2), "delta_pct": spot["delta_pct"],
-        "unit": "USD/t", "ticker": ticker, "note": note,
-        "_source": "Yahoo Finance (Robot)", "_ts": now_prague().strftime("%Y-%m-%d %H:%M"),
-    }
-
-
-@st.cache_data(ttl=CACHE_TTL)
-def fetch_steel_yfinance() -> dict | None:
-    """Ocel HRC — Yahoo HRC=F, záloha STRE=F."""
-    for ticker in _STEEL_HRC_TICKERS:
-        data = fetch_steel_ticker(ticker, "Hot Rolled Coil (CME)")
-        if data:
-            return data
-    return None
-
-
 @st.cache_data(ttl=CACHE_TTL)
 def _yf_history(ticker: str) -> pd.DataFrame | None:
     try:
@@ -1233,11 +1195,6 @@ def _yf_history(ticker: str) -> pd.DataFrame | None:
     except Exception:
         pass
     return None
-
-
-def fetch_metal_history(ticker: str = "HG=F", period: str = "6mo") -> pd.DataFrame | None:
-    """Historie tickeru oříznutá podle globálního období (period jen kvůli kompatibilitě API)."""
-    return filter_history_by_period(_yf_history(ticker))
 
 
 # ==============================================================================
@@ -1441,42 +1398,36 @@ def _rsi_from_history(df: pd.DataFrame | None, column: str = "Close") -> float |
         return None
 
 
-def _metal_rsi_value(metal_key: str, steel_data: dict | None) -> float | None:
-    """Aktuální RSI pro měď, hliník (Westmetall) nebo ocel (Yahoo)."""
+def _metal_rsi_value(metal_key: str) -> float | None:
+    """Aktuální RSI pro měď nebo hliník (Westmetall)."""
     try:
         if metal_key == "copper":
             return _rsi_from_history(fetch_westmetall_history(WM_HISTORY_URLS["copper"]))
         if metal_key == "aluminum":
             return _rsi_from_history(fetch_westmetall_history(WM_HISTORY_URLS["aluminum"]))
-        if metal_key == "steel":
-            if not steel_data:
-                return None
-            ticker = steel_data.get("ticker", "HRC=F")
-            return _rsi_from_history(_yf_history(ticker))
     except Exception:
         return None
     return None
 
 
-def render_rsi_signals(steel_data: dict | None) -> None:
-    """Sekce Smart signály — RSI pro měď, hliník a ocel."""
+def render_rsi_signals() -> None:
+    """Sekce Smart signály — RSI pro měď a hliník."""
     section_header("💡", "Tržní signály (RSI)")
     st.markdown(
         '<div class="info-box" style="margin-bottom:12px;">'
         "RSI (14) z historických cen · Měď &amp; Hliník: <strong>Westmetall</strong> · "
-        "Ocel: <strong>Yahoo Finance</strong> · Orientační signál, nikoli investiční radu."
+        "Orientační signál, nikoli investiční radu."
         "</div>",
         unsafe_allow_html=True,
     )
     rsi_metals = [
         ("copper", "Měď (Cu)"),
         ("aluminum", "Hliník (Al)"),
-        ("steel", "Ocel (HRC)"),
     ]
-    cols = st.columns(3)
+    cols = st.columns(2)
     for (metal_key, label), col in zip(rsi_metals, cols):
         with col:
-            rsi = _metal_rsi_value(metal_key, steel_data)
+            rsi = _metal_rsi_value(metal_key)
             if rsi is not None:
                 st.metric(f"RSI — {label}", f"{rsi:.1f}", help="Relative Strength Index (14)")
                 msg, alert_type = interpret_rsi(rsi)
@@ -1498,7 +1449,6 @@ def build_daily_export_df() -> pd.DataFrame:
     today = now_prague().strftime("%Y-%m-%d")
     ccy = get_display_currency()
     wm = fetch_westmetall()
-    steel = fetch_steel_yfinance()
     cnb = fetch_cnb_rates()
 
     cu_usd, _, _ = resolve_metal_price("copper", wm)
@@ -1514,17 +1464,8 @@ def build_daily_export_df() -> pd.DataFrame:
         "eur_usd": get_eurusd_rate(),
     }
 
-    if steel:
-        row["ocel_cena_usd_t"] = steel.get("price")
-        row["ocel_cena_zobrazeni"] = usd_to_display(steel.get("price"), ccy)
-        row["ocel_delta_pct"] = steel.get("delta_pct")
-    else:
-        row["ocel_cena_usd_t"] = None
-        row["ocel_cena_zobrazeni"] = None
-        row["ocel_delta_pct"] = None
-
-    for metal_key, prefix in [("copper", "med"), ("aluminum", "hlinik"), ("steel", "ocel")]:
-        rsi = _metal_rsi_value(metal_key, steel)
+    for metal_key, prefix in [("copper", "med"), ("aluminum", "hlinik")]:
+        rsi = _metal_rsi_value(metal_key)
         row[f"{prefix}_rsi"] = round(rsi, 2) if rsi is not None else None
         if rsi is not None:
             signal_text, _ = interpret_rsi(rsi)
@@ -2574,15 +2515,23 @@ def _render_lme_shfe_spot_comparison(wm_data: dict | None) -> None:
 def render_header() -> None:
     """Vykreslí animované záhlaví dashboardu."""
     now = now_prague()
+    logo_uri = _logo_data_uri()
+    logo_html = (
+        f'<div class="dash-logo"><img src="{logo_uri}" alt="pbcable s.r.o."></div>'
+        if logo_uri else ""
+    )
     st.markdown(f"""
     <div class="dash-header">
         <div class="dash-header-content">
-            <div>
-                <div class="dash-title">
-                    <span>⚡</span> Kabelářský dashboard
-                </div>
-                <div class="dash-subtitle">
-                    Cable Industry Procurement Intelligence Platform
+            <div class="dash-brand">
+                {logo_html}
+                <div>
+                    <div class="dash-title">
+                        <span>⚡</span> Kabelářský dashboard
+                    </div>
+                    <div class="dash-subtitle">
+                        Cable Industry Procurement Intelligence Platform
+                    </div>
                 </div>
             </div>
             <div class="dash-meta">
@@ -3080,7 +3029,7 @@ def _render_forecast_for_metal(name: str, color: str, hist: pd.DataFrame | None,
 
 
 def _render_price_forecast_section() -> None:
-    """Sekce predikcí trendu pro Cu, Al a ocel HRC — statistický MODEL."""
+    """Sekce predikcí trendu pro Cu a Al — statistický MODEL."""
     ccy = get_display_currency()
     y_unit = f"{ccy}/t"
     st.markdown(
@@ -3112,87 +3061,45 @@ def _render_price_forecast_section() -> None:
         conv = apply_currency_to_df(full.copy()) if full is not None and not full.empty else None
         _render_forecast_for_metal(name, color, conv, y_unit)
 
-    # Ocel HRC — Yahoo
-    st_full = _yf_history("HRC=F")
-    st_conv = None
-    if st_full is not None and not st_full.empty:
-        st_conv = st_full.copy()
-        st_conv["Close"] = st_conv["Close"] * _ST_TON_FACTOR
-        st_conv = apply_currency_to_df(st_conv)
-    _render_forecast_for_metal("Ocel HRC", "#64748b", st_conv, y_unit)
-
 
 def render_metals() -> None:
-    """Sekce 1 – LME kovy, ocel HRC, spot CCMN vs LME, historie Westmetall."""
+    """Sekce 1 – LME kovy, spot CCMN vs LME, historie Westmetall."""
 
     wm_data = fetch_westmetall()
-    steel_hrc = fetch_steel_yfinance()
     period_lbl = get_chart_period_label()
 
     has_cu = wm_data and "copper" in wm_data
     has_al = wm_data and "aluminum" in wm_data
 
     section_header(
-        "🔩", "Metaly — LME, Ocel & SHFE",
+        "🔩", "Metaly — LME & SHFE",
         badge_html(has_cu and has_al, "westmetall.com LME Cash"),
-        badge_html(steel_hrc is not None, "Yahoo HRC"),
     )
 
     if not wm_data:
         st.warning("Westmetall: LME data se nepodařilo stáhnout — ceny mědi a hliníku nejsou k dispozici.")
 
-    ccy = get_display_currency()
-    col_cu, col_al, col_hrc = st.columns(3)
+    col_cu, col_al = st.columns(2)
     cu_cfg, al_cfg = _LME_METAL_CARDS
     with col_cu:
         _render_lme_metal_card(cu_cfg[0], cu_cfg[1], cu_cfg[2], cu_cfg[3], wm_data)
     with col_al:
         _render_lme_metal_card(al_cfg[0], al_cfg[1], al_cfg[2], al_cfg[3], wm_data)
-    with col_hrc:
-        _render_steel_metric_card(steel_hrc, "Ocel HRC", "HRC=F")
 
     st.markdown("<br>", unsafe_allow_html=True)
-    render_rsi_signals(steel_hrc)
+    render_rsi_signals()
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Historické grafy — pod sebou na plnou šířku (mobil-friendly) ─────────
     st.markdown(
         "<div style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
         "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
-        f"Historické grafy — Měď & Hliník (Westmetall, {period_lbl}) · "
-        f"Ocel HRC (Yahoo, {ccy}/t)</div>",
+        f"Historické grafy — Měď & Hliník (Westmetall, {period_lbl})</div>",
         unsafe_allow_html=True,
     )
-    y_unit = f"{ccy}/t"
-    steel_ticker = (steel_hrc or {}).get("ticker", "HRC=F")
 
     _render_wm_metal_history_chart("copper", "Měď (Cu)", "#f97316")
     _render_wm_metal_history_chart("aluminum", "Hliník (Al)", "#10b981")
-
-    st_full = _yf_history(steel_ticker)
-    st_plot = None
-    if st_full is not None and not st_full.empty:
-        st_conv = st_full.copy()
-        st_conv["Close"] = st_conv["Close"] * _ST_TON_FACTOR
-        st_conv = apply_currency_to_df(st_conv)
-        # SMA z plné historie, pak teprve ořez na zvolené období
-        st_conv = _add_sma_columns(st_conv)
-        st_plot = filter_history_by_period(st_conv)
-    if st_plot is not None and not st_plot.empty:
-        _render_metal_history_with_tabs(
-            st_plot,
-            "Ocel HRC",
-            "#64748b",
-            y_unit,
-            price_col="Close",
-            source_note=f"Yahoo {steel_ticker}",
-            extra_traces=_sma_extra_traces(st_plot),
-        )
-    else:
-        st.markdown(
-            '<div class="error-box">Graf oceli HRC momentálně nedostupný (Yahoo HRC=F / STRE=F)</div>',
-            unsafe_allow_html=True,
-        )
 
     # ── Historická korelace LME vs Čína (CCMN / COMEX proxy) ─────────────────
     st.markdown("<br>", unsafe_allow_html=True)
@@ -5307,7 +5214,7 @@ def render_footer() -> None:
         <div>⚡ Kabelářský Nákupní Dashboard &nbsp;·&nbsp; v2.0.0 &nbsp;·&nbsp; Python + Streamlit</div>
         <div>
             Zdroje: westmetall.com (LME Cash) &nbsp;·&nbsp; ČNB &nbsp;·&nbsp;
-            Yahoo Finance (grafy, ocel HRC, ropa BZ=F) &nbsp;·&nbsp; Transitní model Čína→ČR
+            Yahoo Finance (grafy, ropa BZ=F) &nbsp;·&nbsp; Transitní model Čína→ČR
         </div>
         <div>
             Generováno: {now.strftime("%d.%m.%Y %H:%M:%S")} &nbsp;·&nbsp;
