@@ -2459,6 +2459,57 @@ def interactive_oil_chart(
 # ─────────────────────────────────────────────────────────────────────────────
 # ==============================================================================
 
+# Po kolika obchodních dnech bez běhu robota zobrazit varování
+_ROBOT_STALE_BDAYS = 2
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def _robot_last_run() -> str | None:
+    """Čas posledního běhu data robota (ISO string kvůli cache serializaci)."""
+    try:
+        import json
+        with open("robot_data.json", "r", encoding="utf-8") as f:
+            ts = json.load(f).get("_ts")
+        if ts:
+            return str(pd.Timestamp(ts))
+    except Exception:
+        pass
+    # záloha: poslední datum v historii Yahoo
+    try:
+        df = pd.read_csv("robot_history.csv", parse_dates=["Date"])
+        if not df.empty:
+            return str(pd.Timestamp(df["Date"].max()))
+    except Exception:
+        pass
+    return None
+
+
+def render_robot_watchdog() -> None:
+    """Varovný banner, pokud data robot (GitHub Action) delší dobu neběžel."""
+    last_str = _robot_last_run()
+    if last_str is None:
+        st.markdown(
+            '<div class="error-box">🤖 <strong>Data robota nenalezena</strong> '
+            "(robot_data.json / robot_history.csv chybí) — čínské ceny a historické "
+            "grafy nebudou fungovat. Zkontroluj GitHub Action <code>data_robot.yml</code>.</div>",
+            unsafe_allow_html=True,
+        )
+        return
+    last = pd.Timestamp(last_str)
+    today = now_prague().date()
+    # obchodní dny ostře PO posledním běhu (víkendy se nepočítají)
+    stale_bdays = len(pd.bdate_range(last.date() + timedelta(days=1), today))
+    if stale_bdays > _ROBOT_STALE_BDAYS:
+        st.markdown(
+            f'<div class="warning-box">🤖 <strong>Data robota jsou stará '
+            f"{stale_bdays} obchodních dní</strong> (poslední běh: "
+            f"{last.strftime('%d.%m.%Y %H:%M')}). GitHub Action "
+            f"<code>data_robot.yml</code> pravděpodobně selhává — čínské ceny (CCMN), "
+            f"korelace a FX/ropné grafy nemusí být aktuální.</div>",
+            unsafe_allow_html=True,
+        )
+
+
 def render_header() -> None:
     """Vykreslí animované záhlaví dashboardu."""
     now = now_prague()
@@ -5186,6 +5237,9 @@ def main() -> None:
     render_global_controls()
 
     is_supplier = st.session_state.get("user_role") == "supplier"
+
+    if not is_supplier:
+        render_robot_watchdog()
 
     tabs_list = [
         "🔩 Kovy & Trh",
