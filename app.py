@@ -2,7 +2,7 @@
 # KABELÁŘSKÝ NÁKUPNÍ DASHBOARD — app.py
 # Verze: 2.0.0
 # Popis: Inteligentní nákupní dashboard pro kabelářský průmysl.
-#        Sleduje ceny LME/SHFE kovů, FX kurzy, ceny ropy (BZ=F + SMA)
+#        Sleduje ceny LME kovů, čínský spot (CCMN), FX kurzy, ceny ropy (BZ=F + SMA)
 #        a kalkulačku transitního času Čína→ČR. Data jsou stahována živě
 #        ze zdarma dostupných zdrojů bez placených API klíčů.
 # Stack: Streamlit · Pandas · Plotly · BeautifulSoup4 · lxml · requests · yfinance
@@ -461,7 +461,7 @@ footer { visibility: hidden; }
     border-top: 1px solid #2C3442;
     line-height: 1.5;
 }
-.card-delta-row { margin-top: 6px; }
+.card-delta-row { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
 
 .delta-chip {
     font-family: 'IBM Plex Mono', monospace;
@@ -841,9 +841,10 @@ def metric_card(
     extra: str = None,
     value_size: str = "",
     emphasis: bool = False,
+    delta_html: str | None = None,
 ) -> str:
     """Sestaví HTML pro metrickou kartu a vrátí jako řetězec."""
-    delta_row = f'<div class="card-delta-row">{delta_chip(delta, delta_suffix)}</div>'
+    delta_row = f'<div class="card-delta-row">{delta_html or delta_chip(delta, delta_suffix)}</div>'
     extra_cls = "card-extra card-extra-emphasis" if emphasis else "card-extra"
     unit_cls = "card-unit card-unit-emphasis" if emphasis else "card-unit"
     extra_row = f'<div class="{extra_cls}">{extra}</div>' if extra else ""
@@ -902,6 +903,49 @@ _CNB_METRIC_CARDS = [
 ]
 
 
+# Období pro procentní změny na kartách kovů (label chipu, počet dní)
+_METAL_TREND_PERIODS: list[tuple[str, int]] = [("7D", 7), ("1M", 30), ("3M", 90)]
+
+
+def _wm_trend_pct(metal_key: str, days: int) -> float | None:
+    """% změna LME Cash za posledních N dní (z historie Westmetall)."""
+    try:
+        df = fetch_westmetall_history(WM_HISTORY_URLS[metal_key])
+        if df is None or df.empty:
+            return None
+        df = df.dropna(subset=["Close"]).sort_values("Date")
+        last_date = df["Date"].iloc[-1]
+        last = float(df["Close"].iloc[-1])
+        past = df[df["Date"] <= last_date - pd.Timedelta(days=days)]
+        if past.empty:
+            return None
+        ref = float(past["Close"].iloc[-1])
+        if ref == 0:
+            return None
+        return (last / ref - 1.0) * 100.0
+    except Exception:
+        return None
+
+
+def _trend_chip(label: str, pct: float | None) -> str:
+    """Chip „7D ▲ +1.2 %“ — zelený růst, červený pokles, šedý beze změny."""
+    if pct is None:
+        return f'<span class="delta-chip delta-flat">{label} — N/A</span>'
+    if pct > 0.05:
+        return f'<span class="delta-chip delta-up">{label} ▲ +{format_num(pct, 1)} %</span>'
+    if pct < -0.05:
+        return f'<span class="delta-chip delta-down">{label} ▼ {format_num(pct, 1)} %</span>'
+    return f'<span class="delta-chip delta-flat">{label} — 0.0 %</span>'
+
+
+def _metal_trend_chips(metal_key: str) -> str:
+    """HTML chipy procentních změn (7D / 1M / 3M) pro kartu kovu."""
+    return "".join(
+        _trend_chip(lbl, _wm_trend_pct(metal_key, days))
+        for lbl, days in _METAL_TREND_PERIODS
+    )
+
+
 def _render_lme_metal_card(
     metal_key: str,
     label: str,
@@ -930,6 +974,7 @@ def _render_lme_metal_card(
                     card_class=card_class,
                     extra=stock_extra or "Westmetall LME Cash",
                     emphasis=True,
+                    delta_html=_metal_trend_chips(metal_key),
                 ),
                 unsafe_allow_html=True,
             )
@@ -3070,10 +3115,12 @@ def render_metals() -> None:
 
     has_cu = wm_data and "copper" in wm_data
     has_al = wm_data and "aluminum" in wm_data
+    has_ccmn = fetch_ccmn_spot("copper") is not None
 
     section_header(
-        "🔩", "Metaly — LME & SHFE",
+        "🔩", "Metaly — LME & Čína (CCMN)",
         badge_html(has_cu and has_al, "westmetall.com LME Cash"),
+        badge_html(has_ccmn, "ccmn.cn spot"),
     )
 
     if not wm_data:
