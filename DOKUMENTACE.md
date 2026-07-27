@@ -12,10 +12,9 @@ Aplikace **nepoužívá mock data ani numerické zálohy** pro tržní ceny kov�
 
 Co **není** považováno za „falešná data“:
 
-- **Alternativní reálný zdroj** stejného typu (např. ticker `STRE=F`, pokud `HRC=F` z Yahoo nevrátí data; subdomény `copper.ccmn.cn` / `alu.ccmn.cn`, pokud homepage `www.ccmn.cn` nemá tabulku).
-- **Odvozené hodnoty z reálných vstupů** (USD/CNY z ČNB; CNY/CZK z `USDCZK=X` × `CNYUSD=X`, pokud chybí `CNYCZK=X`; přepočet HRC z USD/short ton na USD/t).
+- **Alternativní reálný zdroj** stejného typu (např. subdomény `copper.ccmn.cn` / `alu.ccmn.cn`, pokud homepage `www.ccmn.cn` nemá tabulku).
+- **Odvozené hodnoty z reálných vstupů** (USD/CNY z ČNB; CNY/CZK z `USDCZK=X` × `CNYUSD=X`, pokud chybí `CNYCZK=X`).
 - **Proxy model plastů** — explicitně označený odhad z **živé** ceny Brent (`BZ=F`), ne náhrada LME/CCMN.
-- **Manuální režim** v kalkulačce Metal Surcharge — uživatelský vstup, ne automatický feed.
 - **Lokální CSV bubnů** — reálný katalog TP KBB 3 (soubor musí existovat v adresáři aplikace).
 - **Odhad vzdálenosti** při výpadku OSRM — Haversine × 1,3 (geometrie, ne cena komodity).
 
@@ -25,7 +24,7 @@ Co **není** považováno za „falešná data“:
 
 | Záložka | Funkce | Hlavní zdroje dat |
 |--------|--------|-------------------|
-| Kovy & Trh | `render_metals()` | Westmetall, ccmn.cn, Yahoo HRC, ČNB |
+| Kovy & Trh | `render_metals()` | Westmetall, ccmn.cn, ČNB |
 | Měnové kurzy | `render_fx()` | ČNB `denni_kurz.txt`, Yahoo FX |
 | Plasty & Ropa | `render_oil_plastics()` | Yahoo `BZ=F`, `CL=F`, proxy model |
 | Nákup & Logistika (admin) | `render_landed_cost_pricing()`, `render_logistics()` | Uživatelská faktura + ČNB |
@@ -78,7 +77,7 @@ Konstanty: `_WESTMETALL_STOCK_FIELDS`.
 
 ### 1.4 Čína spot (CCMN) — pouze live
 
-- **Funkce:** `fetch_ccmn_spot(metal)` — jediný zdroj čínské strany spreadu (`get_shfe_china_usd()`).
+- **Funkce:** `fetch_ccmn_spot(metal)` — jediný zdroj čínské strany spreadu (`get_ccmn_china_usd()`).
 - **Cílové texty v HTML:**
   - Měď: `1#铜`
   - Hliník: `A00铝`
@@ -109,28 +108,19 @@ get_usd_per_cny() = rate_CNY_CZK / rate_USD_CZK   (z ČNB, viz sekce 2)
 
 - **Při selhání:** spread karta / tabulka N/A, chybová hláška „ccmn.cn (spot) nebo kurz CNY (ČNB)“.
 
-> **Poznámka:** Historická korelace LME vs SHFE/CCMN (Nasdaq CHRIS) byla z aplikace **odstraněna**. Zůstává jen živý spot.
+> **Poznámka:** Historická korelace LME vs Čína se počítá z `robot_history.csv` (COMEX proxy `HG=F` / `ALI=F`) a postupně akumulované `ccmn_history.csv` (viz `_render_historical_correlation()`).
 
-### 1.5 Ocel HRC — live a historie
+### 1.5 Ocel HRC — odstraněno
 
-- **Tickery Yahoo (CME):** `HRC=F` (primární), `STRE=F` (záložní série, pokud první ticker nevrátí historii).
-- **Funkce:** `fetch_steel_yfinance()` → `fetch_steel_ticker()`.
-- **Jednotka na burze:** USD / short ton → přepočet na **USD/t**:
-
-```text
-_ST_TON_FACTOR = 2204.623 / 2000.0   # kg v short tonu / kg v metrické tuně
-cena_USD_t = cena_USD_short_ton × _ST_TON_FACTOR
-```
-
-- **Historie grafu:** `fetch_metal_history(ticker)` → `_yf_history()` (období 1 rok) + `filter_history_by_period()`.
-- **Ocel Scrap:** v aktuální verzi **není implementována** (dříve `BUS=F` bylo odstraněno). Dashboard zobrazuje pouze **HRC** ve sloupci oceli.
+> Sledování oceli HRC (Yahoo `HRC=F` / `STRE=F`) bylo z aplikace **kompletně odstraněno** — karta, graf, RSI, predikce i export. Data robot `HRC=F` v `robot_history.csv` dál ukládá pro případný návrat.
 
 ### 1.6 Agregace v sekci kovy
 
-- **3 metrické karty:** měď, hliník (LME), ocel HRC (Yahoo).
-- **Spread:** `_render_shfe_spreads()` — CCMN (Čína) vs LME, badge `ccmn.cn (Spot)`.
-- **Spotové porovnání:** `_render_lme_shfe_spot_comparison()` + `lme_shfe_spot_comparison_figure()` — pouze řádky, kde existují **obě** live ceny.
-- **RSI:** viz sekce 5 (Westmetall historie / Yahoo HRC).
+- **2 metrické karty:** měď a hliník — každá kombinuje LME Cash (Westmetall) + CCMN spot (ccmn.cn) vč. % rozdílu, trendové chipy 7D/1M/3M a RSI chip.
+- **Spread:** `_render_ccmn_spreads()` — CCMN (Čína) vs LME, badge `ccmn.cn (Spot)`.
+- **RSI:** počítá se z historie Westmetall a zobrazuje jako chip přímo na kartě kovu (`_rsi_chip()`).
+- **Predikce + backtest:** `_render_price_forecast_section()` — ensemble 3 modelů + MAPE z walk-forward backtestu.
+- **Hlídač dat:** `render_robot_watchdog()` — varování při zastaralém `robot_data.json`.
 
 ---
 
@@ -153,6 +143,8 @@ kurzy-devizoveho-trhu/kurzy-devizoveho-trhu/denni_kurz.txt
 **Karty v UI (`_CNB_METRIC_CARDS`):**
 
 - USD/CZK, EUR/CZK, CNY/CZK — přímo z ČNB.
+- EUR/USD, USD/EUR — Yahoo spot; CNY/EUR — kříž ČNB.
+- Každá karta obsahuje **30denní SVG sparkline** (`_fx_sparkline_html` → `_sparkline_svg`) z Yahoo historie (CNY/CZK odvozeno stejně jako graf).
 
 ### 2.2 USD/CNY (pro CCMN a kalkulačky)
 
@@ -163,7 +155,7 @@ get_usd_per_cny() = rate_CNY / rate_USD
 kde `rate_*` jsou CZK za 1 USD resp. 1 CNY z ČNB.  
 Interpretace: **kolik USD stojí 1 CNY** (přepočet CNY/t → USD/t).
 
-**Při chybě ČNB:** spread CCMN, `get_shfe_china_usd()` a části kalkulaček vrací N/A / warning.
+**Při chybě ČNB:** spread CCMN, `get_ccmn_china_usd()` a části kalkulaček vrací N/A / warning.
 
 ### 2.3 Yahoo Finance — křížové kurzy a historie
 
@@ -182,53 +174,31 @@ Interpretace: **kolik USD stojí 1 CNY** (přepočet CNY/t → USD/t).
 
 **Při selhání Yahoo:** `error_card` / „Graf … data nedostupná (Yahoo)“ — bez náhradního kurzu.
 
+### 2.4 Sparkliny na FX kartách
+
+- **Konstanta:** `_FX_SPARK_DAYS = 30`
+- **Funkce:** `_fx_series_tail(kind)` → `_sparkline_svg(values, color)` → `_fx_sparkline_html(kind, card_class)`
+- **Zdroje podle `kind`:**
+
+| kind | Série |
+|------|--------|
+| `usd` | `USDCZK=X` |
+| `eur` | `EURCZK=X` |
+| `cny` | `_cny_czk_history_full()` |
+| `eurusd` | `EURUSD=X` |
+| `usdeur` | `1 / EURUSD=X` |
+| `cnyeur` | CNYCZK / EURCZK (inner join) |
+
+- SVG se renderuje přímo v `metric_card(..., sparkline_html=…)` — bez Plotly (rychlé, mobil-friendly).
+- Barvy sparkliny odpovídají třídě karty (`card-usd` / `card-eur` / `card-cny`).
+
 ---
 
 ## 3. Logika výpočtů (business logic)
 
-### 3.1 Metal Surcharge (`render_metal_surcharge_calculator`)
+### 3.1 Metal Surcharge — odstraněno
 
-**Vstupy:**
-
-- Kov: měď / hliník (`_SURCHARGE_METAL_OPTIONS`)
-- `kg_per_km` — hmotnost kovu v kabelu
-- `orig_total` — původní celková cena za 1 m (v měně nabídky)
-- Měny: nabídka, výstup, burza (USD / CNY / EUR dle zdroje)
-- Zdroj burzovní ceny: **LME (Live)** Westmetall USD/t, **SHFE (Live)** = CCMN CNY/t, nebo **Manuální**
-
-**Kurzy:** `_build_fx_rates(cnb)` — ČNB (USD/CZK, EUR/CZK, CNY/CZK) + `eur_usd` z Yahoo + `usd_per_cny`.
-
-**Hodnota kovu v 1 m kabelu (USD):**
-
-```text
-metal_per_m_USD = (cena_kovu_USD/t / 1000) × (kg_per_km / 1000)
-```
-
-**Dutá cena (fixní složka — práce + plasty):**
-
-```text
-hollow_USD = orig_total_USD − orig_metal_per_m_USD
-```
-
-kde `orig_metal_per_m_USD` používá **původní** burzovní cenu kovu (`orig_metal_ex`) převedenou do USD.
-
-**Férová cena za 1 m:**
-
-```text
-fair_USD = hollow_USD + curr_metal_per_m_USD
-```
-
-`curr_metal_per_m_USD` z aktuální burzovní ceny (live LME nebo CCMN, nebo manuální).
-
-**Srovnání s „prostou úměrou“:**
-
-```text
-metal_change_pct = (curr_metal_USD − orig_metal_USD) / orig_metal_USD
-simple_total_USD = orig_total_USD × (1 + metal_change_pct)
-diff_USD = fair_USD − simple_total_USD
-```
-
-**Při chybě kurzů nebo live ceny:** výpočet se zastaví (`st.error` / `st.info`), žádné dopočítání fiktivní burzou.
+> Kalkulačka metal surcharge (`render_metal_surcharge_calculator`) byla z aplikace **odstraněna** jako nadbytečná.
 
 ### 3.2 Proxy model plastů (`calc_plastic_prices`)
 
@@ -413,15 +383,70 @@ RSI = 100 − (100 / (1 + RS))
 |-----|--------|
 | Měď | `fetch_westmetall_history(WM_HISTORY_URLS["copper"])` |
 | Hliník | `fetch_westmetall_history(WM_HISTORY_URLS["aluminum"])` |
-| Ocel HRC | `_yf_history(ticker)` — ticker z `fetch_steel_yfinance()` |
 
 **Hraniční interpretace (`interpret_rsi`):**
 
 | RSI | Význam | UI |
 |-----|--------|-----|
-| **< 30** | Přeprodáno (potenciál růstu / zvážit nákup) | `st.success` |
-| **> 70** | Překoupeno (riziko korekce / vyčkat) | `st.warning` |
-| 30–70 | Neutrální zóna | `st.info` |
+| **< 30** | Přeprodáno (potenciál růstu / zvážit nákup) | zelený chip |
+| **> 70** | Překoupeno (riziko korekce / vyčkat) | červený chip |
+| 30–70 | Neutrální zóna | šedý chip |
+
+RSI se zobrazuje jako chip přímo na kartě kovu (`_rsi_chip`), ne v samostatné sekci.
+
+---
+
+## 6. Predikce trendu (ensemble) + backtest
+
+**Sekce UI:** `_render_price_forecast_section()` → `_render_forecast_for_metal()` (měď, hliník).
+
+**Konstanty:**
+
+| Konstanta | Význam |
+|-----------|--------|
+| `_FORECAST_HORIZON = 21` | obchodních dní ≈ 1 měsíc |
+| `_FORECAST_FIT_WINDOW = 45` | okno OLS trendu |
+| `_FORECAST_HOLT_WINDOW = 120` | okno Holtova vyhlazování |
+| `_FORECAST_MR_HALF_LIFE = 20` | poločas návratu k SMA50 |
+| `_FORECAST_VOL_WINDOW = 90` | okno denní volatility (pásmo) |
+| `_FORECAST_BAND_Z = 1.28` | ±1.28σ ≈ 80% interval |
+| `_FORECAST_BACKTEST_ORIGINS = 30` | počet minulých startů backtestu |
+| `_FORECAST_BACKTEST_MIN = 8` | minimum originů pro zobrazení MAPE |
+
+**Tři modely (`_forecast_models`):**
+
+1. **Trend (OLS)** — `_forecast_trend_ols`: přímka posledních 45 dní, ukotvená na poslední ceně.
+2. **Holt** — `_forecast_holt`: dvojité exponenciální vyhlazování (α=0.3, β=0.1).
+3. **Návrat k SMA50** — `_forecast_mean_reversion`: cena konverguje k SMA50 s poločasem 20 dní.
+
+Ensemble = průměr dostupných modelů. Pásmo nejistoty roste s √h z denní volatility.
+
+**Walk-forward backtest (`_forecast_backtest`):**
+
+```text
+pro každý origin i v posledních 30 obchodních dnech:
+  fit modelů na historii do dne i
+  predikce ceny za 21 dní
+  |predikce − skutečnost| / skutečnost × 100
+MAPE = průměr absolutních % chyb (ensemble + jednotlivé modely)
+```
+
+Výsledek se zobrazí pod grafem jako „Backtest MAPE … % — čím nižší, tím spolehlivější výhled.“  
+Pokud je méně než `_FORECAST_BACKTEST_MIN` úspěšných originů (málo historie), řádek se nevykreslí.
+
+> Predikce je **MODEL / extrapolace**, ne předpověď budoucnosti. Badge `MODEL` + disclaimer v UI.
+
+---
+
+## 7. Hlídač stáří dat robota
+
+**Funkce:** `render_robot_watchdog()` (volá se z `main()` po globálních ovládáních, jen pro interní roli).
+
+- Čte `_ts` z `robot_data.json` (záloha: max datum z `robot_history.csv`).
+- Počítá **obchodní dny** od posledního běhu (`pd.bdate_range`) — víkendy se nepočítají.
+- Práh: `_ROBOT_STALE_BDAYS = 2`.
+- Staré / chybějící data → `warning-box` / `error-box` s odkazem na GitHub Action `data_robot.yml`.
+- Aktuální data → banner se **nezobrazí**.
 
 ---
 
@@ -432,7 +457,6 @@ flowchart TB
   subgraph metals [Kovy]
     WM[westmetall.com]
     CCMN[ccmn.cn / copper|alu.ccmn.cn]
-    YHRC[Yahoo HRC=F / STRE=F]
     CNB1[ČNB kurzy]
     WM --> LME[LME Cash + zásoby + historie]
     CCMN --> SPOT[CNY/t spot]
@@ -440,7 +464,6 @@ flowchart TB
     SPOT --> USD_CNY
     USD_CNY --> SPREAD[Spread vs LME]
     LME --> SPREAD
-    YHRC --> STEEL[Ocel USD/t]
   end
 
   subgraph fx [FX]
@@ -482,4 +505,4 @@ flowchart TB
 - Yahoo a veřejné OSRM/Nominatim mohou rate-limitovat nebo být dočasně nedostupné.
 - Proxy plasty a transitní dny Čína→ČR jsou **modely**, ne tržní feed — ale vždy vycházejí z reálných vstupů nebo uživatelských parametrů, nikoli z náhodných mock čísel.
 
-*Dokumentace odpovídá stavu `app.py` po odstranění historické korelace LME vs SHFE/CCMN (Nasdaq CHRIS).*
+*Dokumentace odpovídá stavu `app.py` po odstranění oceli HRC, kalkulačky Metal Surcharge a spotového porovnání LME vs CCMN; přidán hlídač stáří dat robota, ensemble predikce s walk-forward backtestem (MAPE) a 30denní SVG sparkliny na FX kartách.*

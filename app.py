@@ -493,6 +493,18 @@ footer { visibility: hidden; }
     margin-top: 3px;
 }
 
+.card-spark {
+    margin-top: 8px;
+    line-height: 0;
+}
+
+.card-spark svg {
+    width: 100%;
+    max-width: 220px;
+    height: 36px;
+    display: block;
+}
+
 .delta-chip {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.72rem;
@@ -874,12 +886,14 @@ def metric_card(
     value_size: str = "",
     emphasis: bool = False,
     delta_html: str | None = None,
+    sparkline_html: str | None = None,
 ) -> str:
     """Sestaví HTML pro metrickou kartu a vrátí jako řetězec."""
     delta_row = f'<div class="card-delta-row">{delta_html or delta_chip(delta, delta_suffix)}</div>'
     extra_cls = "card-extra card-extra-emphasis" if emphasis else "card-extra"
     unit_cls = "card-unit card-unit-emphasis" if emphasis else "card-unit"
     extra_row = f'<div class="{extra_cls}">{extra}</div>' if extra else ""
+    spark_row = f'<div class="card-spark">{sparkline_html}</div>' if sparkline_html else ""
     size_cls = " card-value-sm" if value_size == "sm" else ""
     return f"""
     <div class="metric-card {card_class}">
@@ -887,6 +901,7 @@ def metric_card(
         <div class="card-value{size_cls}">{value}</div>
         <div class="{unit_cls}">{unit}</div>
         {delta_row}
+        {spark_row}
         {extra_row}
     </div>
     """
@@ -1468,6 +1483,89 @@ def fetch_eur_cny_history(period: str = "3mo") -> tuple[pd.DataFrame | None, boo
     """Historie EUR/CNY oříznutá podle globálního období."""
     full, derived = _eur_cny_history_full()
     return filter_history_by_period(full), derived
+
+
+_FX_SPARK_DAYS = 30
+_FX_SPARK_COLORS = {
+    "card-usd": "#34C98E",
+    "card-eur": "#4D9FFF",
+    "card-cny": "#F0565E",
+}
+
+
+def _sparkline_svg(values: list[float], color: str = "#4D9FFF", width: int = 160, height: int = 36) -> str:
+    """Kompaktní SVG sparkline (posledních N hodnot) — bez Plotly, čistý HTML."""
+    clean = [float(v) for v in values if v is not None and math.isfinite(float(v))]
+    if len(clean) < 2:
+        return ""
+    lo, hi = min(clean), max(clean)
+    span = hi - lo or 1.0
+    pad = 2
+    pts: list[str] = []
+    n = len(clean)
+    for i, v in enumerate(clean):
+        x = pad + (width - 2 * pad) * i / (n - 1)
+        y = height - pad - (height - 2 * pad) * ((v - lo) / span)
+        pts.append(f"{x:.1f},{y:.1f}")
+    polyline = " ".join(pts)
+    # vyplněná plocha pod čárou (jemný gradient efekt)
+    area = f"0,{height} {polyline} {width},{height}"
+    return (
+        f'<svg viewBox="0 0 {width} {height}" preserveAspectRatio="none" '
+        f'aria-hidden="true">'
+        f'<polyline fill="none" stroke="{color}" stroke-width="1.8" '
+        f'stroke-linejoin="round" stroke-linecap="round" points="{polyline}"/>'
+        f'<polygon fill="{color}" fill-opacity="0.12" points="{area}"/>'
+        f"</svg>"
+    )
+
+
+def _fx_series_tail(kind: str, n: int = _FX_SPARK_DAYS) -> list[float]:
+    """Posledních n hodnot FX série pro sparkline (Yahoo / odvozené kříže)."""
+    df: pd.DataFrame | None = None
+    invert = False
+    if kind == "usd":
+        df = _yf_history("USDCZK=X")
+    elif kind == "eur":
+        df = _yf_history("EURCZK=X")
+    elif kind == "cny":
+        df, _ = _cny_czk_history_full()
+    elif kind == "eurusd":
+        df = _yf_history("EURUSD=X")
+    elif kind == "usdeur":
+        df = _yf_history("EURUSD=X")
+        invert = True
+    elif kind == "cnyeur":
+        eur = _yf_history("EURCZK=X")
+        cny, _ = _cny_czk_history_full()
+        if eur is not None and cny is not None and not eur.empty and not cny.empty:
+            merged = pd.merge(
+                cny.rename(columns={"Close": "cny"}),
+                eur.rename(columns={"Close": "eur"}),
+                on="Date",
+                how="inner",
+            )
+            merged = merged[merged["eur"] > 0]
+            if not merged.empty:
+                merged["Close"] = merged["cny"] / merged["eur"]
+                df = merged[["Date", "Close"]]
+    if df is None or df.empty or "Close" not in df.columns:
+        return []
+    s = pd.to_numeric(df["Close"], errors="coerce").dropna()
+    if invert:
+        s = 1.0 / s.replace(0, pd.NA)
+        s = s.dropna()
+    return [float(v) for v in s.tail(n).tolist()]
+
+
+def _fx_sparkline_html(kind: str, card_class: str) -> str | None:
+    """SVG sparkline (30d) pro FX kartu, nebo None pokud data chybí."""
+    vals = _fx_series_tail(kind)
+    if len(vals) < 2:
+        return None
+    color = _FX_SPARK_COLORS.get(card_class, "#4D9FFF")
+    svg = _sparkline_svg(vals, color=color)
+    return svg or None
 
 
 @st.cache_data(ttl=CACHE_TTL)
@@ -2764,6 +2862,8 @@ _FORECAST_BAND_Z = 1.28      # ±1.28σ ≈ 80% interval spolehlivosti
 _FORECAST_HOLT_WINDOW = 120  # dní pro fit Holtova vyhlazování
 _FORECAST_MR_HALF_LIFE = 20.0  # poločas návratu k SMA50 (dny)
 _FORECAST_DIR_THRESHOLD = 0.5  # ± % — pod tím bereme výhled jako stagnaci
+_FORECAST_BACKTEST_ORIGINS = 30  # kolik minulých „startů“ se backtestuje
+_FORECAST_BACKTEST_MIN = 8       # minimum úspěšných originů pro zobrazení MAPE
 
 # (název modelu, barva, styl čáry) — pořadí odpovídá _forecast_models()
 _FORECAST_MODEL_STYLES = [
@@ -2862,6 +2962,68 @@ def _forecast_models(
         "ensemble": ensemble,
         "lo": lo,
         "hi": hi,
+    }
+
+
+def _forecast_backtest(
+    hist: pd.DataFrame | None,
+    price_col: str = "Close",
+    horizon: int = _FORECAST_HORIZON,
+    n_origins: int = _FORECAST_BACKTEST_ORIGINS,
+) -> dict | None:
+    """
+    Walk-forward backtest: pro posledních n_origins obchodních dní spustí model
+    „jakoby ten den“ a srovná predikci za horizon dní s reálnou cenou.
+    Vrací MAPE (%) pro ensemble i jednotlivé modely + počet úspěšných originů.
+    """
+    if hist is None or hist.empty or price_col not in hist.columns:
+        return None
+    df = hist[["Date", price_col]].dropna().copy()
+    df["Date"] = pd.to_datetime(df["Date"])
+    df = df.sort_values("Date").reset_index(drop=True)
+    # potřebujeme fit okno + horizon dopředu + aspoň n_origins originů
+    min_len = _FORECAST_FIT_WINDOW + horizon + n_origins
+    if len(df) < min_len:
+        return None
+
+    # poslední index, pro který ještě existuje skutečná cena za horizon dní
+    last_origin = len(df) - 1 - horizon
+    first_origin = max(_FORECAST_FIT_WINDOW, last_origin - n_origins + 1)
+    if first_origin > last_origin:
+        return None
+
+    abs_pct: dict[str, list[float]] = {"ensemble": []}
+    for name, _, _ in _FORECAST_MODEL_STYLES:
+        abs_pct[name] = []
+
+    for i in range(first_origin, last_origin + 1):
+        past = df.iloc[: i + 1]
+        actual = float(df[price_col].iloc[i + horizon])
+        if actual == 0:
+            continue
+        fc = _forecast_models(past, price_col=price_col, horizon=horizon)
+        if fc is None:
+            continue
+        for name, path in fc["models"].items():
+            abs_pct.setdefault(name, []).append(abs(path[-1] / actual - 1.0) * 100.0)
+        abs_pct["ensemble"].append(abs(fc["ensemble"][-1] / actual - 1.0) * 100.0)
+
+    n_ok = len(abs_pct["ensemble"])
+    if n_ok < _FORECAST_BACKTEST_MIN:
+        return None
+
+    def _mape(vals: list[float]) -> float | None:
+        return sum(vals) / len(vals) if vals else None
+
+    return {
+        "n": n_ok,
+        "horizon": horizon,
+        "ensemble_mape": _mape(abs_pct["ensemble"]),
+        "models_mape": {
+            name: _mape(vals)
+            for name, vals in abs_pct.items()
+            if name != "ensemble" and vals
+        },
     }
 
 
@@ -3015,13 +3177,31 @@ def _render_forecast_for_metal(name: str, color: str, hist: pd.DataFrame | None,
             "výhledu nepřikládej velkou váhu."
         )
 
+    # Walk-forward backtest — jak moc se model historicky mýlil
+    bt = _forecast_backtest(hist)
+    bt_html = ""
+    if bt and bt.get("ensemble_mape") is not None:
+        mape = bt["ensemble_mape"]
+        model_mape = " · ".join(
+            f"{name.split(' (')[0]} {m:.1f} %"
+            for name, m in bt["models_mape"].items()
+            if m is not None
+        )
+        bt_html = (
+            f"<br>📏 <strong>Backtest MAPE</strong> (průměrná |odchylka| za posledních "
+            f"{bt['n']} startů × {bt['horizon']} dní): "
+            f"ensemble <strong>{mape:.1f} %</strong>"
+            + (f" · {model_mape}" if model_mape else "")
+            + " — čím nižší, tím spolehlivější výhled."
+        )
+
     st.markdown(
         f'<div class="{verdict_cls}" style="margin:-4px 0 6px 0;">{verdict}</div>'
         f'<div class="card-extra" style="margin:0 0 14px 4px;">'
         f'Průměr modelů za ~1 měsíc: <strong>{format_num(ens_end, 0)} {y_unit}</strong> '
         f'({ens_sign}{ens_pct:.1f} % vůči poslední ceně) · '
         f'80% pásmo: {format_num(fc["lo"][-1], 0)} – {format_num(fc["hi"][-1], 0)} {y_unit}<br>'
-        f'{model_bits} {y_unit}</div>',
+        f'{model_bits} {y_unit}{bt_html}</div>',
         unsafe_allow_html=True,
     )
 
@@ -3045,6 +3225,9 @@ def _render_price_forecast_section() -> None:
         "<strong>Holt</strong> (adaptivní vyhlazování — větší váha nejnovějším dnům, rychleji chytá obraty) a "
         "<strong>Návrat k SMA50</strong> (cena se stahuje zpět ke klouzavému průměru). "
         f"Pásmo nejistoty vychází z reálné volatility posledních {_FORECAST_VOL_WINDOW} dní. "
+        f"Pod grafem je <strong>backtest MAPE</strong> — průměrná absolutní odchylka predikce "
+        f"za posledních {_FORECAST_BACKTEST_ORIGINS} startů × {_FORECAST_HORIZON} dní "
+        "(čím nižší %, tím spolehlivější výhled). "
         "Shoda modelů = silnější signál; žádný z nich neumí zohlednit zprávy, cla ani výpadky hutí.</div>",
         unsafe_allow_html=True,
     )
@@ -3223,7 +3406,7 @@ def render_fx() -> None:
     st.markdown(
         f'<div class="info-box">'
         f'Karty CZK párů: oficiální kurzovní lístek <strong>ČNB</strong>{cnb_date_note} · '
-        f'Historické grafy ({period_lbl}) a křížové kurzy: <strong>Yahoo Finance</strong> · '
+        f'Historické grafy ({period_lbl}), křížové kurzy a 30denní sparkliny: <strong>Yahoo Finance</strong> · '
         f'CNY/CZK graf: CNYCZK=X nebo odvozeno USDCZK×CNYUSD'
         f'</div>',
         unsafe_allow_html=True,
@@ -3236,9 +3419,14 @@ def render_fx() -> None:
     for (code, pair, subtitle, cls), col in zip(_CNB_METRIC_CARDS, cols[:3]):
         with col:
             info = (cnb or {}).get(code)
+            spark_kind = {"USD": "usd", "EUR": "eur", "CNY": "cny"}.get(code, "")
+            spark = _fx_sparkline_html(spark_kind, cls) if spark_kind else None
             if info:
                 st.markdown(
-                    metric_card(pair, f"{info['rate']:.4f}", subtitle, card_class=cls),
+                    metric_card(
+                        pair, f"{info['rate']:.4f}", subtitle,
+                        card_class=cls, sparkline_html=spark,
+                    ),
                     unsafe_allow_html=True,
                 )
             else:
@@ -3251,6 +3439,7 @@ def render_fx() -> None:
                     "EUR/USD", f"{eur_usd_spot['price']:.4f}", "Euro / USD (Yahoo)",
                     delta=eur_usd_spot.get("delta"), delta_suffix="",
                     card_class="card-eur",
+                    sparkline_html=_fx_sparkline_html("eurusd", "card-eur"),
                 ),
                 unsafe_allow_html=True,
             )
@@ -3266,6 +3455,7 @@ def render_fx() -> None:
                     "USD/EUR", f"{usd_eur:.4f}", "Dolar / Euro (Yahoo)",
                     delta=usd_eur - prev_usd_eur, delta_suffix="",
                     card_class="card-usd",
+                    sparkline_html=_fx_sparkline_html("usdeur", "card-usd"),
                 ),
                 unsafe_allow_html=True,
             )
@@ -3281,6 +3471,7 @@ def render_fx() -> None:
                 metric_card(
                     "CNY/EUR", f"{cny_eur:.4f}", "Jüan / Euro (ČNB kříž)",
                     card_class="card-cny",
+                    sparkline_html=_fx_sparkline_html("cnyeur", "card-cny"),
                 ),
                 unsafe_allow_html=True,
             )
