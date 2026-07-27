@@ -558,13 +558,6 @@ footer { visibility: hidden; }
 .success-box strong { color: #7FEBC0; }
 .warning-box strong { color: #F5DA7A; }
 
-/* Pulzující zvýraznění dosaženého entry pointu */
-.entry-hit { animation: entryPulse 2s ease-in-out infinite; }
-@keyframes entryPulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(52, 201, 142, 0.35); }
-    50% { box-shadow: 0 0 0 9px rgba(52, 201, 142, 0); }
-}
-
 .data-table-wrap {
     background: rgba(30, 36, 46, 0.92);
     border: 1px solid #2C3442;
@@ -2224,6 +2217,33 @@ def _apply_financial_y_axis(fig: go.Figure, df: pd.DataFrame, y_col: str) -> go.
     return fig
 
 
+# Klouzavé průměry: (sloupec, popisek, barva, styl čáry) — jemné, ať nepřebíjí cenu
+_SMA_STYLES = [
+    ("SMA20", "SMA 20d", "#7DB8FF", "dot"),
+    ("SMA50", "SMA 50d", "#8D99AB", "dash"),
+]
+
+
+def _add_sma_columns(df: pd.DataFrame, price_col: str = "Close") -> pd.DataFrame:
+    """Přidá SMA20/SMA50 z cenového sloupce (volat PŘED ořezem období, ať jsou průměry přesné)."""
+    out = df.copy()
+    s = pd.to_numeric(out[price_col], errors="coerce")
+    out["SMA20"] = s.rolling(window=20, min_periods=1).mean()
+    out["SMA50"] = s.rolling(window=50, min_periods=1).mean()
+    return out
+
+
+def _sma_extra_traces(df: pd.DataFrame | None) -> list[dict]:
+    """Sestaví extra_traces s SMA řadami pro grafové funkce."""
+    if df is None or df.empty:
+        return []
+    return [
+        {"y": df[col], "name": name, "color": color, "width": 1.4, "dash": dash}
+        for col, name, color, dash in _SMA_STYLES
+        if col in df.columns
+    ]
+
+
 def metal_price_history_figure(
     df: pd.DataFrame,
     title: str,
@@ -2231,6 +2251,7 @@ def metal_price_history_figure(
     y_col: str = "Close",
     y_label: str = "USD/t",
     height: int = 320,
+    extra_traces: list[dict] | None = None,
 ) -> go.Figure | None:
     """Profesionální čárový graf ceny kovu (Plotly Express) s dynamickou osou Y."""
     if df is None or df.empty or y_col not in df.columns:
@@ -2251,10 +2272,30 @@ def metal_price_history_figure(
     fig.update_traces(
         line_color=color,
         line_width=2.5,
+        name="Cena",
+        showlegend=bool(extra_traces),
         hovertemplate=(
             f"<b>%{{x|%d.%m.%Y}}</b><br>{y_label}: %{{y:,.2f}}<extra></extra>"
         ),
     )
+
+    if extra_traces:
+        for tr in extra_traces:
+            fig.add_trace(go.Scatter(
+                x=plot_df["Date"],
+                y=tr["y"],
+                mode="lines",
+                name=tr.get("name", ""),
+                line=dict(
+                    color=tr.get("color", "#94a3b8"),
+                    width=tr.get("width", 1.5),
+                    dash=tr.get("dash", "dot"),
+                ),
+                hovertemplate=(
+                    f"<b>%{{x|%d.%m.%Y}}</b><br>{tr.get('name', '')}: %{{y:,.2f}}<extra></extra>"
+                ),
+            ))
+
     fig.update_layout(
         separators=_PLOT_SEPARATORS,
         height=height,
@@ -2267,12 +2308,32 @@ def metal_price_history_figure(
             x=0.02,
             xanchor="left",
         ),
-        showlegend=False,
+        showlegend=bool(extra_traces),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.06,
+            xanchor="right",
+            x=1,
+            font=dict(family="IBM Plex Mono, monospace", size=10, color=_PLOT_TICK_COLOR),
+            bgcolor=_PLOT_PAPER,
+        ),
         hovermode="x unified",
         hoverlabel=_HOVER_LABEL,
         xaxis=dict(**_TICK_AXIS, tickformat="%d.%m.%Y", title=None),
     )
-    _apply_financial_y_axis(fig, plot_df, y_col)
+
+    # Rozsah osy Y přes cenu i SMA řady, ať se klouzavé průměry neoříznou
+    range_df = plot_df[[y_col]].rename(columns={y_col: "_yr"})
+    if extra_traces:
+        combined = pd.concat(
+            [pd.to_numeric(range_df["_yr"], errors="coerce")]
+            + [pd.to_numeric(pd.Series(tr["y"]).reset_index(drop=True), errors="coerce")
+               for tr in extra_traces],
+            ignore_index=True,
+        )
+        range_df = pd.DataFrame({"_yr": combined})
+    _apply_financial_y_axis(fig, range_df, "_yr")
     return fig
 
 
@@ -2309,6 +2370,7 @@ def _render_metal_history_with_tabs(
     price_col: str = "Close",
     source_note: str = "",
     is_dual: bool = False,
+    extra_traces: list[dict] | None = None,
 ) -> None:
     """Graf + surová data v záložkách pro jeden kov."""
     if df is None or df.empty:
@@ -2327,7 +2389,9 @@ def _render_metal_history_with_tabs(
 
     with tab_chart:
         if is_dual:
-            fig = interactive_metal_dual_chart(df, graph_title, color, y_unit)
+            fig = interactive_metal_dual_chart(
+                df, graph_title, color, y_unit, extra_traces=extra_traces
+            )
         else:
             fig = metal_price_history_figure(
                 df,
@@ -2335,6 +2399,7 @@ def _render_metal_history_with_tabs(
                 color,
                 price_col,
                 y_unit,
+                extra_traces=extra_traces,
             )
         if fig:
             _ensure_plot_separators(fig)
@@ -2473,10 +2538,13 @@ def interactive_metal_dual_chart(
     price_color: str = "#f97316",
     y_price_label: str = "USD/t",
     height: int = 320,
+    extra_traces: list[dict] | None = None,
 ) -> go.Figure | None:
     """
     Graf LME Cash-Settlement (osa Y vlevo) + LME Stock (osa Y vpravo).
     Obě osy jsou dynamicky oříznuty na min/max s 2% rezervou.
+    extra_traces: [{"y": Series, "name": str, "color": str, "dash": str, "width": float}]
+    — vykreslí se na primární cenové ose (např. SMA20/SMA50).
     """
     if df is None or df.empty or "Close" not in df.columns:
         return None
@@ -2485,11 +2553,18 @@ def interactive_metal_dual_chart(
     r, g, b = int(price_color[1:3], 16), int(price_color[3:5], 16), int(price_color[5:7], 16)
     fig = go.Figure()
 
-    # 1. Výpočet limitů pro cenu (vyhneme se chybám s NaN hodnotami)
+    # 1. Výpočet limitů pro cenu — včetně extra řad (SMA), ať se neoříznou
     price_s = pd.to_numeric(df["Close"], errors="coerce").dropna()
     if price_s.empty:
         return None
-    p_min, p_max = float(price_s.min()), float(price_s.max())
+    range_series = [price_s]
+    if extra_traces:
+        range_series.extend(
+            pd.to_numeric(pd.Series(tr["y"]).reset_index(drop=True), errors="coerce").dropna()
+            for tr in extra_traces
+        )
+    range_all = pd.concat(range_series, ignore_index=True)
+    p_min, p_max = float(range_all.min()), float(range_all.max())
     p_pad = (p_max - p_min) * 0.02 if p_max > p_min else p_max * 0.02
     if p_pad == 0:
         p_pad = 1.0
@@ -2508,6 +2583,25 @@ def interactive_metal_dual_chart(
             f"<b>%{{x|%d.%m.%Y}}</b><br>{y_price_label}: %{{y:,.2f}}<extra></extra>"
         ),
     ))
+
+    # 2b. Extra řady na primární ose (klouzavé průměry apod.)
+    if extra_traces:
+        for tr in extra_traces:
+            fig.add_trace(go.Scatter(
+                x=x_data,
+                y=tr["y"],
+                mode="lines",
+                name=tr.get("name", ""),
+                yaxis="y",
+                line=dict(
+                    color=tr.get("color", "#94a3b8"),
+                    width=tr.get("width", 1.5),
+                    dash=tr.get("dash", "dot"),
+                ),
+                hovertemplate=(
+                    f"<b>%{{x|%d.%m.%Y}}</b><br>{tr.get('name', '')}: %{{y:,.2f}}<extra></extra>"
+                ),
+            ))
 
     # 3. Zpracování limitů a křivky pro zásoby (LME Stock)
     has_stock = "Stock" in df.columns and df["Stock"].notna().any()
@@ -2593,15 +2687,6 @@ def _render_wm_metal_history_chart(
         )
         return
 
-    hist = filter_wm_history_by_period(full)
-    if hist is None or hist.empty:
-        st.warning("Chyba načítání dat z Westmetallu")
-        st.markdown(
-            '<div class="error-box">Chyba načítání dat z Westmetallu</div>',
-            unsafe_allow_html=True,
-        )
-        return
-
     if ccy == "EUR" and not get_eurusd_rate():
         st.warning("Chyba načítání dat z Westmetallu — chybí kurz EUR/USD pro přepočet.")
         st.markdown(
@@ -2610,7 +2695,17 @@ def _render_wm_metal_history_chart(
         )
         return
 
-    plot = apply_currency_to_df(hist.copy())
+    # SMA počítáme z plné (převedené) historie, teprve potom ořez na zvolené období
+    conv = _add_sma_columns(apply_currency_to_df(full.copy()))
+    plot = filter_wm_history_by_period(conv)
+    if plot is None or plot.empty:
+        st.warning("Chyba načítání dat z Westmetallu")
+        st.markdown(
+            '<div class="error-box">Chyba načítání dat z Westmetallu</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
     _render_metal_history_with_tabs(
         plot,
         chart_title,
@@ -2619,6 +2714,7 @@ def _render_wm_metal_history_chart(
         price_col="Close",
         source_note="Westmetall",
         is_dual=True,
+        extra_traces=_sma_extra_traces(plot),
     )
 
 
@@ -2917,58 +3013,87 @@ def render_global_controls() -> tuple[str, str]:
 #  SEKCE 1: METALY
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _render_historical_correlation() -> None:
-    """Historická korelace: LME Cu Cash (Westmetall) vs čínský proxy (CCMN / COMEX) — USD/t."""
-    period_lbl = get_chart_period_label()
-    st.markdown(
-        "<div style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
-        "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
-        f"Historická korelace — LME Cu vs Čína ({period_lbl}, USD/t)</div>",
-        unsafe_allow_html=True,
-    )
+# Minimální počet CCMN bodů v zobrazeném období, aby se graf přepnul
+# ze zástupného COMEX proxy na skutečná čínská (CCMN) data
+_MIN_CCMN_POINTS = 10
 
-    lme = fetch_westmetall_history(WM_HISTORY_URLS["copper"])
+# Konfigurace korelačních grafů LME vs Čína (proxy) pro jednotlivé kovy
+_CORRELATION_METALS = [
+    {
+        "wm_key": "copper",
+        "metal_label": "měď",
+        "lme_name": "LME Cu Cash",
+        "ccmn_col": "CCMN_Cu",
+        "fallback_ticker": "HG=F",
+        "fallback_factor": 2204.62,  # USD/lb → USD/t
+        "fallback_label": "COMEX HG=F (Proxy) v USD/t",
+        "color": "#f97316",
+    },
+    {
+        "wm_key": "aluminum",
+        "metal_label": "hliník",
+        "lme_name": "LME Al Cash",
+        "ccmn_col": "CCMN_Al",
+        "fallback_ticker": "ALI=F",
+        "fallback_factor": 1.0,  # ALI=F je kótován přímo v USD/t
+        "fallback_label": "COMEX ALI=F (Proxy) v USD/t",
+        "color": "#10b981",
+    },
+]
+
+
+def _render_metal_correlation(cfg: dict, robot: pd.DataFrame, period_lbl: str) -> None:
+    """Jeden korelační graf: LME Cash (Westmetall) vs čínský proxy (CCMN / COMEX) — USD/t."""
+    lme = fetch_westmetall_history(WM_HISTORY_URLS[cfg["wm_key"]])
     if lme is None or lme.empty:
-        st.warning("Westmetall: historii LME mědi se nepodařilo stáhnout — korelační graf není k dispozici.")
-        return
-
-    try:
-        robot = pd.read_csv("robot_history.csv", parse_dates=["Date"])
-    except FileNotFoundError:
-        st.warning("Soubor robot_history.csv nenalezen — spusťte datového robota (GitHub Actions).")
-        return
-    except Exception as e:
-        st.warning(f"robot_history.csv se nepodařilo načíst — korelační graf není k dispozici. ({e})")
+        st.warning(
+            f"Westmetall: historii LME ({cfg['metal_label']}) se nepodařilo stáhnout — "
+            "korelační graf není k dispozici."
+        )
         return
 
     merged = pd.merge(lme[["Date", "Close"]], robot, on="Date", how="inner")
     merged = filter_history_by_period(merged)
     if merged is None or merged.empty:
-        st.warning("Pro zvolené období nejsou k dispozici překrývající se data LME a robota.")
+        st.warning(
+            f"Pro zvolené období nejsou k dispozici překrývající se data LME a robota "
+            f"({cfg['metal_label']})."
+        )
         return
 
-    # Čínský proxy: primárně CCMN spot (CNY/t → USD/t), fallback COMEX HG=F (USD/lb → USD/t)
-    if "CCMN_Cu" in merged.columns and "CNYUSD=X" in merged.columns:
-        merged["Proxy_USD"] = merged["CCMN_Cu"] * merged["CNYUSD=X"]
-        proxy_label = "CCMN (Čína) v USD/t"
-        proxy_color = "#ef4444"
-    elif "HG=F" in merged.columns:
-        merged["Proxy_USD"] = merged["HG=F"] * 2204.62
-        proxy_label = "COMEX HG=F (Proxy) v USD/t"
-        proxy_color = "#8b5cf6"
-    else:
-        st.warning("V robot_history.csv chybí CCMN_Cu/CNYUSD=X i HG=F — korelační graf nelze sestavit.")
-        return
+    # Čínský proxy: primárně skutečný CCMN spot (CNY/t → USD/t), pokud je ve
+    # střádané historii dost bodů pro smysluplný graf; jinak COMEX futures.
+    proxy_label = None
+    proxy_color = "#8b5cf6"
+    if cfg["ccmn_col"] in merged.columns and "CNYUSD=X" in merged.columns:
+        ccmn_proxy = pd.to_numeric(merged[cfg["ccmn_col"]], errors="coerce") * merged["CNYUSD=X"]
+        if int(ccmn_proxy.notna().sum()) >= _MIN_CCMN_POINTS:
+            merged["Proxy_USD"] = ccmn_proxy
+            proxy_label = "CCMN (Čína) v USD/t"
+            proxy_color = "#ef4444"
+    if proxy_label is None:
+        if cfg["fallback_ticker"] not in merged.columns:
+            st.warning(
+                f"V robot_history.csv chybí {cfg['ccmn_col']}/CNYUSD=X i {cfg['fallback_ticker']} — "
+                f"korelační graf pro {cfg['metal_label']} nelze sestavit. "
+                "Po dalším běhu datového robota se doplní automaticky."
+            )
+            return
+        merged["Proxy_USD"] = merged[cfg["fallback_ticker"]] * cfg["fallback_factor"]
+        proxy_label = cfg["fallback_label"]
 
     merged = merged.dropna(subset=["Close", "Proxy_USD"]).reset_index(drop=True)
     if merged.empty:
-        st.warning("Po odfiltrování chybějících hodnot nezbyla žádná překrývající se data.")
+        st.warning(
+            f"Po odfiltrování chybějících hodnot nezbyla žádná překrývající se data "
+            f"({cfg['metal_label']})."
+        )
         return
 
     fig = interactive_line_chart(
         merged,
-        f"LME Cu Cash — vs {proxy_label} · {period_lbl}",
-        color="#f97316",
+        f"{cfg['lme_name']} — vs {proxy_label} · {period_lbl}",
+        color=cfg["color"],
         y_label="USD/t",
         height=320,
         y_column="Close",
@@ -2986,101 +3111,36 @@ def _render_historical_correlation() -> None:
         _show_plotly(fig)
 
 
-_ENTRY_POINT_METALS = [
-    ("copper", "Měď (Cu)", "#f97316"),
-    ("aluminum", "Hliník (Al)", "#10b981"),
-]
-
-
-def _render_entry_point_tracker(
-    metal_key: str,
-    metal_name: str,
-    accent: str,
-    wm_data: dict | None,
-) -> None:
-    """Jeden sledovač entry pointu: cíl v session_state vs aktuální LME Cash (USD/t)."""
-    current, _, _ = resolve_metal_price(metal_key, wm_data)
-    state_key = f"entry_target_{metal_key}"
-
-    # Výchozí cíl = 95 % živé ceny; nastavuje se jen jednou, pak přetrvává v relaci
-    if state_key not in st.session_state:
-        st.session_state[state_key] = float(round(current * 0.95)) if current else 0.0
-
+def _render_historical_correlation() -> None:
+    """Historická korelace LME vs Čína (proxy) — měď a hliník pod sebou, USD/t."""
+    period_lbl = get_chart_period_label()
     st.markdown(
-        f"<div style='font-family:Syne,sans-serif;font-size:0.8rem;font-weight:700;"
-        f"color:{accent};text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;'>"
-        f"{metal_name}</div>",
+        "<div style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
+        "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
+        f"Historická korelace — LME vs Čína ({period_lbl}, USD/t)</div>",
         unsafe_allow_html=True,
     )
 
-    target = st.number_input(
-        "Cílová nákupní cena (USD/t)",
-        min_value=0.0,
-        step=10.0,
-        format="%.0f",
-        key=state_key,
-        help=(
-            "Výchozí návrh = 95 % aktuální LME Cash ceny (Westmetall). "
-            "Cíl zůstává uložen po dobu relace prohlížeče."
-        ),
-    )
-
-    if current is None:
-        st.markdown(
-            '<div class="info-box">📡 Živé sledování je momentálně offline — '
-            "LME Cash cena (Westmetall) není k dispozici.</div>",
-            unsafe_allow_html=True,
-        )
+    try:
+        robot = pd.read_csv("robot_history.csv", parse_dates=["Date"])
+    except FileNotFoundError:
+        st.warning("Soubor robot_history.csv nenalezen — spusťte datového robota (GitHub Actions).")
+        return
+    except Exception as e:
+        st.warning(f"robot_history.csv se nepodařilo načíst — korelační grafy nejsou k dispozici. ({e})")
         return
 
-    if not target:
-        st.markdown(
-            f'<div class="info-box">Zadej cílovou cenu — aktuální LME Cash: '
-            f"<strong>{format_num(current, 0)} USD/t</strong>.</div>",
-            unsafe_allow_html=True,
-        )
-        return
+    # Střádaná historie čínských CCMN spotů (robot ji doplňuje, nikdy nepřepisuje)
+    try:
+        ccmn_hist = pd.read_csv("ccmn_history.csv", parse_dates=["Date"])
+        robot = pd.merge(robot, ccmn_hist, on="Date", how="left")
+    except FileNotFoundError:
+        pass  # soubor vznikne prvním během robota; do té doby jede COMEX proxy
+    except Exception:
+        pass
 
-    diff = current - target
-    pct = diff / target * 100.0
-
-    if current <= target:
-        st.markdown(
-            f'<div class="success-box entry-hit">🎯 <strong>ENTRY POINT DOSAŽEN!</strong><br>'
-            f"LME Cash <strong>{format_num(current, 0)} USD/t</strong> je "
-            f"<strong>{format_num(abs(diff), 0)} USD/t ({abs(pct):.1f} %)</strong> "
-            f"pod cílem {format_num(target, 0)} USD/t — "
-            f"vhodný moment pro nákup / fixaci.</div>",
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown(
-            f'<div class="warning-box">⏳ Trh je aktuálně o <strong>{pct:.1f} %</strong> '
-            f"výše než tvůj cíl.<br>"
-            f"LME Cash: <strong>{format_num(current, 0)} USD/t</strong> · "
-            f"cíl: {format_num(target, 0)} USD/t → čeká se na propad o "
-            f"<strong>{format_num(diff, 0)} USD/t</strong>.</div>",
-            unsafe_allow_html=True,
-        )
-
-
-def _render_entry_points(wm_data: dict | None) -> None:
-    """Risk Management — hlídání nákupních entry pointů pro měď a hliník."""
-    section_header(
-        "🎯", "Risk Management — Nákupní Entry Points",
-        badge_html(bool(wm_data), "LME Cash · Westmetall"),
-    )
-    st.markdown(
-        '<div class="info-box">Nastav cílovou nákupní cenu (USD/t). Jakmile LME Cash '
-        "klesne na cíl nebo pod něj, zobrazí se signál k nákupu / fixaci. "
-        "Cíle platí po dobu relace prohlížeče — po obnovení stránky se vrátí na výchozích "
-        "95 % aktuální ceny.</div>",
-        unsafe_allow_html=True,
-    )
-    col_cu, col_al = st.columns(2)
-    for (metal_key, metal_name, accent), col in zip(_ENTRY_POINT_METALS, (col_cu, col_al)):
-        with col:
-            _render_entry_point_tracker(metal_key, metal_name, accent, wm_data)
+    for cfg in _CORRELATION_METALS:
+        _render_metal_correlation(cfg, robot, period_lbl)
 
 
 def render_metals() -> None:
@@ -3088,7 +3148,6 @@ def render_metals() -> None:
 
     wm_data = fetch_westmetall()
     steel_hrc = fetch_steel_yfinance()
-    period = get_chart_period()
     period_lbl = get_chart_period_label()
 
     has_cu = wm_data and "copper" in wm_data
@@ -3123,10 +3182,6 @@ def render_metals() -> None:
     render_rsi_signals(steel_hrc)
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Risk Management — nákupní entry points (Cu, Al) ──────────────────────
-    _render_entry_points(wm_data)
-    st.markdown("<br>", unsafe_allow_html=True)
-
     # ── Historické grafy — pod sebou na plnou šířku (mobil-friendly) ─────────
     st.markdown(
         "<div style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
@@ -3141,11 +3196,16 @@ def render_metals() -> None:
     _render_wm_metal_history_chart("copper", "Měď (Cu)", "#f97316")
     _render_wm_metal_history_chart("aluminum", "Hliník (Al)", "#10b981")
 
-    st_hist = fetch_metal_history(steel_ticker, period)
-    if st_hist is not None and not st_hist.empty:
-        st_plot = st_hist.copy()
-        st_plot["Close"] = st_plot["Close"] * _ST_TON_FACTOR
-        st_plot = apply_currency_to_df(st_plot)
+    st_full = _yf_history(steel_ticker)
+    st_plot = None
+    if st_full is not None and not st_full.empty:
+        st_conv = st_full.copy()
+        st_conv["Close"] = st_conv["Close"] * _ST_TON_FACTOR
+        st_conv = apply_currency_to_df(st_conv)
+        # SMA z plné historie, pak teprve ořez na zvolené období
+        st_conv = _add_sma_columns(st_conv)
+        st_plot = filter_history_by_period(st_conv)
+    if st_plot is not None and not st_plot.empty:
         _render_metal_history_with_tabs(
             st_plot,
             "Ocel HRC",
@@ -3153,6 +3213,7 @@ def render_metals() -> None:
             y_unit,
             price_col="Close",
             source_note=f"Yahoo {steel_ticker}",
+            extra_traces=_sma_extra_traces(st_plot),
         )
     else:
         st.markdown(

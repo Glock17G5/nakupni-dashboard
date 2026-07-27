@@ -75,8 +75,26 @@ def main():
     with open("robot_data.json", "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
+    # CCMN historie se STŘÁDÁ (append) — čínský web historii nenabízí, proto se
+    # tento soubor nikdy nepřepisuje celý, jen se doplňuje/aktualizuje dnešní řádek.
+    print("Ukládám denní CCMN historii (append)...")
+    today = datetime.now().strftime("%Y-%m-%d")
+    cu, al = data["ccmn"]["copper"], data["ccmn"]["aluminum"]
+    if cu is not None or al is not None:
+        try:
+            ccmn_hist = pd.read_csv("ccmn_history.csv", dtype={"Date": str})
+        except FileNotFoundError:
+            ccmn_hist = pd.DataFrame(columns=["Date", "CCMN_Cu", "CCMN_Al"])
+        ccmn_hist = ccmn_hist[ccmn_hist["Date"] != today]  # 2. běh dne přepíše jen dnešek
+        new_row = pd.DataFrame([{"Date": today, "CCMN_Cu": cu, "CCMN_Al": al}])
+        ccmn_hist = pd.concat([ccmn_hist, new_row], ignore_index=True)
+        ccmn_hist.sort_values("Date").to_csv("ccmn_history.csv", index=False)
+        print(f"CCMN historie: {len(ccmn_hist)} zaznamu.")
+    else:
+        print("CCMN ceny nedostupne - historie beze zmeny.")
+
     print("Stahuji Yahoo Historii (1 rok)...")
-    hist_tickers = ["HRC=F", "STRE=F", "BZ=F", "EURUSD=X", "USDCZK=X", "EURCZK=X", "CNYUSD=X", "CNYCZK=X", "HG=F"]
+    hist_tickers = ["HRC=F", "STRE=F", "BZ=F", "EURUSD=X", "USDCZK=X", "EURCZK=X", "CNYUSD=X", "CNYCZK=X", "HG=F", "ALI=F"]
     hist_dict = {}
     for t in hist_tickers:
         try:
