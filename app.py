@@ -2218,9 +2218,10 @@ def _apply_financial_y_axis(fig: go.Figure, df: pd.DataFrame, y_col: str) -> go.
 
 
 # Klouzavé průměry: (sloupec, popisek, barva, styl čáry) — jemné, ať nepřebíjí cenu
+# Barvy záměrně odlišné od zásob LME (tyrkysová) i cenových křivek (oranžová/zelená/šedá)
 _SMA_STYLES = [
     ("SMA20", "SMA 20d", "#7DB8FF", "dot"),
-    ("SMA50", "SMA 50d", "#8D99AB", "dash"),
+    ("SMA50", "SMA 50d", "#A78BFA", "dash"),
 ]
 
 
@@ -2613,22 +2614,25 @@ def interactive_metal_dual_chart(
         if s_pad == 0:
             s_pad = 100.0
 
+        # Zásoby: plná tyrkysová čára, barevně sladěná s pravou osou — jasně
+        # odlišitelná od přerušovaných SMA průměrů na cenové ose
         fig.add_trace(go.Scatter(
             x=x_data,
             y=df["Stock"],
             mode="lines",
-            name="LME Stock",
+            name="Zásoby LME (t)",
             yaxis="y2",
-            line=dict(color="#94a3b8", width=1.8, dash="dot"),
+            opacity=0.65,
+            line=dict(color="#2DD4BF", width=1.6),
             hovertemplate="<b>%{x|%d.%m.%Y}</b><br>Zásoby: %{y:,.0f} t<extra></extra>",
         ))
 
         y2_axis = dict(
-            title=dict(text="Zásoby (t)", font=dict(size=10, color=_PLOT_TITLE_COLOR)),
+            title=dict(text="Zásoby (t)", font=dict(size=10, color="#2DD4BF")),
             overlaying="y",
             side="right",
             showgrid=False,
-            tickfont=dict(family="IBM Plex Mono, monospace", size=10, color=_PLOT_TICK_COLOR),
+            tickfont=dict(family="IBM Plex Mono, monospace", size=10, color="#2DD4BF"),
             tickformat=",.0f",
             range=[s_min - s_pad, s_max + s_pad],
             autorange=False,
