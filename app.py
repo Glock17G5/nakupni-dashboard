@@ -946,6 +946,20 @@ def _metal_trend_chips(metal_key: str) -> str:
     )
 
 
+def _rsi_chip(metal_key: str) -> str:
+    """Chip s RSI (14) a krátkou interpretací pro kartu kovu."""
+    rsi = _metal_rsi_value(metal_key)
+    if rsi is None:
+        return ""
+    msg, alert_type = interpret_rsi(rsi)
+    cls = {"success": "delta-up", "warning": "delta-down"}.get(alert_type, "delta-flat")
+    short = msg.split(" (")[0]
+    return (
+        f'<span class="delta-chip {cls}" title="RSI (14) · {msg} · zdroj: Westmetall">'
+        f"RSI {rsi:.1f} · {short}</span>"
+    )
+
+
 def _render_lme_metal_card(
     metal_key: str,
     label: str,
@@ -974,7 +988,7 @@ def _render_lme_metal_card(
                     card_class=card_class,
                     extra=stock_extra or "Westmetall LME Cash",
                     emphasis=True,
-                    delta_html=_metal_trend_chips(metal_key),
+                    delta_html=_metal_trend_chips(metal_key) + _rsi_chip(metal_key),
                 ),
                 unsafe_allow_html=True,
             )
@@ -1453,38 +1467,6 @@ def _metal_rsi_value(metal_key: str) -> float | None:
     except Exception:
         return None
     return None
-
-
-def render_rsi_signals() -> None:
-    """Sekce Smart signály — RSI pro měď a hliník."""
-    section_header("💡", "Tržní signály (RSI)")
-    st.markdown(
-        '<div class="info-box" style="margin-bottom:12px;">'
-        "RSI (14) z historických cen · Měď &amp; Hliník: <strong>Westmetall</strong> · "
-        "Orientační signál, nikoli investiční radu."
-        "</div>",
-        unsafe_allow_html=True,
-    )
-    rsi_metals = [
-        ("copper", "Měď (Cu)"),
-        ("aluminum", "Hliník (Al)"),
-    ]
-    cols = st.columns(2)
-    for (metal_key, label), col in zip(rsi_metals, cols):
-        with col:
-            rsi = _metal_rsi_value(metal_key)
-            if rsi is not None:
-                st.metric(f"RSI — {label}", f"{rsi:.1f}", help="Relative Strength Index (14)")
-                msg, alert_type = interpret_rsi(rsi)
-                if alert_type == "success":
-                    st.success(msg)
-                elif alert_type == "warning":
-                    st.warning(msg)
-                else:
-                    st.info(msg)
-            else:
-                st.metric(f"RSI — {label}", "N/A")
-                st.info("Nedostatek historických dat pro výpočet RSI (min. 15 bodů).")
 
 
 def build_daily_export_df() -> pd.DataFrame:
@@ -3133,8 +3115,6 @@ def render_metals() -> None:
     with col_al:
         _render_lme_metal_card(al_cfg[0], al_cfg[1], al_cfg[2], al_cfg[3], wm_data)
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    render_rsi_signals()
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Historické grafy — pod sebou na plnou šířku (mobil-friendly) ─────────
