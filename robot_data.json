@@ -1,33 +1,33 @@
 {
   "ccmn": {
-    "copper": 105770.0,
-    "aluminum": 23350.0
+    "copper": 105305.0,
+    "aluminum": 23195.0
   },
   "yf_spot": {
     "HRC=F": {
-      "price": 1160.0,
+      "price": 1155.0,
       "prev": 1156.0,
-      "delta": 4.0,
-      "delta_pct": 0.346
+      "delta": -1.0,
+      "delta_pct": -0.087
     },
     "BZ=F": {
-      "price": 89.629997,
-      "prev": 96.779999,
-      "delta": -7.150002,
-      "delta_pct": -7.388
+      "price": 85.610001,
+      "prev": 88.360001,
+      "delta": -2.75,
+      "delta_pct": -3.112
     },
     "CL=F": {
-      "price": 83.209999,
-      "prev": 89.309998,
-      "delta": -6.099998,
-      "delta_pct": -6.83
+      "price": 80.489998,
+      "prev": 82.610001,
+      "delta": -2.120003,
+      "delta_pct": -2.566
     },
     "EURUSD=X": {
-      "price": 1.138693,
-      "prev": 1.137682,
-      "delta": 0.00101,
-      "delta_pct": 0.089
+      "price": 1.137268,
+      "prev": 1.139497,
+      "delta": -0.002229,
+      "delta_pct": -0.196
     }
   },
-  "_ts": "2026-07-27 16:25"
+  "_ts": "2026-07-28 08:43"
 }
