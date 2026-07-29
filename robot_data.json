@@ -5,29 +5,29 @@
   },
   "yf_spot": {
     "HRC=F": {
-      "price": 1156.0,
+      "price": 1203.0,
       "prev": 1156.0,
-      "delta": 0.0,
-      "delta_pct": 0.0
+      "delta": 47.0,
+      "delta_pct": 4.066
     },
     "BZ=F": {
-      "price": 87.129997,
+      "price": 90.110001,
       "prev": 84.089996,
-      "delta": 3.040001,
-      "delta_pct": 3.615
+      "delta": 6.020004,
+      "delta_pct": 7.159
     },
     "CL=F": {
-      "price": 82.099998,
+      "price": 84.370003,
       "prev": 79.260002,
-      "delta": 2.839996,
-      "delta_pct": 3.583
+      "delta": 5.110001,
+      "delta_pct": 6.447
     },
     "EURUSD=X": {
-      "price": 1.140251,
+      "price": 1.138563,
       "prev": 1.136945,
-      "delta": 0.003306,
-      "delta_pct": 0.291
+      "delta": 0.001618,
+      "delta_pct": 0.142
     }
   },
-  "_ts": "2026-07-29 08:48"
+  "_ts": "2026-07-29 15:52"
 }
