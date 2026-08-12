@@ -29,6 +29,7 @@ Co **není** považováno za „falešná data“:
 | Plasty & Ropa | `render_oil_plastics()` | Yahoo `BZ=F`, `CL=F`, proxy model |
 | Nákup & Logistika (admin) | `render_landed_cost_pricing()`, `render_logistics()` | Uživatelská faktura + ČNB |
 | Logistika ČR & SK | `render_domestic_logistics()` | Nominatim, OSRM, ČNB |
+| Nástroje & tipy | `render_tools_and_tips()` | Lokální kalkulačky (bez API) |
 | Plánování nakládky | `render_cargo_visualization()` | CSV TP KBB 3 |
 | Souhrnný přehled | `render_summary_table()` | Agregace živých fetchů |
 
@@ -450,6 +451,30 @@ Pokud je méně než `_FORECAST_BACKTEST_MIN` úspěšných originů (málo hist
 
 ---
 
+## 8. Nástroje & tipy
+
+**Záložka:** `🧰 Nástroje & tipy` · funkce `render_tools_and_tips()` (dostupná admin i supplier).
+
+Hub praktických kalkulaček bez externích API. Výběr nástroje přes `st.selectbox` — seznam se bude rozšiřovat.
+
+### 8.1 Fill factor — průřez vodiče z průměru
+
+**Funkce:** `render_fill_factor_calculator()`  
+**Vstup:** vnější průměr vodiče `d` [mm]  
+**Vzorec:** `A_kov [mm²] = π × d²/4 × fill_factor`
+
+| Třída | Typ | MIN | GOLD | MAX | Materiál |
+|-------|-----|-----|------|-----|----------|
+| 1 | Plný (Solid) | 0.99 | 1.00 | 1.00 | CU / AL |
+| 2 | Laněný nezhutněný | 0.74 | 0.77 | 0.80 | CU / AL |
+| 2 | Compacted | 0.85 | 0.89 | 0.93 | CU / AL |
+| 5 | Ohebný | 0.72 | 0.76 | 0.80 | CU |
+| 6 | Velmi ohebný | 0.65 | 0.70 | 0.75 | CU |
+
+UI barevně rozlišuje **MIN** (červená), **GOLD / střed** (žlutá), **MAX** (zelená). Ke každé třídě je schematický **SVG průřez** (solid / 7-drát / compacted / flex5 / flex6) — tmavé mezery = vzduch (nižší fill factor). Účel: kontrola příjmu / odhad, zda naměřený průměr sedí na objednaný průřez.
+
+---
+
 ## Datový tok (zjednodušené schéma)
 
 ```mermaid
@@ -505,4 +530,4 @@ flowchart TB
 - Yahoo a veřejné OSRM/Nominatim mohou rate-limitovat nebo být dočasně nedostupné.
 - Proxy plasty a transitní dny Čína→ČR jsou **modely**, ne tržní feed — ale vždy vycházejí z reálných vstupů nebo uživatelských parametrů, nikoli z náhodných mock čísel.
 
-*Dokumentace odpovídá stavu `app.py` po odstranění oceli HRC, kalkulačky Metal Surcharge a spotového porovnání LME vs CCMN; přidán hlídač stáří dat robota, ensemble predikce s walk-forward backtestem (MAPE) a 30denní SVG sparkliny na FX kartách.*
+*Dokumentace odpovídá stavu `app.py` včetně záložky Nástroje & tipy (Fill factor kalkulačka), hlídače stáří dat robota, ensemble predikce s backtestem a SVG sparklinů na FX kartách.*

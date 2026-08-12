@@ -526,6 +526,112 @@ footer { visibility: hidden; }
     display: block;
 }
 
+.fill-factor-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+    margin-top: 8px;
+}
+.fill-factor-table th {
+    text-align: left;
+    padding: 8px 10px;
+    color: #8D99AB;
+    font-family: 'Syne', sans-serif;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    border-bottom: 1px solid #2C3442;
+}
+.fill-factor-table td {
+    padding: 10px;
+    border-bottom: 1px solid #2C3442;
+    color: #E9EDF3;
+    vertical-align: middle;
+}
+.fill-factor-table tr:last-child td { border-bottom: none; }
+.fill-class-name { font-weight: 700; color: #F2F5F9; }
+.fill-class-sub { font-size: 0.72rem; color: #8D99AB; margin-top: 2px; }
+.fill-chip {
+    display: inline-block;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.78rem;
+    font-weight: 700;
+    padding: 4px 9px;
+    border-radius: 8px;
+    white-space: nowrap;
+}
+.fill-min {
+    background: rgba(240, 86, 94, 0.16);
+    color: #F58489;
+    border: 1px solid rgba(240, 86, 94, 0.28);
+}
+.fill-gold {
+    background: rgba(250, 204, 21, 0.16);
+    color: #FACC15;
+    border: 1px solid rgba(250, 204, 21, 0.32);
+}
+.fill-max {
+    background: rgba(52, 201, 142, 0.16);
+    color: #4ADE9C;
+    border: 1px solid rgba(52, 201, 142, 0.28);
+}
+.fill-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 8px 0 4px;
+}
+.fill-gallery {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 10px;
+    margin: 12px 0 16px;
+}
+.fill-gallery-card {
+    background: linear-gradient(160deg, rgba(35, 42, 54, 0.95), rgba(27, 32, 41, 0.95));
+    border: 1px solid #2C3442;
+    border-radius: 12px;
+    padding: 10px 8px 12px;
+    text-align: center;
+}
+.fill-gallery-card svg {
+    width: 100%;
+    max-width: 110px;
+    height: auto;
+    display: block;
+    margin: 0 auto 8px;
+}
+.fill-gallery-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #F2F5F9;
+}
+.fill-gallery-sub {
+    font-size: 0.62rem;
+    color: #8D99AB;
+    margin-top: 2px;
+    line-height: 1.3;
+}
+.fill-thumb {
+    width: 44px;
+    height: 44px;
+    vertical-align: middle;
+    margin-right: 10px;
+    flex-shrink: 0;
+}
+.fill-class-cell {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+@media (max-width: 900px) {
+    .fill-gallery { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 520px) {
+    .fill-gallery { grid-template-columns: 1fr; }
+}
+
 .delta-chip {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.72rem;
@@ -5417,6 +5523,245 @@ def render_domestic_logistics() -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+#  SEKCE: NÁSTROJE & TIPY (kalkulačky pro sklad / nákup / provoz)
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Fill factor — IEC třídy lanění (MIN / GOLD střed / MAX)
+# A_kov [mm²] = π × d²/4 × fill_factor
+_FILL_FACTOR_ROWS: list[dict] = [
+    {
+        "cls": "Třída 1",
+        "typ": "Plný (Solid — jeden drát)",
+        "mat": "CU / AL",
+        "min": 0.99, "gold": 1.00, "max": 1.00,
+        "svg": "solid",
+    },
+    {
+        "cls": "Třída 2",
+        "typ": "Laněný (Nezhutněný)",
+        "mat": "CU / AL",
+        "min": 0.74, "gold": 0.77, "max": 0.80,
+        "svg": "stranded",
+    },
+    {
+        "cls": "Třída 2",
+        "typ": "Laněný (Zhutněný — Compacted)",
+        "mat": "CU / AL",
+        "min": 0.85, "gold": 0.89, "max": 0.93,
+        "svg": "compacted",
+    },
+    {
+        "cls": "Třída 5",
+        "typ": "Ohebný (Flexibilní)",
+        "mat": "CU",
+        "min": 0.72, "gold": 0.76, "max": 0.80,
+        "svg": "flex5",
+    },
+    {
+        "cls": "Třída 6",
+        "typ": "Velmi ohebný (svařovací atd.)",
+        "mat": "CU",
+        "min": 0.65, "gold": 0.70, "max": 0.75,
+        "svg": "flex6",
+    },
+]
+
+
+def _fill_factor_cross_section_svg(kind: str, size: int = 120) -> str:
+    """
+    Schematický průřez vodiče (SVG) — solid / stranded / compacted / flex5 / flex6.
+    Barevně Cu-odstín; mezery mezi dráty ukazují fill factor.
+    """
+    # měď: výplň + okraj; pozadí obálky
+    fill, stroke, gap = "#C47A3A", "#8B5A2B", "#1A1F28"
+    cx = cy = size / 2
+    R = size * 0.42  # vnější obálka
+
+    def wire(x: float, y: float, r: float, *, compact: bool = False) -> str:
+        # compact = mírně „zmáčknutý“ elipsovitý tvar
+        if compact:
+            return (
+                f'<ellipse cx="{x:.1f}" cy="{y:.1f}" rx="{r * 1.08:.1f}" ry="{r * 0.92:.1f}" '
+                f'fill="{fill}" stroke="{stroke}" stroke-width="0.8"/>'
+            )
+        return (
+            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r:.1f}" '
+            f'fill="{fill}" stroke="{stroke}" stroke-width="0.7"/>'
+        )
+
+    parts = [
+        f'<svg viewBox="0 0 {size} {size}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">',
+        f'<circle cx="{cx}" cy="{cy}" r="{R + 2}" fill="{gap}" stroke="#2C3442" stroke-width="1.2"/>',
+    ]
+
+    if kind == "solid":
+        parts.append(wire(cx, cy, R * 0.92))
+    elif kind in ("stranded", "compacted"):
+        compact = kind == "compacted"
+        # 1 + 6 (7-drátové lano) — u compacted větší dráty = méně mezer
+        r = R * (0.36 if compact else 0.30)
+        ring = R * (0.62 if compact else 0.68)
+        parts.append(wire(cx, cy, r, compact=compact))
+        for i in range(6):
+            ang = math.radians(60 * i - 90)
+            parts.append(wire(cx + ring * math.cos(ang), cy + ring * math.sin(ang), r, compact=compact))
+    elif kind == "flex5":
+        # více menších drátů (≈ 1+6+12 styl, zjednodušeně náhodně-pravidelná mříž v kruhu)
+        r = R * 0.155
+        coords: list[tuple[float, float]] = [(cx, cy)]
+        for ring_i, (n, rad) in enumerate([(6, 0.38), (12, 0.72)], start=1):
+            for i in range(n):
+                ang = math.radians(360 * i / n - 90 + (15 if ring_i == 2 else 0))
+                coords.append((cx + R * rad * math.cos(ang), cy + R * rad * math.sin(ang)))
+        for x, y in coords:
+            parts.append(wire(x, y, r))
+    else:  # flex6 — ještě jemnější dráty
+        r = R * 0.095
+        coords = [(cx, cy)]
+        for n, rad in [(6, 0.26), (12, 0.48), (18, 0.72)]:
+            for i in range(n):
+                ang = math.radians(360 * i / n - 90)
+                coords.append((cx + R * rad * math.cos(ang), cy + R * rad * math.sin(ang)))
+        for x, y in coords:
+            parts.append(wire(x, y, r))
+
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def _circle_area_mm2(diameter_mm: float) -> float:
+    """Geometrická plocha kruhu z průměru [mm] → mm²."""
+    return math.pi * (diameter_mm ** 2) / 4.0
+
+
+def render_fill_factor_calculator() -> None:
+    """
+    Fill factor: z naměřeného průměru vodiče odhadne průřez kovu (mm²)
+    podle třídy lanění — MIN / GOLD (střed) / MAX.
+    """
+    section_header("📐", "Fill factor — průřez vodiče z průměru")
+    st.markdown(
+        '<div class="info-box" style="margin-bottom:12px;">'
+        "Zadej <strong>vnější průměr vodiče (mm)</strong>. Kalkulačka spočítá "
+        "<strong>skutečný průřez kovu</strong> podle fill factoru třídy lanění "
+        "(IEC): kruhová plocha × fill factor. "
+        "Užitečné při příjmu zboží / kontrole, zda průměr sedí na objednaný průřez "
+        "(např. 240 mm²). Hodnoty jsou <strong>orientační</strong>."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # Galerie průřezů — jak jednotlivé třídy vypadají
+    gallery = "".join(
+        f'<div class="fill-gallery-card">'
+        f'{_fill_factor_cross_section_svg(r["svg"])}'
+        f'<div class="fill-gallery-title">{r["cls"]}</div>'
+        f'<div class="fill-gallery-sub">{r["typ"]}</div>'
+        f"</div>"
+        for r in _FILL_FACTOR_ROWS
+    )
+    st.markdown(
+        f'<div class="fill-gallery">{gallery}</div>'
+        '<div class="card-extra" style="margin:-6px 0 12px 2px;">'
+        "Schematické průřezy: tmavé mezery = vzduch mezi dráty (nižší fill factor). "
+        "Compacted = dráty zhutněné, méně mezer.</div>",
+        unsafe_allow_html=True,
+    )
+
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        diameter = st.number_input(
+            "Průměr vodiče [mm]",
+            min_value=0.10,
+            max_value=100.0,
+            value=19.13,
+            step=0.01,
+            format="%.2f",
+            key="fill_factor_diameter",
+            help="Naměřený / katalogový vnější průměr jádra (Cu/Al), ne celého kabelu.",
+        )
+    with c2:
+        area = _circle_area_mm2(float(diameter))
+        st.markdown(
+            f'<div class="metric-card card-neutral" style="margin-top:1.6rem;">'
+            f'<div class="card-label">Geometrická plocha kruhu</div>'
+            f'<div class="card-value">{format_num(area, 2)}</div>'
+            f'<div class="card-unit">mm² &nbsp;·&nbsp; π × d² / 4</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown(
+        '<div class="fill-legend">'
+        '<span class="fill-chip fill-min">MIN — spodní odhad</span>'
+        '<span class="fill-chip fill-gold">GOLD — střed (typický)</span>'
+        '<span class="fill-chip fill-max">MAX — horní odhad</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    rows_html: list[str] = []
+    for r in _FILL_FACTOR_ROWS:
+        a_min = area * r["min"]
+        a_gold = area * r["gold"]
+        a_max = area * r["max"]
+        thumb = _fill_factor_cross_section_svg(r["svg"], size=88)
+        rows_html.append(
+            "<tr>"
+            f'<td><div class="fill-class-cell">{thumb}'
+            f'<div><div class="fill-class-name">{r["cls"]}</div>'
+            f'<div class="fill-class-sub">{r["typ"]} · {r["mat"]}</div></div></div></td>'
+            f'<td><span class="fill-chip fill-min">{format_num(a_min, 1)} mm²</span>'
+            f'<div class="fill-class-sub">ff {r["min"]:.2f}</div></td>'
+            f'<td><span class="fill-chip fill-gold">{format_num(a_gold, 1)} mm²</span>'
+            f'<div class="fill-class-sub">ff {r["gold"]:.2f}</div></td>'
+            f'<td><span class="fill-chip fill-max">{format_num(a_max, 1)} mm²</span>'
+            f'<div class="fill-class-sub">ff {r["max"]:.2f}</div></td>'
+            "</tr>"
+        )
+
+    st.markdown(
+        '<div class="data-table-wrap">'
+        '<table class="fill-factor-table">'
+        "<thead><tr>"
+        "<th>Třída / typ vodiče</th>"
+        "<th>MIN</th><th>GOLD (střed)</th><th>MAX</th>"
+        "</tr></thead>"
+        f'<tbody>{"".join(rows_html)}</tbody>'
+        "</table></div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Vzorec: A = π × d²/4 × fill factor · Compacted = zhutněné lano (vyšší fill factor) · "
+        "Stejný průměr ≠ stejný průřez kovu u různých tříd lanění. "
+        "Průřezy jsou schémata pro výuku / rychlé rozpoznání, ne fotografie konkrétního kabelu."
+    )
+
+
+def render_tools_and_tips() -> None:
+    """Hub praktických kalkulaček a tipů pro sklad, nákup i provoz."""
+    section_header("🧰", "Nástroje & tipy")
+    st.markdown(
+        '<div class="info-box" style="margin-bottom:14px;">'
+        "Praktické kalkulačky a tipy pro <strong>sklad</strong>, <strong>nákup</strong> "
+        "i běžný provoz. Postupně sem přidáme další nástroje — vyber si aktuální funkci níže."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    tool = st.selectbox(
+        "Nástroj",
+        options=["Fill factor — průřez vodiče z průměru"],
+        key="tools_hub_select",
+        help="Seznam se bude rozšiřovat o další kalkulačky a tipy.",
+    )
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    if tool.startswith("Fill factor"):
+        render_fill_factor_calculator()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 #  FOOTER
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -5466,6 +5811,7 @@ def main() -> None:
         "💱 Měnové kurzy",
         "🛢️ Plasty & Ropa",
         "🚛 Logistika ČR & SK",
+        "🧰 Nástroje & tipy",
     ]
 
     if not is_supplier:
@@ -5488,9 +5834,13 @@ def main() -> None:
             render_logistics()
         with tabs[4]:
             render_domestic_logistics()
+        with tabs[5]:
+            render_tools_and_tips()
     else:
         with tabs[3]:
             render_domestic_logistics()
+        with tabs[4]:
+            render_tools_and_tips()
 
     render_footer()
 
