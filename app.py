@@ -529,50 +529,62 @@ footer { visibility: hidden; }
 .fill-gallery {
     display: grid;
     grid-template-columns: repeat(5, 1fr);
-    gap: 6px;
+    gap: 8px;
     margin: 8px 0 6px;
 }
 .fill-gallery-card {
     background: linear-gradient(160deg, rgba(35, 42, 54, 0.95), rgba(27, 32, 41, 0.95));
     border: 1px solid #2C3442;
     border-radius: 8px;
-    padding: 6px 5px 7px;
+    padding: 8px 6px 8px;
     text-align: center;
 }
 .fill-gallery-card svg {
-    width: 44px;
-    height: 44px;
+    width: 48px;
+    height: 48px;
     display: block;
-    margin: 0 auto 3px;
+    margin: 0 auto 4px;
 }
 .fill-gallery-title {
     font-family: 'Syne', sans-serif;
-    font-size: 0.6rem;
+    font-size: 0.72rem;
     font-weight: 700;
     color: #F2F5F9;
 }
 .fill-gallery-sub {
-    font-size: 0.52rem;
+    font-size: 0.62rem;
     color: #8D99AB;
-    margin: 1px 0 5px;
-    line-height: 1.2;
-    min-height: 1.9em;
+    margin: 2px 0 6px;
+    line-height: 1.25;
+    min-height: 2.1em;
 }
 .fill-card-vals {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 3px;
 }
 .fill-card-row {
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: baseline;
+    gap: 4px;
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.58rem;
+    font-size: 0.68rem;
     font-weight: 700;
-    padding: 2px 5px;
-    border-radius: 4px;
-    line-height: 1.2;
+    padding: 3px 6px;
+    border-radius: 5px;
+    line-height: 1.25;
+    text-align: left;
+}
+.fill-card-row > span:last-child {
+    text-align: right;
+}
+.fill-card-ff {
+    display: block;
+    font-size: 0.58rem;
+    font-weight: 600;
+    opacity: 0.85;
+    margin-top: 1px;
 }
 .fill-card-row.fill-min {
     background: rgba(240, 86, 94, 0.14);
@@ -589,7 +601,7 @@ footer { visibility: hidden; }
 .fill-chip {
     display: inline-block;
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.7rem;
+    font-size: 0.72rem;
     font-weight: 700;
     padding: 2px 7px;
     border-radius: 6px;
@@ -603,6 +615,7 @@ footer { visibility: hidden; }
     flex-wrap: wrap;
     gap: 6px;
     margin: 2px 0 4px;
+    align-items: center;
 }
 @media (max-width: 900px) {
     .fill-gallery { grid-template-columns: repeat(3, 1fr); }
@@ -5645,6 +5658,7 @@ def render_fill_factor_calculator() -> None:
         '<span class="fill-chip fill-min" style="background:rgba(240,86,94,0.14);border:1px solid rgba(240,86,94,0.25);">MIN</span>'
         '<span class="fill-chip fill-gold" style="background:rgba(250,204,21,0.14);border:1px solid rgba(250,204,21,0.28);">GOLD</span>'
         '<span class="fill-chip fill-max" style="background:rgba(52,201,142,0.14);border:1px solid rgba(52,201,142,0.25);">MAX</span>'
+        '<span class="card-extra">+ fill factor (ff) u každé hodnoty</span>'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -5661,11 +5675,14 @@ def render_fill_factor_calculator() -> None:
             f'<div class="fill-gallery-sub">{r["typ"]}</div>'
             f'<div class="fill-card-vals">'
             f'<div class="fill-card-row fill-min"><span>MIN</span>'
-            f'<span>{format_num(a_min, 1)}</span></div>'
+            f'<span>{format_num(a_min, 1)} mm²'
+            f'<span class="fill-card-ff">ff {r["min"]:.2f}</span></span></div>'
             f'<div class="fill-card-row fill-gold"><span>GOLD</span>'
-            f'<span>{format_num(a_gold, 1)}</span></div>'
+            f'<span>{format_num(a_gold, 1)} mm²'
+            f'<span class="fill-card-ff">ff {r["gold"]:.2f}</span></span></div>'
             f'<div class="fill-card-row fill-max"><span>MAX</span>'
-            f'<span>{format_num(a_max, 1)}</span></div>'
+            f'<span>{format_num(a_max, 1)} mm²'
+            f'<span class="fill-card-ff">ff {r["max"]:.2f}</span></span></div>'
             f'</div></div>'
         )
 
