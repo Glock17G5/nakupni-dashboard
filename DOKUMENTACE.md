@@ -473,6 +473,39 @@ Hub praktických kalkulaček bez externích API. Výběr nástroje přes `st.sel
 
 UI barevně rozlišuje **MIN** (červená), **GOLD / střed** (žlutá), **MAX** (zelená). Ke každé třídě je schematický **SVG průřez** (solid / 7-drát / compacted / flex5 / flex6) — tmavé mezery = vzduch (nižší fill factor). Účel: kontrola příjmu / odhad, zda naměřený průměr sedí na objednaný průřez.
 
+### 8.2 Kapacita bubnu — co se vejde na buben
+
+**Funkce:** `render_drum_capacity_calculator()`  
+**Vstupy (mm):** průměr čela `Fd`, průměr jádra `Kd`, vnitřní šíře návinu `l₂`, průměr kabelu `D`  
+**Rezerva u čela:** 1×D / 2×D / vlastní mm → `F_eff = Fd − 2×rezerva`  
+**Vzorec délky [m]:** `L = π · l₂ · (F_eff² − Kd²) / (4 · D²) / 1000` (vstupy v mm)
+
+Doplňky:
+- kontrola ohybu: `Kd ≥ N × D` (HELUKABEL 15–40×, výchozí 20×; VDE vinutí ≈ poloměr 5–6×D)
+- volitelně max. nosnost [kg] + váha kabelu [kg/km] → použitelná délka = min(prostor, limit hmotnosti)
+- orientační vrstvy ≈ `(F_eff − Kd) / (2D)`, závity na vrstvu ≈ `l₂ / D`
+
+Hodnota je **orientační** (ideální návin). Předvolby HELUKABEL KTG lze doplnit později — základ jsou vlastní rozměry.
+
+### 8.3 Technické tabulky HELUKABEL (katalog)
+
+**Funkce:** `render_helukabel_catalog()` v `helukabel_tables.py`  
+**Skeny:** `assets/helukabel/*.png` (12 stránek)
+
+Jedna položka v hubu s vnitřním `st.radio` podle tématu:
+
+| Sekce | Obsah |
+|-------|--------|
+| Bubny KTG — rozměry | Fd/Kd/Bd/I₁/I₂, nosnost, hmotnost (dřevo / plast / nevratné) |
+| Bubny KTG — kapacita | filtr Kd/D + originální matice délek (sken) |
+| Min. poloměr ohybu | VDE 0298-3 + 0891 + rychlá kontrola → Rmin / min. jádro |
+| Značení žil | DIN 40705/IEC 60446 + VDE 0816 (čtyřky) |
+| Proudová zatížitelnost | ohebné @ 30 °C + koef. teploty; sken do 1000 V |
+| Odpor & průměry / AWG | IEC 60228 Ω/km, VDE 0295 ø, převod AWG |
+| Elektrotechnické vzorce | κ/ρ + kalkulačka R / úbytek u / průřez q |
+
+Husté matice zůstávají jako sken v expanderu; přepisované tabulky jsou `st.dataframe`.
+
 ---
 
 ## Datový tok (zjednodušené schéma)
@@ -530,4 +563,4 @@ flowchart TB
 - Yahoo a veřejné OSRM/Nominatim mohou rate-limitovat nebo být dočasně nedostupné.
 - Proxy plasty a transitní dny Čína→ČR jsou **modely**, ne tržní feed — ale vždy vycházejí z reálných vstupů nebo uživatelských parametrů, nikoli z náhodných mock čísel.
 
-*Dokumentace odpovídá stavu `app.py` včetně záložky Nástroje & tipy (Fill factor kalkulačka), hlídače stáří dat robota, ensemble predikce s backtestem a SVG sparklinů na FX kartách.*
+*Dokumentace odpovídá stavu `app.py` včetně záložky Nástroje & tipy (Fill factor, kapacita bubnu, tabulky HELUKABEL), hlídače stáří dat robota, ensemble predikce s backtestem a SVG sparklinů na FX kartách.*

@@ -34,6 +34,8 @@ import plotly.graph_objects as go
 # ── Streamlit ─────────────────────────────────────────────────────────────────
 import streamlit as st
 
+from helukabel_tables import render_helukabel_catalog
+
 TZ_PRAGUE = ZoneInfo("Europe/Prague")
 CACHE_TTL = 3600
 _YF_HIST_PERIOD = "1y"
@@ -529,51 +531,51 @@ footer { visibility: hidden; }
 .fill-gallery {
     display: grid;
     grid-template-columns: repeat(5, 1fr);
-    gap: 8px;
+    gap: 10px;
     margin: 8px 0 6px;
 }
 .fill-gallery-card {
     background: linear-gradient(160deg, rgba(35, 42, 54, 0.95), rgba(27, 32, 41, 0.95));
     border: 1px solid #2C3442;
-    border-radius: 8px;
-    padding: 8px 6px 8px;
+    border-radius: 10px;
+    padding: 10px 8px 10px;
     text-align: center;
 }
 .fill-gallery-card svg {
-    width: 48px;
-    height: 48px;
+    width: 56px;
+    height: 56px;
     display: block;
-    margin: 0 auto 4px;
+    margin: 0 auto 6px;
 }
 .fill-gallery-title {
     font-family: 'Syne', sans-serif;
-    font-size: 0.72rem;
+    font-size: 0.88rem;
     font-weight: 700;
     color: #F2F5F9;
 }
 .fill-gallery-sub {
-    font-size: 0.62rem;
+    font-size: 0.72rem;
     color: #8D99AB;
-    margin: 2px 0 6px;
-    line-height: 1.25;
-    min-height: 2.1em;
+    margin: 3px 0 8px;
+    line-height: 1.3;
+    min-height: 2.2em;
 }
 .fill-card-vals {
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 4px;
 }
 .fill-card-row {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
-    gap: 4px;
+    gap: 6px;
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.68rem;
+    font-size: 0.82rem;
     font-weight: 700;
-    padding: 3px 6px;
-    border-radius: 5px;
-    line-height: 1.25;
+    padding: 5px 8px;
+    border-radius: 6px;
+    line-height: 1.3;
     text-align: left;
 }
 .fill-card-row > span:last-child {
@@ -581,10 +583,10 @@ footer { visibility: hidden; }
 }
 .fill-card-ff {
     display: block;
-    font-size: 0.58rem;
+    font-size: 0.72rem;
     font-weight: 600;
-    opacity: 0.85;
-    margin-top: 1px;
+    opacity: 0.9;
+    margin-top: 2px;
 }
 .fill-card-row.fill-min {
     background: rgba(240, 86, 94, 0.14);
@@ -601,9 +603,9 @@ footer { visibility: hidden; }
 .fill-chip {
     display: inline-block;
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.72rem;
+    font-size: 0.8rem;
     font-weight: 700;
-    padding: 2px 7px;
+    padding: 3px 8px;
     border-radius: 6px;
     white-space: nowrap;
 }
@@ -613,15 +615,16 @@ footer { visibility: hidden; }
 .fill-legend {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
-    margin: 2px 0 4px;
+    gap: 8px;
+    margin: 4px 0 6px;
     align-items: center;
+    font-size: 0.85rem;
 }
 @media (max-width: 900px) {
     .fill-gallery { grid-template-columns: repeat(3, 1fr); }
 }
 @media (max-width: 520px) {
-    .fill-gallery { grid-template-columns: repeat(2, 1fr); }
+    .fill-gallery { grid-template-columns: 1fr; }
 }
 
 .delta-chip {
@@ -5696,6 +5699,270 @@ def render_fill_factor_calculator() -> None:
     )
 
 
+def _drum_winding_length_m(
+    flange_mm: float,
+    core_mm: float,
+    width_mm: float,
+    cable_mm: float,
+    clearance_mm: float,
+) -> dict[str, float | None]:
+    """
+    Orientační délka kabelu na bubnu [m].
+    L = π · l2 · (F_eff² − Kd²) / (4 · D²)   (vše v mm → výsledek / 1000 = m)
+    F_eff = Fd − 2·rezerva (volný okraj u čela).
+    """
+    if min(flange_mm, core_mm, width_mm, cable_mm) <= 0:
+        return {"length_m": None, "f_eff": None, "layers": None, "turns": None}
+    f_eff = flange_mm - 2.0 * clearance_mm
+    if f_eff <= core_mm:
+        return {"length_m": None, "f_eff": f_eff, "layers": None, "turns": None}
+    length_mm = math.pi * width_mm * (f_eff ** 2 - core_mm ** 2) / (4.0 * cable_mm ** 2)
+    layers = (f_eff - core_mm) / 2.0 / cable_mm
+    turns = width_mm / cable_mm
+    return {
+        "length_m": length_mm / 1000.0,
+        "f_eff": f_eff,
+        "layers": layers,
+        "turns": turns,
+    }
+
+
+def _drum_schematic_svg(fd: float, kd: float, l2: float) -> str:
+    """Malé SVG schéma bubnu s popisky Fd / Kd / l2."""
+    w, h = 220, 130
+    # normalizace rozměrů do viewBoxu
+    scale = 90.0 / max(fd, 1.0)
+    flange_h = max(fd * scale, 20)
+    core_h = max(kd * scale, 8)
+    drum_w = max(min(l2 * scale * 0.9, 100), 36)
+    cx, cy = w / 2, h / 2 + 4
+    x0 = cx - drum_w / 2
+    # čela (flanges)
+    flange_w = 8
+    parts = [
+        f'<svg viewBox="0 0 {w} {h}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">',
+        # levé čelo
+        f'<rect x="{x0 - flange_w:.1f}" y="{cy - flange_h / 2:.1f}" width="{flange_w}" '
+        f'height="{flange_h:.1f}" rx="2" fill="#8D99AB" stroke="#2C3442"/>',
+        # pravé čelo
+        f'<rect x="{x0 + drum_w:.1f}" y="{cy - flange_h / 2:.1f}" width="{flange_w}" '
+        f'height="{flange_h:.1f}" rx="2" fill="#8D99AB" stroke="#2C3442"/>',
+        # jádro
+        f'<rect x="{x0:.1f}" y="{cy - core_h / 2:.1f}" width="{drum_w:.1f}" '
+        f'height="{core_h:.1f}" fill="#C47A3A" stroke="#8B5A2B"/>',
+        # návin (prostor mezi jádrem a čelem)
+        f'<rect x="{x0:.1f}" y="{cy - flange_h / 2 + 4:.1f}" width="{drum_w:.1f}" '
+        f'height="{(flange_h - core_h) / 2 - 4:.1f}" fill="rgba(77,159,255,0.18)" '
+        f'stroke="rgba(77,159,255,0.35)" stroke-dasharray="3 2"/>',
+        f'<text x="{cx}" y="14" text-anchor="middle" fill="#8D99AB" '
+        f'font-size="10" font-family="Syne,sans-serif">Fd / Kd / l₂</text>',
+        "</svg>",
+    ]
+    return "".join(parts)
+
+
+def render_drum_capacity_calculator() -> None:
+    """
+    Kapacita kabelového bubnu — vlastní rozměry (Fd, Kd, l₂) + Ø kabelu.
+    Orientační výpočet délky + kontrola min. jádra (ohyb) a volitelně nosnosti.
+    """
+    section_header("🛢️", "Kapacita bubnu — co se vejde na buben")
+    st.markdown(
+        '<div class="info-box" style="margin-bottom:10px;">'
+        "Zadej rozměry <strong>vlastního bubnu</strong> a průměr kabelu. "
+        "Výpočet: <code>L ≈ π · l₂ · (F_eff² − Kd²) / (4 · D²)</code> "
+        "(F_eff = průměr čela minus 2× rezerva u čela). "
+        "Hodnota je <strong>orientační</strong> — skutečný návin závisí na tuhosti kabelu a způsobu vinutí."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    c_a, c_b = st.columns([1.1, 1])
+    with c_a:
+        st.markdown("##### Rozměry bubnu [mm]")
+        fd = st.number_input(
+            "Průměr čela Fd",
+            min_value=50.0,
+            max_value=5000.0,
+            value=1000.0,
+            step=10.0,
+            key="drum_fd",
+            help="Vnější průměr čela bubnu (flange).",
+        )
+        kd = st.number_input(
+            "Průměr jádra Kd",
+            min_value=20.0,
+            max_value=4000.0,
+            value=500.0,
+            step=10.0,
+            key="drum_kd",
+            help="Průměr válce, na který se navíjí (barrel / core).",
+        )
+        l2 = st.number_input(
+            "Vnitřní šíře návinu l₂",
+            min_value=20.0,
+            max_value=3000.0,
+            value=560.0,
+            step=10.0,
+            key="drum_l2",
+            help="Šířka mezi čely, kam se ukládá kabel.",
+        )
+    with c_b:
+        st.markdown("##### Kabel & rezerva")
+        d_cab = st.number_input(
+            "Průměr kabelu D [mm]",
+            min_value=1.0,
+            max_value=200.0,
+            value=20.0,
+            step=0.5,
+            format="%.1f",
+            key="drum_cable_d",
+        )
+        clearance_mode = st.selectbox(
+            "Rezerva u čela",
+            options=["1 × D", "2 × D", "Vlastní [mm]"],
+            index=0,
+            key="drum_clearance_mode",
+            help="Volný okraj mezi horní vrstvou kabelu a okrajem čela.",
+        )
+        if clearance_mode == "Vlastní [mm]":
+            clearance = st.number_input(
+                "Rezerva [mm]",
+                min_value=0.0,
+                max_value=500.0,
+                value=20.0,
+                step=1.0,
+                key="drum_clearance_mm",
+            )
+        else:
+            mult = 1.0 if clearance_mode.startswith("1") else 2.0
+            clearance = mult * float(d_cab)
+            st.caption(f"Rezerva = {format_num(clearance, 1)} mm")
+
+        bend_labels = {
+            "15 × D (HELUKABEL — nejméně přísné)": 15,
+            "20 × D": 20,
+            "25 × D": 25,
+            "30 × D": 30,
+            "40 × D (nejpřísnější)": 40,
+        }
+        bend_label = st.selectbox(
+            "Min. jádro vs Ø kabelu (kontrola ohybu)",
+            options=list(bend_labels.keys()),
+            index=1,
+            key="drum_bend_factor",
+            help="Podle tabulek HELUKABEL: Kd by mělo být alespoň N× průměr kabelu. "
+            "VDE ohyb při vinutí na buben je typicky poloměr 5–6×D (= jádro 10–12×D) — "
+            "HELUKABEL pracuje konzervativněji (15–40×).",
+        )
+        bend_n = bend_labels[bend_label]
+
+    # Volitelná nosnost
+    with st.expander("Nosnost bubnu vs váha kabelu (volitelné)", expanded=False):
+        w1, w2 = st.columns(2)
+        with w1:
+            max_load = st.number_input(
+                "Max. nosnost bubnu [kg]",
+                min_value=0.0,
+                max_value=50000.0,
+                value=0.0,
+                step=50.0,
+                key="drum_max_load",
+                help="0 = nepočítat limit hmotnosti.",
+            )
+        with w2:
+            kg_per_km = st.number_input(
+                "Váha kabelu [kg/km]",
+                min_value=0.0,
+                max_value=50000.0,
+                value=0.0,
+                step=10.0,
+                key="drum_kg_km",
+            )
+
+    if kd >= fd:
+        st.markdown(
+            '<div class="error-box">Průměr jádra Kd musí být menší než průměr čela Fd.</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    res = _drum_winding_length_m(fd, kd, l2, d_cab, clearance)
+    kd_min = bend_n * float(d_cab)
+    bend_ok = kd >= kd_min
+
+    st.markdown(
+        f'<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:8px 0;">'
+        f'{_drum_schematic_svg(fd, kd, l2)}'
+        f'<div class="card-extra">'
+        f'Fd = <strong>{format_num(fd, 0)}</strong> mm · '
+        f'Kd = <strong>{format_num(kd, 0)}</strong> mm · '
+        f'l₂ = <strong>{format_num(l2, 0)}</strong> mm · '
+        f'D = <strong>{format_num(d_cab, 1)}</strong> mm<br>'
+        f'Rezerva u čela = <strong>{format_num(clearance, 1)}</strong> mm → '
+        f'F_eff = <strong>{format_num(res["f_eff"], 1) if res["f_eff"] is not None else "—"}</strong> mm'
+        f'</div></div>',
+        unsafe_allow_html=True,
+    )
+
+    if res["length_m"] is None:
+        st.markdown(
+            '<div class="error-box">Po odečtení rezervy nezůstává prostor pro návin '
+            "(F_eff ≤ Kd). Zmenši rezervu nebo zkontroluj rozměry.</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    length_m = float(res["length_m"])
+    layers = float(res["layers"] or 0)
+    turns = float(res["turns"] or 0)
+
+    # Limit hmotností
+    weight_limit_m: float | None = None
+    if max_load > 0 and kg_per_km > 0:
+        weight_limit_m = max_load / (kg_per_km / 1000.0)
+    usable_m = length_m
+    limit_note = ""
+    if weight_limit_m is not None and weight_limit_m < length_m:
+        usable_m = weight_limit_m
+        limit_note = (
+            f" · limitováno nosností ({format_num(max_load, 0)} kg / "
+            f"{format_num(kg_per_km, 0)} kg/km → max {format_num(weight_limit_m, 0)} m)"
+        )
+
+    r1, r2, r3 = st.columns(3)
+    with r1:
+        st.metric("Orientační délka (prostor)", f"{length_m:,.0f} m".replace(",", " "))
+    with r2:
+        st.metric("Použitelná délka", f"{usable_m:,.0f} m".replace(",", " "), help="Po zohlednění nosnosti, pokud je vyplněná.")
+    with r3:
+        st.metric("Vrstvy ≈ / závity na vrstvu ≈", f"{layers:.1f} / {turns:.0f}")
+
+    if bend_ok:
+        st.markdown(
+            f'<div class="success-box" style="margin-top:8px;">'
+            f'✅ <strong>Ohyb OK</strong> — jádro Kd {format_num(kd, 0)} mm ≥ '
+            f'{bend_n} × D = {format_num(kd_min, 0)} mm.'
+            f'{limit_note}</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f'<div class="warning-box" style="margin-top:8px;">'
+            f'⚠️ <strong>Jádro je malé pro zvolený ohyb</strong> — Kd {format_num(kd, 0)} mm &lt; '
+            f'{bend_n} × D = {format_num(kd_min, 0)} mm. '
+            f'Kabel na tomto jádru může být poškozen / mimo doporučení HELUKABEL.'
+            f'{limit_note}</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.caption(
+        "Vzorec předpokládá ideální návin (bez mezer mezi závity nad D²). "
+        "V praxi bývá délka o něco nižší. Předvolby HELUKABEL KTG lze doplnit později — "
+        "základ je vlastní Fd / Kd / l₂."
+    )
+
+
 def render_tools_and_tips() -> None:
     """Hub praktických kalkulaček a tipů pro sklad, nákup i provoz."""
     section_header("🧰", "Nástroje & tipy")
@@ -5709,7 +5976,11 @@ def render_tools_and_tips() -> None:
 
     tool = st.selectbox(
         "Nástroj",
-        options=["Fill factor — průřez vodiče z průměru"],
+        options=[
+            "Fill factor — průřez vodiče z průměru",
+            "Kapacita bubnu — co se vejde na buben",
+            "Technické tabulky HELUKABEL (katalog)",
+        ],
         key="tools_hub_select",
         help="Seznam se bude rozšiřovat o další kalkulačky a tipy.",
     )
@@ -5717,7 +5988,10 @@ def render_tools_and_tips() -> None:
 
     if tool.startswith("Fill factor"):
         render_fill_factor_calculator()
-
+    elif tool.startswith("Kapacita bubnu"):
+        render_drum_capacity_calculator()
+    elif tool.startswith("Technické tabulky"):
+        render_helukabel_catalog()
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  FOOTER
