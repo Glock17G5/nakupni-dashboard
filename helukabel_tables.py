@@ -108,6 +108,31 @@ def ktg_wood_by_code(code: str) -> dict | None:
     return None
 
 
+def ktg_wood_drums() -> list[dict]:
+    """Všechny standardní dřevěné KTG bubny jako slovníky."""
+    out = []
+    for row in _KTG_WOOD:
+        out.append({
+            "kod": row[0], "velikost": row[1],
+            "Fd": row[2], "Kd": row[3], "Bd": row[4],
+            "I1": row[5], "I2": row[6],
+            "max_kg": row[7], "mass": row[8],
+            "label": f"{row[0]}/{row[1]}",
+        })
+    return out
+
+
+def ktg_min_drums_for_bend(d_cable_mm: float, bend_n: float) -> list[dict]:
+    """
+    KTG dřevěné bubny s Kd ≥ bend_n × D, seřazené od nejmenšího čela.
+    """
+    if d_cable_mm <= 0 or bend_n <= 0:
+        return []
+    kd_min = bend_n * d_cable_mm
+    ok = [d for d in ktg_wood_drums() if d["Kd"] >= kd_min]
+    return sorted(ok, key=lambda d: (d["Fd"], d["Kd"], d["I2"]))
+
+
 # ── Ohyb VDE ──────────────────────────────────────────────────────────────────
 
 def df_bend_power_fixed() -> pd.DataFrame:
