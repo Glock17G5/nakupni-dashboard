@@ -35,10 +35,15 @@ import plotly.graph_objects as go
 import streamlit as st
 
 try:
-    from helukabel_tables import ktg_min_drums_for_bend, render_helukabel_catalog
+    from helukabel_tables import (
+        ktg_min_drums_for_bend,
+        ktg_wood_drums,
+        render_helukabel_catalog,
+    )
 except ImportError:  # chybí soubor na deployi (např. nepushnutý na GitHub)
     render_helukabel_catalog = None  # type: ignore[assignment]
     ktg_min_drums_for_bend = None  # type: ignore[assignment]
+    ktg_wood_drums = None  # type: ignore[assignment]
 
 TZ_PRAGUE = ZoneInfo("Europe/Prague")
 CACHE_TTL = 3600
@@ -5828,7 +5833,7 @@ def _drum_schematic_svg(fd: float, kd: float, l2: float) -> str:
         f'height="{wind_h:.1f}" fill="rgba(77,159,255,0.18)" '
         f'stroke="rgba(77,159,255,0.35)" stroke-dasharray="2 2"/>',
         f'<text x="{cx}" y="10" text-anchor="middle" fill="#8D99AB" '
-        f'font-size="8" font-family="Syne,sans-serif">Fd / Kd / l₂</text>',
+        f'font-size="7.5" font-family="Syne,sans-serif">čelo / jádro / šířka</text>',
         "</svg>",
     ]
     return "".join(parts)
@@ -5841,70 +5846,107 @@ def render_drum_capacity_calculator() -> None:
     section_header("🛢️", "Kapacita bubnu — co se vejde na buben")
     st.markdown(
         '<div class="info-box" style="margin-bottom:10px;">'
-        "Návin se počítá <strong>po vrstvách</strong>: závity na šířku = floor(l₂/D), "
-        "každá další řada má větší obvod (automaticky delší). "
-        "Zadej vlastní buben, Ø kabelu a volitelně cílovou délku. "
-        "Podle ohybu (např. 12×D / 15×D) navrhne nejmenší KTG bubny z tabulek."
+        "Návin se počítá <strong>po vrstvách (řadách)</strong> — každá další řada má větší obvod. "
+        "Zadej rozměry bubnu a kabelu; volitelně délku k namotání. "
+        "Podle ohybu navrhne nejmenší vhodné bubny z katalogu KTG."
         "</div>",
         unsafe_allow_html=True,
     )
+
+    # Předvolba KTG → předvyplní rozměry
+    _ktg_all = ktg_wood_drums() if ktg_wood_drums is not None else []
+
+    if _ktg_all:
+        preset_labels = ["Vlastní rozměry"] + [
+            f"{d['label']} — čelo {d['Fd']} / jádro {d['Kd']} / šířka {d['I2']} mm"
+            for d in _ktg_all
+        ]
+        preset = st.selectbox(
+            "Předvolba bubnu (katalog KTG)",
+            options=preset_labels,
+            index=0,
+            key="drum_ktg_preset",
+            help="Vyber standardní KTG — předvyplní výšku čela, průměr jádra a šířku návinu. "
+            "Nebo nech „Vlastní rozměry“.",
+        )
+        if preset != "Vlastní rozměry":
+            idx = preset_labels.index(preset) - 1
+            d0 = _ktg_all[idx]
+            # předvyplnit session_state jen při změně předvolby
+            prev = st.session_state.get("_drum_preset_applied")
+            if prev != preset:
+                st.session_state["drum_fd"] = float(d0["Fd"])
+                st.session_state["drum_kd"] = float(d0["Kd"])
+                st.session_state["drum_l2"] = float(d0["I2"])
+                st.session_state["drum_max_load"] = float(d0["max_kg"])
+                st.session_state["drum_empty_mass"] = float(d0["mass"])
+                st.session_state["drum_kd_mode"] = "Průměr"
+                st.session_state["_drum_preset_applied"] = preset
+                st.session_state["_drum_preset_i1"] = float(d0["I1"])
+                st.session_state["_drum_preset_mass"] = float(d0["mass"])
+        else:
+            st.session_state["_drum_preset_applied"] = preset
 
     c_a, c_b = st.columns([1.1, 1])
     with c_a:
         st.markdown("##### Rozměry bubnu [mm]")
         fd = st.number_input(
-            "Průměr čela Fd",
+            "Výška čela [mm]",
             min_value=50.0, max_value=5000.0, value=1000.0, step=10.0,
             key="drum_fd",
-            help="Vnější průměr čela bubnu (flange).",
+            help="Jak vysoké je čelo bubnu (= vnější průměr čela, katalogově Fd).",
         )
         kd_mode = st.radio(
-            "Jádro Kd zadat jako",
+            "Průměr jádra zadat jako",
             options=["Průměr", "Obvod (metr)"],
             horizontal=True,
             key="drum_kd_mode",
-            help="Když nejde změřit průměr jádra, omotej metr kolem jádra. Kd = O / π.",
+            help="Když nejde změřit průměr, omotej metr kolem jádra. Průměr = obvod / π.",
         )
         if kd_mode.startswith("Obvod"):
             circ = st.number_input(
                 "Obvod jádra [mm]",
                 min_value=60.0, max_value=15000.0, value=1571.0, step=1.0,
                 key="drum_kd_circ",
-                help="Naměřený obvod jádra metrem. Přepočet: Kd = O / π.",
+                help="Naměřený obvod jádra metrem. Průměr = obvod / π.",
             )
             kd = float(circ) / math.pi
-            st.caption(f"→ průměr jádra Kd = {format_num(kd, 1)} mm  (O / π)")
+            st.caption(f"→ průměr jádra = {format_num(kd, 1)} mm")
         else:
             kd = st.number_input(
-                "Průměr jádra Kd",
+                "Průměr jádra [mm]",
                 min_value=20.0, max_value=4000.0, value=500.0, step=10.0,
                 key="drum_kd",
-                help="Průměr válce, na který se navíjí (barrel / core).",
+                help="Průměr válce, na který se točí kabel (katalogově Kd).",
             )
         l2 = st.number_input(
-            "Vnitřní šíře návinu l₂",
+            "Šířka návinu [mm]",
             min_value=20.0, max_value=3000.0, value=560.0, step=10.0,
             key="drum_l2",
-            help="Šířka mezi čely, kam se ukládá kabel.",
+            help="Vnitřní šířka mezi čely — kam se ukládá kabel (katalogově l₂ / I₂). "
+            "Ne celková šířka bubnu přes čela.",
         )
+        i1_hint = st.session_state.get("_drum_preset_i1")
+        if i1_hint:
+            st.caption(f"Celková šířka bubnu (přes čela) z KTG: **{format_num(i1_hint, 0)} mm**")
     with c_b:
         st.markdown("##### Kabel, ohyb & rezerva")
         d_cab = st.number_input(
-            "Průměr kabelu D [mm]",
+            "Průměr kabelu [mm]",
             min_value=1.0, max_value=200.0, value=20.0, step=0.5,
             format="%.1f", key="drum_cable_d",
         )
         target_m = st.number_input(
-            "Cílová délka kabelu [m] (0 = jen kapacita)",
+            "Kolik metrů chci namotat (0 = jen kolik se vejde)",
             min_value=0.0, max_value=100000.0, value=0.0, step=10.0,
             key="drum_target_m",
-            help="Zadej délku k namotání → spočítá závity a vrstvy (řady).",
+            help="Zadej délku → spočítá závity a vrstvy (řady).",
         )
         clearance_mode = st.selectbox(
-            "Rezerva u čela",
-            options=["1 × D", "2 × D", "Vlastní [mm]"],
+            "Volný okraj u čela (rezerva)",
+            options=["1 × průměr kabelu", "2 × průměr kabelu", "Vlastní [mm]"],
             index=0, key="drum_clearance_mode",
-            help="Volný okraj mezi horní vrstvou kabelu a okrajem čela.",
+            help="Mezera mezi horní vrstvou kabelu a okrajem čela.",
         )
         if clearance_mode == "Vlastní [mm]":
             clearance = st.number_input(
@@ -5918,43 +5960,52 @@ def render_drum_capacity_calculator() -> None:
             st.caption(f"Rezerva = {format_num(clearance, 1)} mm")
 
         bend_labels = {
-            "12 × D (VDE ≈ jádro při poloměru 6×D)": 12,
-            "15 × D (HELUKABEL — běžné minimum)": 15,
-            "20 × D": 20,
-            "25 × D": 25,
-            "30 × D": 30,
-            "40 × D (nejpřísnější)": 40,
+            "12 × průměr kabelu (mírnější / VDE)": 12,
+            "15 × průměr kabelu (běžné HELUKABEL)": 15,
+            "20 × průměr kabelu": 20,
+            "25 × průměr kabelu": 25,
+            "30 × průměr kabelu": 30,
+            "40 × průměr kabelu (nejpřísnější)": 40,
         }
         bend_label = st.selectbox(
-            "Min. jádro vs Ø kabelu (kontrola ohybu)",
+            "Jak velké musí být jádro oproti kabelu (ohyb)",
             options=list(bend_labels.keys()),
             index=1, key="drum_bend_factor",
-            help="Kd ≥ N×D. 12×D ≈ VDE vinutí (poloměr 6×D). "
-            "HELUKABEL katalog často od 15×D výš.",
+            help="Průměr jádra musí být aspoň N× průměr kabelu, jinak se kabel ohýbá moc těsně.",
         )
         bend_n = bend_labels[bend_label]
 
-    with st.expander("Nosnost bubnu vs váha kabelu (volitelné)", expanded=False):
-        w1, w2 = st.columns(2)
+    with st.expander("Váha návinu a nosnost (volitelné)", expanded=True):
+        w1, w2, w3 = st.columns(3)
         with w1:
-            max_load = st.number_input(
-                "Max. nosnost bubnu [kg]",
-                min_value=0.0, max_value=50000.0, value=0.0, step=50.0,
-                key="drum_max_load", help="0 = nepočítat limit hmotnosti.",
-            )
-        with w2:
             kg_per_km = st.number_input(
                 "Váha kabelu [kg/km]",
                 min_value=0.0, max_value=50000.0, value=0.0, step=10.0,
                 key="drum_kg_km",
+                help="Z katalogu kabelu. 0 = váhu nepočítat.",
+            )
+        with w2:
+            empty_default = float(st.session_state.get("_drum_preset_mass") or 0.0)
+            empty_mass = st.number_input(
+                "Hmotnost prázdného bubnu [kg]",
+                min_value=0.0, max_value=20000.0, value=empty_default, step=1.0,
+                key="drum_empty_mass",
+                help="U KTG předvolby se předvyplní. Jinak zadej ručně / 0.",
+            )
+        with w3:
+            max_load = st.number_input(
+                "Max. nosnost bubnu [kg]",
+                min_value=0.0, max_value=50000.0, value=0.0, step=50.0,
+                key="drum_max_load",
+                help="Max. hmotnost kabelu na bubnu (ne včetně prázdného bubnu). 0 = nelimitovat.",
             )
 
     kd_min = bend_n * float(d_cab)
     bend_ok = kd >= kd_min
 
     st.markdown(
-        f"##### Min. buben dle ohybu **{bend_n:g} × D** "
-        f"(Kd ≥ {format_num(kd_min, 0)} mm)"
+        f"##### Nejmenší vhodný buben z katalogu "
+        f"(jádro ≥ **{bend_n:g} ×** průměr kabelu = {format_num(kd_min, 0)} mm)"
     )
     if ktg_min_drums_for_bend is None:
         st.caption("Tabulky KTG nejsou nasazené (`helukabel_tables.py`).")
@@ -5962,24 +6013,24 @@ def render_drum_capacity_calculator() -> None:
         suited = ktg_min_drums_for_bend(float(d_cab), float(bend_n))
         if not suited:
             st.warning(
-                f"Žádný standardní KTG dřevěný buben nemá jádro ≥ {format_num(kd_min, 0)} mm "
-                f"pro D = {format_num(d_cab, 1)} mm. Zvol mírnější ohyb nebo menší kabel."
+                f"Žádný standardní KTG buben nemá jádro ≥ {format_num(kd_min, 0)} mm "
+                f"pro kabel Ø {format_num(d_cab, 1)} mm. Zvol mírnější ohyb nebo tenčí kabel."
             )
         else:
             best = suited[0]
             st.success(
-                f"Nejmenší KTG dle ohybu: **{best['label']}** — "
-                f"Fd {best['Fd']} / Kd {best['Kd']} / l₂ {best['I2']} mm "
+                f"Nejmenší KTG: **{best['label']}** — "
+                f"čelo {best['Fd']} / jádro {best['Kd']} / šířka návinu {best['I2']} mm "
                 f"(nosnost {best['max_kg']} kg)."
             )
             show_n = min(8, len(suited))
             rec = pd.DataFrame([
                 {
                     "KTG": d["label"],
-                    "Fd": d["Fd"],
-                    "Kd": d["Kd"],
-                    "I₂": d["I2"],
-                    "Kd/D": round(d["Kd"] / d_cab, 1),
+                    "Výška čela": d["Fd"],
+                    "Průměr jádra": d["Kd"],
+                    "Šířka návinu": d["I2"],
+                    "Jádro / kabel": round(d["Kd"] / d_cab, 1),
                     "Nosnost [kg]": d["max_kg"],
                 }
                 for d in suited[:show_n]
@@ -5990,7 +6041,7 @@ def render_drum_capacity_calculator() -> None:
 
     if kd >= fd:
         st.markdown(
-            '<div class="error-box">Průměr jádra Kd musí být menší než průměr čela Fd.</div>',
+            '<div class="error-box">Průměr jádra musí být menší než výška / průměr čela.</div>',
             unsafe_allow_html=True,
         )
         return
@@ -6002,26 +6053,26 @@ def render_drum_capacity_calculator() -> None:
 
     st.markdown(
         f'<div style="display:flex;gap:10px;align-items:center;flex-wrap:nowrap;'
-        f'margin:4px 0 8px;max-width:520px;">'
+        f'margin:4px 0 8px;max-width:560px;">'
         f'<div style="width:120px;flex:0 0 120px;line-height:0;">'
         f'{_drum_schematic_svg(fd, kd, l2)}'
         f'</div>'
         f'<div class="card-extra" style="font-size:0.82rem;line-height:1.35;margin:0;">'
-        f'Fd <strong>{format_num(fd, 0)}</strong> · '
-        f'Kd <strong>{format_num(kd, 0)}</strong> · '
-        f'l₂ <strong>{format_num(l2, 0)}</strong> · '
-        f'D <strong>{format_num(d_cab, 1)}</strong> mm<br>'
+        f'Čelo <strong>{format_num(fd, 0)}</strong> · '
+        f'jádro <strong>{format_num(kd, 0)}</strong> · '
+        f'šířka <strong>{format_num(l2, 0)}</strong> · '
+        f'kabel <strong>{format_num(d_cab, 1)}</strong> mm<br>'
         f'Rezerva <strong>{format_num(clearance, 1)}</strong> → '
-        f'F_eff <strong>{format_num(cap["f_eff"], 1) if cap["f_eff"] is not None else "—"}</strong> mm · '
-        f'závity/vrstva <strong>{cap["turns_per_layer"]}</strong>'
+        f'max. průměr návinu <strong>{format_num(cap["f_eff"], 1) if cap["f_eff"] is not None else "—"}</strong> mm · '
+        f'závity/řada <strong>{cap["turns_per_layer"]}</strong>'
         f'</div></div>',
         unsafe_allow_html=True,
     )
 
     if cap["capacity_m"] is None:
         st.markdown(
-            '<div class="error-box">Po odečtení rezervy nezůstává prostor pro návin '
-            "(F_eff příliš blízko Kd). Zmenši rezervu nebo zkontroluj rozměry.</div>",
+            '<div class="error-box">Po odečtení rezervy nezůstává prostor pro návin. '
+            "Zmenši rezervu nebo zkontroluj rozměry.</div>",
             unsafe_allow_html=True,
         )
         return
@@ -6041,28 +6092,28 @@ def render_drum_capacity_calculator() -> None:
 
     r1, r2, r3 = st.columns(3)
     with r1:
-        st.metric("Kapacita (po vrstvách)", f"{capacity_m:,.0f} m".replace(",", " "))
+        st.metric("Kolik se vejde", f"{capacity_m:,.0f} m".replace(",", " "))
     with r2:
         st.metric("Použitelná délka", f"{usable_m:,.0f} m".replace(",", " "))
     with r3:
         st.metric(
-            "Max. vrstev / závity na vrstvu",
+            "Max. řad / závity v řadě",
             f"{cap['max_layers']} / {cap['turns_per_layer']}",
         )
 
     if bend_ok:
         st.markdown(
             f'<div class="success-box" style="margin-top:8px;">'
-            f'✅ <strong>Ohyb OK</strong> — jádro Kd {format_num(kd, 0)} mm ≥ '
-            f'{bend_n:g} × D = {format_num(kd_min, 0)} mm.'
+            f'✅ <strong>Ohyb OK</strong> — průměr jádra {format_num(kd, 0)} mm ≥ '
+            f'{bend_n:g} × kabel = {format_num(kd_min, 0)} mm.'
             f'{limit_note}</div>',
             unsafe_allow_html=True,
         )
     else:
         st.markdown(
             f'<div class="warning-box" style="margin-top:8px;">'
-            f'⚠️ <strong>Jádro je malé pro zvolený ohyb</strong> — Kd {format_num(kd, 0)} mm &lt; '
-            f'{bend_n:g} × D = {format_num(kd_min, 0)} mm.'
+            f'⚠️ <strong>Jádro je malé pro zvolený ohyb</strong> — '
+            f'{format_num(kd, 0)} mm &lt; {bend_n:g} × kabel = {format_num(kd_min, 0)} mm.'
             f'{limit_note}</div>',
             unsafe_allow_html=True,
         )
@@ -6072,15 +6123,19 @@ def render_drum_capacity_calculator() -> None:
         if plan["fits"]:
             m1, m2, m3 = st.columns(3)
             with m1:
-                st.metric("Vrstvy (řady)", f"{plan['layers_used']}")
+                st.metric("Řady (vrstvy)", f"{plan['layers_used']}")
             with m2:
                 st.metric("Závity celkem", f"{plan['turns_total']:.1f}")
             with m3:
                 st.metric("Namotáno", f"{plan['length_m']:.1f} m")
-            st.dataframe(pd.DataFrame(plan["rows"]), use_container_width=True, hide_index=True)
+            plan_df = pd.DataFrame(plan["rows"]).rename(columns={
+                "Vrstva": "Řada",
+                "Ø středu [mm]": "Průměr řady [mm]",
+            })
+            st.dataframe(plan_df, use_container_width=True, hide_index=True)
             st.caption(
-                "Každá další vrstva má větší Ø středu → delší závit. "
-                "Poslední vrstva může být jen částečně zaplněná."
+                "Každá další řada má větší průměr → delší závit. "
+                "Poslední řada může být jen částečně zaplněná."
             )
         else:
             st.error(
@@ -6095,10 +6150,200 @@ def render_drum_capacity_calculator() -> None:
         with st.expander("Rozpis kapacity po vrstvách", expanded=False):
             st.dataframe(pd.DataFrame(cap["rows"]), use_container_width=True, hide_index=True)
 
+    # ── Hmotnost návinu ───────────────────────────────────────────────────────
+    length_for_weight = float(plan["length_m"]) if (plan and plan.get("fits")) else (
+        float(target_m) if target_m and target_m > 0 else usable_m
+    )
+    if kg_per_km > 0 and length_for_weight > 0:
+        cable_kg = length_for_weight * (kg_per_km / 1000.0)
+        total_kg = cable_kg + float(empty_mass or 0.0)
+        st.markdown("##### Hmotnost návinu")
+        ww1, ww2, ww3 = st.columns(3)
+        with ww1:
+            st.metric(
+                "Kabel",
+                f"{cable_kg:,.0f} kg".replace(",", " "),
+                help=f"{format_num(length_for_weight, 0)} m × {format_num(kg_per_km, 0)} kg/km",
+            )
+        with ww2:
+            st.metric("Prázdný buben", f"{float(empty_mass or 0):,.0f} kg".replace(",", " "))
+        with ww3:
+            st.metric("Celkem (buben + kabel)", f"{total_kg:,.0f} kg".replace(",", " "))
+        if max_load > 0:
+            if cable_kg > max_load:
+                st.error(
+                    f"Kabel **{format_num(cable_kg, 0)} kg** překračuje nosnost bubnu "
+                    f"**{format_num(max_load, 0)} kg**."
+                )
+            else:
+                st.caption(
+                    f"Využití nosnosti: {cable_kg / max_load * 100:.0f} % "
+                    f"({format_num(cable_kg, 0)} / {format_num(max_load, 0)} kg kabelu)."
+                )
+        elif target_m and target_m > 0 and not (plan and plan.get("fits")):
+            st.caption("Váha počítaná z cílové délky — na buben se ale celá nevejde.")
+        elif not (target_m and target_m > 0):
+            st.caption("Váha = použitelná kapacita bubnu (plný návin). Zadej metry výš pro konkrétní délku.")
+
+    # ── Porovnání dvou bubnů ──────────────────────────────────────────────────
+    st.markdown("##### Porovnání dvou bubnů")
+    st.caption(
+        "Buben A = rozměry výše. Buben B vyber z KTG (nebo zadej vlastní) — "
+        "stejný kabel, rezerva a ohyb."
+    )
+    cmp_on = st.checkbox("Zapnout porovnání s druhým bubnem", key="drum_cmp_on")
+    if cmp_on:
+        b_src = st.radio(
+            "Buben B",
+            options=["Z katalogu KTG", "Vlastní rozměry"],
+            horizontal=True,
+            key="drum_cmp_src",
+        )
+        if b_src.startswith("Z katalogu") and _ktg_all:
+            b_labels = [
+                f"{d['label']} — čelo {d['Fd']} / jádro {d['Kd']} / šířka {d['I2']}"
+                for d in _ktg_all
+            ]
+            # výchozí: nejmenší KTG dle ohybu, jinak 101/10
+            default_i = 0
+            if ktg_min_drums_for_bend is not None:
+                suited_b = ktg_min_drums_for_bend(float(d_cab), float(bend_n))
+                if suited_b:
+                    for i, d in enumerate(_ktg_all):
+                        if d["label"] == suited_b[0]["label"]:
+                            default_i = i
+                            break
+            b_pick = st.selectbox(
+                "KTG buben B", options=b_labels, index=default_i, key="drum_cmp_ktg",
+            )
+            b_drum = _ktg_all[b_labels.index(b_pick)]
+            fd_b, kd_b, l2_b = float(b_drum["Fd"]), float(b_drum["Kd"]), float(b_drum["I2"])
+            empty_b = float(b_drum["mass"])
+            max_load_b = float(b_drum["max_kg"])
+            label_b = b_drum["label"]
+        else:
+            bc1, bc2, bc3 = st.columns(3)
+            with bc1:
+                fd_b = st.number_input(
+                    "B — výška čela", 50.0, 5000.0, 1250.0, 10.0, key="drum_cmp_fd",
+                )
+            with bc2:
+                kd_b = st.number_input(
+                    "B — průměr jádra", 20.0, 4000.0, 630.0, 10.0, key="drum_cmp_kd",
+                )
+            with bc3:
+                l2_b = st.number_input(
+                    "B — šířka návinu", 20.0, 3000.0, 670.0, 10.0, key="drum_cmp_l2",
+                )
+            empty_b = st.number_input(
+                "B — prázdný buben [kg]", 0.0, 20000.0, 0.0, 1.0, key="drum_cmp_empty",
+            )
+            max_load_b = st.number_input(
+                "B — nosnost [kg]", 0.0, 50000.0, 0.0, 50.0, key="drum_cmp_load",
+            )
+            label_b = "Vlastní B"
+
+        if kd_b >= fd_b:
+            st.warning("U bubnu B musí být jádro menší než čelo.")
+        else:
+            cap_b = _drum_layer_plan(fd_b, kd_b, l2_b, d_cab, clearance, target_m=None)
+            plan_b = None
+            if target_m and target_m > 0:
+                plan_b = _drum_layer_plan(
+                    fd_b, kd_b, l2_b, d_cab, clearance, target_m=float(target_m),
+                )
+            cap_a_m = capacity_m
+            cap_b_m = float(cap_b["capacity_m"] or 0)
+            usable_b = cap_b_m
+            if max_load_b > 0 and kg_per_km > 0:
+                lim_b = max_load_b / (kg_per_km / 1000.0)
+                usable_b = min(usable_b, lim_b)
+
+            bend_a = "✅" if bend_ok else "⚠️"
+            bend_b = "✅" if kd_b >= kd_min else "⚠️"
+            fits_a = "—"
+            fits_b = "—"
+            layers_a = turns_a = layers_b = turns_b = "—"
+            if target_m and target_m > 0:
+                fits_a = "ano" if (plan and plan.get("fits")) else "ne"
+                fits_b = "ano" if (plan_b and plan_b.get("fits")) else "ne"
+                if plan and plan.get("fits"):
+                    layers_a = str(plan["layers_used"])
+                    turns_a = f"{plan['turns_total']:.0f}"
+                if plan_b and plan_b.get("fits"):
+                    layers_b = str(plan_b["layers_used"])
+                    turns_b = f"{plan_b['turns_total']:.0f}"
+
+            cmp_rows = [
+                {"Údaj": "Název", "Buben A (výše)": "Aktuální", "Buben B": label_b},
+                {"Údaj": "Čelo / jádro / šířka [mm]",
+                 "Buben A (výše)": f"{format_num(fd, 0)} / {format_num(kd, 0)} / {format_num(l2, 0)}",
+                 "Buben B": f"{format_num(fd_b, 0)} / {format_num(kd_b, 0)} / {format_num(l2_b, 0)}"},
+                {"Údaj": "Ohyb (jádro ≥ N×D)",
+                 "Buben A (výše)": bend_a,
+                 "Buben B": bend_b},
+                {"Údaj": "Kapacita [m]",
+                 "Buben A (výše)": f"{cap_a_m:,.0f}".replace(",", " "),
+                 "Buben B": f"{cap_b_m:,.0f}".replace(",", " ")},
+                {"Údaj": "Použitelná délka [m]",
+                 "Buben A (výše)": f"{usable_m:,.0f}".replace(",", " "),
+                 "Buben B": f"{usable_b:,.0f}".replace(",", " ")},
+                {"Údaj": "Max. řad / závity v řadě",
+                 "Buben A (výše)": f"{cap['max_layers']} / {cap['turns_per_layer']}",
+                 "Buben B": f"{cap_b['max_layers']} / {cap_b['turns_per_layer']}"},
+            ]
+            if target_m and target_m > 0:
+                cmp_rows += [
+                    {"Údaj": f"Vejde se {format_num(target_m, 0)} m?",
+                     "Buben A (výše)": fits_a, "Buben B": fits_b},
+                    {"Údaj": "Řady / závity pro cíl",
+                     "Buben A (výše)": f"{layers_a} / {turns_a}",
+                     "Buben B": f"{layers_b} / {turns_b}"},
+                ]
+            if kg_per_km > 0:
+                la = float(plan["length_m"]) if (plan and plan.get("fits")) else (
+                    float(target_m) if target_m and target_m > 0 else usable_m
+                )
+                lb = float(plan_b["length_m"]) if (plan_b and plan_b.get("fits")) else (
+                    float(target_m) if target_m and target_m > 0 else usable_b
+                )
+                ca = la * kg_per_km / 1000.0 if la > 0 else 0.0
+                cb = lb * kg_per_km / 1000.0 if lb > 0 else 0.0
+                cmp_rows += [
+                    {"Údaj": "Váha kabelu [kg]",
+                     "Buben A (výše)": f"{ca:,.0f}".replace(",", " "),
+                     "Buben B": f"{cb:,.0f}".replace(",", " ")},
+                    {"Údaj": "Prázdný buben [kg]",
+                     "Buben A (výše)": f"{float(empty_mass or 0):,.0f}".replace(",", " "),
+                     "Buben B": f"{empty_b:,.0f}".replace(",", " ")},
+                    {"Údaj": "Celkem [kg]",
+                     "Buben A (výše)": f"{ca + float(empty_mass or 0):,.0f}".replace(",", " "),
+                     "Buben B": f"{cb + empty_b:,.0f}".replace(",", " ")},
+                ]
+            st.dataframe(pd.DataFrame(cmp_rows), use_container_width=True, hide_index=True)
+            # rychlý verdikt
+            if target_m and target_m > 0 and plan and plan_b:
+                if plan.get("fits") and not plan_b.get("fits"):
+                    st.info("Pro zadanou délku stačí **buben A**, buben B je malý.")
+                elif plan_b.get("fits") and not plan.get("fits"):
+                    st.info("Pro zadanou délku stačí **buben B**, buben A je malý.")
+                elif plan.get("fits") and plan_b.get("fits"):
+                    if fd_b < fd:
+                        st.success("Oba bubny délku zvládnou — **B má menší čelo** (kompaktnější).")
+                    elif fd < fd_b:
+                        st.success("Oba bubny délku zvládnou — **A má menší čelo** (kompaktnější).")
+                    else:
+                        st.success("Oba bubny zadanou délku zvládnou.")
+            elif cap_b_m > cap_a_m * 1.05:
+                st.caption(f"Buben B má větší kapacitu (+{cap_b_m - cap_a_m:,.0f} m).".replace(",", " "))
+            elif cap_a_m > cap_b_m * 1.05:
+                st.caption(f"Buben A má větší kapacitu (+{cap_a_m - cap_b_m:,.0f} m).".replace(",", " "))
+
     st.caption(
         "Model: ideální těsný návin (závity vedle sebe, vrstvy na sobě). "
         "V praxi bývá délka o něco nižší (mezery, tuhost kabelu)."
     )
+
 
 def render_tools_and_tips() -> None:
     """Hub praktických kalkulaček a tipů pro sklad, nákup i provoz."""
