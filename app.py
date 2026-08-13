@@ -34,7 +34,10 @@ import plotly.graph_objects as go
 # ── Streamlit ─────────────────────────────────────────────────────────────────
 import streamlit as st
 
-from helukabel_tables import render_helukabel_catalog
+try:
+    from helukabel_tables import render_helukabel_catalog
+except ImportError:  # chybí soubor na deployi (např. nepushnutý na GitHub)
+    render_helukabel_catalog = None  # type: ignore[assignment]
 
 TZ_PRAGUE = ZoneInfo("Europe/Prague")
 CACHE_TTL = 3600
@@ -5728,34 +5731,32 @@ def _drum_winding_length_m(
 
 
 def _drum_schematic_svg(fd: float, kd: float, l2: float) -> str:
-    """Malé SVG schéma bubnu s popisky Fd / Kd / l2."""
-    w, h = 220, 130
-    # normalizace rozměrů do viewBoxu
-    scale = 90.0 / max(fd, 1.0)
-    flange_h = max(fd * scale, 20)
-    core_h = max(kd * scale, 8)
-    drum_w = max(min(l2 * scale * 0.9, 100), 36)
-    cx, cy = w / 2, h / 2 + 4
+    """Kompaktní SVG schéma bubnu s popisky Fd / Kd / l2."""
+    w, h = 140, 78
+    display_w, display_h = 120, 68
+    scale = 52.0 / max(fd, 1.0)
+    flange_h = max(fd * scale, 14)
+    core_h = max(kd * scale, 5)
+    drum_w = max(min(l2 * scale * 0.85, 58), 22)
+    cx, cy = w / 2, h / 2 + 2
     x0 = cx - drum_w / 2
-    # čela (flanges)
-    flange_w = 8
+    flange_w = 5
+    wind_h = max((flange_h - core_h) / 2 - 2, 2)
     parts = [
-        f'<svg viewBox="0 0 {w} {h}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">',
-        # levé čelo
+        f'<svg width="{display_w}" height="{display_h}" viewBox="0 0 {w} {h}" '
+        f'xmlns="http://www.w3.org/2000/svg" aria-hidden="true" '
+        f'style="display:block;flex-shrink:0;max-width:120px;height:auto;">',
         f'<rect x="{x0 - flange_w:.1f}" y="{cy - flange_h / 2:.1f}" width="{flange_w}" '
-        f'height="{flange_h:.1f}" rx="2" fill="#8D99AB" stroke="#2C3442"/>',
-        # pravé čelo
+        f'height="{flange_h:.1f}" rx="1.5" fill="#8D99AB" stroke="#2C3442"/>',
         f'<rect x="{x0 + drum_w:.1f}" y="{cy - flange_h / 2:.1f}" width="{flange_w}" '
-        f'height="{flange_h:.1f}" rx="2" fill="#8D99AB" stroke="#2C3442"/>',
-        # jádro
+        f'height="{flange_h:.1f}" rx="1.5" fill="#8D99AB" stroke="#2C3442"/>',
         f'<rect x="{x0:.1f}" y="{cy - core_h / 2:.1f}" width="{drum_w:.1f}" '
         f'height="{core_h:.1f}" fill="#C47A3A" stroke="#8B5A2B"/>',
-        # návin (prostor mezi jádrem a čelem)
-        f'<rect x="{x0:.1f}" y="{cy - flange_h / 2 + 4:.1f}" width="{drum_w:.1f}" '
-        f'height="{(flange_h - core_h) / 2 - 4:.1f}" fill="rgba(77,159,255,0.18)" '
-        f'stroke="rgba(77,159,255,0.35)" stroke-dasharray="3 2"/>',
-        f'<text x="{cx}" y="14" text-anchor="middle" fill="#8D99AB" '
-        f'font-size="10" font-family="Syne,sans-serif">Fd / Kd / l₂</text>',
+        f'<rect x="{x0:.1f}" y="{cy - flange_h / 2 + 2:.1f}" width="{drum_w:.1f}" '
+        f'height="{wind_h:.1f}" fill="rgba(77,159,255,0.18)" '
+        f'stroke="rgba(77,159,255,0.35)" stroke-dasharray="2 2"/>',
+        f'<text x="{cx}" y="10" text-anchor="middle" fill="#8D99AB" '
+        f'font-size="8" font-family="Syne,sans-serif">Fd / Kd / l₂</text>',
         "</svg>",
     ]
     return "".join(parts)
@@ -5789,15 +5790,36 @@ def render_drum_capacity_calculator() -> None:
             key="drum_fd",
             help="Vnější průměr čela bubnu (flange).",
         )
-        kd = st.number_input(
-            "Průměr jádra Kd",
-            min_value=20.0,
-            max_value=4000.0,
-            value=500.0,
-            step=10.0,
-            key="drum_kd",
-            help="Průměr válce, na který se navíjí (barrel / core).",
+        kd_mode = st.radio(
+            "Jádro Kd zadat jako",
+            options=["Průměr", "Obvod (metr)"],
+            horizontal=True,
+            key="drum_kd_mode",
+            help="Když nejde změřit průměr jádra, omotej metr kolem jádra a zadej obvod. "
+            "Kd = obvod / π.",
         )
+        if kd_mode.startswith("Obvod"):
+            circ = st.number_input(
+                "Obvod jádra [mm]",
+                min_value=60.0,
+                max_value=15000.0,
+                value=1571.0,
+                step=1.0,
+                key="drum_kd_circ",
+                help="Naměřený obvod jádra metrem. Přepočet: Kd = O / π.",
+            )
+            kd = float(circ) / math.pi
+            st.caption(f"→ průměr jádra Kd = {format_num(kd, 1)} mm  (O / π)")
+        else:
+            kd = st.number_input(
+                "Průměr jádra Kd",
+                min_value=20.0,
+                max_value=4000.0,
+                value=500.0,
+                step=10.0,
+                key="drum_kd",
+                help="Průměr válce, na který se navíjí (barrel / core).",
+            )
         l2 = st.number_input(
             "Vnitřní šíře návinu l₂",
             min_value=20.0,
@@ -5892,15 +5914,18 @@ def render_drum_capacity_calculator() -> None:
     bend_ok = kd >= kd_min
 
     st.markdown(
-        f'<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:8px 0;">'
+        f'<div style="display:flex;gap:10px;align-items:center;flex-wrap:nowrap;'
+        f'margin:4px 0 8px;max-width:520px;">'
+        f'<div style="width:120px;flex:0 0 120px;line-height:0;">'
         f'{_drum_schematic_svg(fd, kd, l2)}'
-        f'<div class="card-extra">'
-        f'Fd = <strong>{format_num(fd, 0)}</strong> mm · '
-        f'Kd = <strong>{format_num(kd, 0)}</strong> mm · '
-        f'l₂ = <strong>{format_num(l2, 0)}</strong> mm · '
-        f'D = <strong>{format_num(d_cab, 1)}</strong> mm<br>'
-        f'Rezerva u čela = <strong>{format_num(clearance, 1)}</strong> mm → '
-        f'F_eff = <strong>{format_num(res["f_eff"], 1) if res["f_eff"] is not None else "—"}</strong> mm'
+        f'</div>'
+        f'<div class="card-extra" style="font-size:0.82rem;line-height:1.35;margin:0;">'
+        f'Fd <strong>{format_num(fd, 0)}</strong> · '
+        f'Kd <strong>{format_num(kd, 0)}</strong> · '
+        f'l₂ <strong>{format_num(l2, 0)}</strong> · '
+        f'D <strong>{format_num(d_cab, 1)}</strong> mm<br>'
+        f'Rezerva <strong>{format_num(clearance, 1)}</strong> → '
+        f'F_eff <strong>{format_num(res["f_eff"], 1) if res["f_eff"] is not None else "—"}</strong> mm'
         f'</div></div>',
         unsafe_allow_html=True,
     )
@@ -5991,7 +6016,14 @@ def render_tools_and_tips() -> None:
     elif tool.startswith("Kapacita bubnu"):
         render_drum_capacity_calculator()
     elif tool.startswith("Technické tabulky"):
-        render_helukabel_catalog()
+        if render_helukabel_catalog is None:
+            st.error(
+                "Modul `helukabel_tables.py` není nasazený. "
+                "Nahraj ho do kořene repozitáře na GitHub (vedle `app.py`) "
+                "a ideálně i složku `assets/helukabel/` se skeny."
+            )
+        else:
+            render_helukabel_catalog()
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  FOOTER
