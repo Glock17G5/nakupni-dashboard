@@ -523,11 +523,34 @@ def df_old_new_codes() -> pd.DataFrame:
 def df_din_vde_refs() -> pd.DataFrame:
     return pd.DataFrame(
         [
-            ("DIN VDE 0100", "Silová zařízení do 1000 V — návrh, ochrana, výběr"),
+            ("DIN VDE 0100", "Silová zařízení do 1000 V — zřizování"),
+            ("DIN VDE 0100-100", "Všeobecné požadavky, oblast použití"),
+            ("DIN VDE 0100-410", "Ochrana proti úrazu el. proudem"),
+            ("DIN VDE 0100-430", "Ochrana kabelů a vodičů při nadproudu"),
+            ("DIN VDE 0100-482", "Protipožární ochrana"),
+            ("DIN VDE 0100-520/530", "Kabely, vodiče, sběrnice / spínací zařízení"),
+            ("DIN VDE 0100-559", "Svítidla a osvětlovací zařízení"),
+            ("DIN VDE 0100-701…705", "Koupelny, bazény, sauny, staveniště, zemědělství"),
+            ("DIN VDE 0100-720", "Provozovny s nebezpečím požáru"),
+            ("DIN VDE 0100-726…737", "Zdvihadla, dřevěné stěny, přípojky, vlhko/mokro"),
             ("DIN VDE 0101", "Silová zařízení nad 1 kV"),
+            ("DIN VDE 0105", "Provoz silových zařízení"),
+            ("DIN VDE 0107", "Nemocnice a lékařské prostory"),
+            ("DIN VDE 0108", "Shromažďovací objekty, výškové budovy, garáže"),
+            ("DIN VDE 0113", "Elektrické vybavení průmyslových strojů"),
+            ("DIN VDE 0118", "Podzemní doly"),
+            ("DIN VDE 0165 / 0166", "Nebezpečí výbuchu / výbušné látky"),
+            ("DIN VDE 0168", "Povrchové doly a kamenolomy"),
+            ("DIN VDE 0170/0171", "Provozní prostředky do prostředí s výbuchem"),
+            ("DIN VDE 0185", "Ochrana před bleskem"),
+            ("DIN VDE 0207", "Izolační a plášťové směsi"),
+            ("DIN VDE 0245", "Kabely pro el. provozní prostředky / ohebné PVC"),
             ("DIN VDE 0250", "Silové kabely, vodiče a šňůry"),
-            ("DIN VDE 0262", "Instalační kabely XLPE + PVC do 0,6/1 kV"),
-            ("DIN VDE 0271 / 0276", "Distribuční / silové kabely, zatížitelnost, zkoušky"),
+            ("DIN VDE 0253", "Izolované topné vodiče"),
+            ("DIN VDE 0262", "Instalační XLPE + PVC plášť do 0,6/1 kV"),
+            ("DIN VDE 0265", "Plastová izolace + olověný plášť"),
+            ("DIN VDE 0266", "Bezhalogenové kabely, jaderné elektrárny (E… )"),
+            ("DIN VDE 0271 / 0276", "Distribuční / silové kabely, zatížitelnost"),
             ("DIN VDE 0281 / 0282", "PVC vodiče / gumové kabely (harmonizované)"),
             ("DIN VDE 0292 / HD 361", "Označovací kódy harmonizovaných kabelů"),
             ("DIN VDE 0293", "Značení žil do 1000 V"),
@@ -586,11 +609,17 @@ def df_xlpe_mv_cap() -> pd.DataFrame:
 def df_xlpe_mv_ind() -> pd.DataFrame:
     return pd.DataFrame(
         [
+            (35, 0.45, 0.76, 0.48, 0.76, None, None),
             (50, 0.42, 0.73, 0.45, 0.74, 0.48, 0.75),
+            (70, 0.39, 0.70, 0.43, 0.70, 0.45, 0.71),
             (95, 0.38, 0.67, 0.41, 0.68, 0.43, 0.68),
+            (120, 0.36, 0.65, 0.39, 0.65, 0.42, 0.66),
             (150, 0.35, 0.63, 0.38, 0.63, 0.41, 0.64),
+            (185, 0.34, 0.61, 0.36, 0.62, 0.39, 0.63),
             (240, 0.32, 0.59, 0.35, 0.59, 0.37, 0.60),
+            (300, 0.31, 0.57, 0.33, 0.58, 0.36, 0.59),
             (400, 0.30, 0.55, 0.33, 0.55, 0.34, 0.56),
+            (500, 0.29, 0.53, 0.31, 0.53, 0.33, 0.54),
         ],
         columns=[
             "mm²",
@@ -640,21 +669,369 @@ def df_materials_key() -> pd.DataFrame:
 def df_cert_marks() -> pd.DataFrame:
     return pd.DataFrame(
         [
-            ("Evropa", "CE", "Communauté Européenne"),
-            ("Německo", "VDE", "VDE-Prüfstelle"),
+            ("Belgie", "CEBEC", "Comité Electrotechnique Belge"),
             ("Čína", "CCC", "China Compulsory Certification"),
-            ("USA", "UL / RU", "Underwriters Laboratories"),
-            ("Kanada", "CSA", "Canadian Standards Association"),
-            ("Velká Británie", "BSI", "British Standards Institution"),
-            ("Francie", "UTE", "Union Technique de l'Electricité"),
+            ("Dánsko", "DEMKO", "Danmarks Elektriske Materielkontroll"),
+            ("Německo", "VDE", "VDE-Prüfstelle"),
+            ("Německo", "IPA / Fraunhofer", "Fraunhofer IPA"),
+            ("Evropa", "CE", "Communauté Européenne"),
+            ("Finsko", "FI / FIMKO", "FIMKO LTD"),
+            ("Francie", "NF / UTE", "Union Technique de l'Electricité"),
+            ("Velká Británie", "BSI Kitemark", "British Standards Institution"),
             ("Itálie", "IMQ", "Istituto Italiano del Marchio di Qualità"),
+            ("Kanada", "CSA", "Canadian Standards Association"),
             ("Nizozemsko", "KEMA-KEUR", "KEMA"),
+            ("Norsko", "NEMKO", "Norges Elektriske Materiellkontroll"),
             ("Rakousko", "ÖVE", "Österreichischer Verband für Elektrotechnik"),
+            ("Rusko", "GOST-R / PCT", "SGS"),
+            ("Švédsko", "SEMKO", "Svenska Elektriska Materielkontrollanstalten"),
             ("Švýcarsko", "+S / SEV", "Schweizerischer Elektrotechnischer Verein"),
-            ("Rusko", "GOST-R", "SGS / PCT"),
+            ("USA", "UL / RU", "Underwriters Laboratories"),
         ],
         columns=["Země", "Značka", "Zkušebna"],
     )
+
+
+def df_h_insulation() -> pd.DataFrame:
+    return pd.DataFrame(
+        [{"Kód": k, "Materiál / vlastnost": v} for k, v in _H_INSUL.items()]
+    )
+
+
+def df_h_cores() -> pd.DataFrame:
+    return pd.DataFrame(
+        [{"Kód": k, "Konstrukce jádra": v} for k, v in _H_CORE.items()]
+    )
+
+
+def df_hd_metal_shield() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            ("A2 / A3", "Al plášť lisovaný/svařovaný — hladký / zvlněný"),
+            ("A4 / A5", "Al plášť na každé žíle / z pásky"),
+            ("C2 / C3", "Cu plášť / zvlněný"),
+            ("F / F3", "ocelový plášť / zvlněný"),
+            ("K", "zinkový plášť"),
+            ("L / L2 / L4–L6", "olověný plášť (legovaný / čisté Pb / na žíle)"),
+            ("A / A6", "koncentrický Al vodič / meandr"),
+            ("C / C6 / C9", "koncentrický Cu / meandr / dělený"),
+            ("A7 / A8", "Al stínění / na každé žíle"),
+            ("C4 / C5", "Cu opletení nad žilami / na každé žíle"),
+            ("C7 / C8", "Cu pásky/dráty nad žilami / na každé žíle"),
+            ("D", "tenké ocelové pásky + holý kontaktní vodič"),
+        ],
+        columns=["Kód HD 361", "Význam"],
+    )
+
+
+def df_hd_armor() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            ("Z2 / Z3 / Z4", "pancíř kulaté / ploché ocelové dráty / ocelová páska"),
+            ("Z5 / Z6 / Z7", "ocelové opletení / nosné opletení / tvarované dráty"),
+            ("Y2 / Y3", "pancíř kulaté / ploché Al dráty"),
+            ("Y5 / Y6", "speciální materiály / ocel + Cu dráty"),
+            ("D2 / D3", "nosné prvky textil/ocel nad duší / v jádru"),
+            ("D4", "samonosný — jádra jako tahové odlehčení"),
+            ("D5", "středová vložka výtahového ovládacího kabelu"),
+            ("D7 / D8", "nosný prvek vně / průřez „8“"),
+            ("H / H2", "plochý dělitelný / nedělitelný"),
+            ("H3 / H6", "můstkový / plochý HD 359 / EN 50214"),
+            ("H7 / H8", "dvouvrstvá izolace / spirálový"),
+        ],
+        columns=["Kód", "Význam"],
+    )
+
+
+def df_nyy_examples() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            (
+                "NYY-J 5×2,5 RE 0,6/1 kV",
+                "norma · Cu · PVC izolace · PVC plášť · se zeleno-žlutou · "
+                "5 žil · 2,5 mm² · kulaté plné · 0,6/1 kV",
+            ),
+            (
+                "NYY-J 12×1,5 RE 0,6/1 kV",
+                "12 žil 1,5 mm² RE, PVC/PVC, s PE žílou",
+            ),
+            (
+                "NA2XS2Y 1×35 RM/16 6/10 kV",
+                "v souladu s normou · Al · XLPE · stínění Cu 16 mm² · PE plášť · "
+                "1 žíla 35 mm² laněná kulatá · 6/10 kV",
+            ),
+            (
+                "N2XY 3×150 RM 0,6/1 kV",
+                "Cu · XLPE izolace · PVC plášť · 3×150 laněné · NN",
+            ),
+            (
+                "NYCWY",
+                "Cu · PVC · koncentrický Cu vlnový · PVC plášť",
+            ),
+        ],
+        columns=["Příklad", "Rozklad"],
+    )
+
+
+def df_soil_thermal() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            ("Velmi vlhká", 0.7),
+            ("Vlhká (běžná)", 1.0),
+            ("Suchá", 2.0),
+            ("Písek / suché lože", 2.5),
+            ("Velmi suchá", 3.0),
+        ],
+        columns=["Půda", "Měrný tepelný odpor [K·m/W]"],
+    )
+
+
+def df_air_distances() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            ("Od stěny / podlahy / stropu", "2 cm"),
+            ("Mezi kabely nad sebou", "2 × D"),
+            ("Mezi kabelovými systémy nad sebou", "20 cm"),
+            ("Mezi kabely vedle sebe", "2 × D"),
+            ("Standardní hloubka v zemi", "0,7 m (typicky 0,7–1,2 m)"),
+            ("Teplota půdy (tabulková)", "20 °C"),
+            ("Teplota vzduchu (tabulková)", "30 °C"),
+            ("Cyklické zatížení EVU v zemi", "0,7 (jiné: 0,5 / 0,6 / 0,85 / 1,0)"),
+        ],
+        columns=["Podmínka", "Hodnota"],
+    )
+
+
+def df_group_factors() -> pd.DataFrame:
+    """Sdružování obvodů — typické koeficienty DIN VDE 0298-4 (orientačně)."""
+    return pd.DataFrame(
+        [
+            (1, 1.00), (2, 0.80), (3, 0.70), (4, 0.65),
+            (5, 0.60), (6, 0.57), (7, 0.54), (8, 0.52),
+            (9, 0.50), (12, 0.45), (16, 0.41), (20, 0.38),
+        ],
+        columns=["Počet obvodů vedle sebe", "Koeficient"],
+    )
+
+
+def df_install_methods() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            ("A1", "v trubce ve stěně, tepelně izolované"),
+            ("A2", "vícežilový v trubce ve stěně"),
+            ("B1", "v trubce na stěně"),
+            ("B2", "vícežilový v trubce na stěně"),
+            ("C", "na stěně / podhledu, volně"),
+            ("D", "v zemi (chránička / přímo)"),
+            ("E", "vícežilový volně ve vzduchu"),
+            ("F", "jednožilové volně ve vzduchu, vedle sebe"),
+            ("G", "jednožilové volně ve vzduchu, s rozestupem"),
+        ],
+        columns=["Způsob (IEC/VDE)", "Popis"],
+    )
+
+
+def df_x26_current() -> pd.DataFrame:
+    """Proud do 1000 V — výběr z X 26 (volně ve vzduchu 1 žíla / na povrchu 2–3 žíly)."""
+    return pd.DataFrame(
+        [
+            (0.75, 15, 6, 12),
+            (1.0, 19, 10, 15),
+            (1.5, 24, 16, 18),
+            (2.5, 32, 25, 26),
+            (4, 42, 32, 34),
+            (6, 54, 40, 44),
+            (10, 73, 63, 61),
+            (16, 98, None, 82),
+            (25, 129, None, 108),
+            (35, 158, None, 135),
+            (50, 198, None, 168),
+            (70, 245, None, 207),
+            (95, 292, None, 250),
+            (120, 344, None, 292),
+            (150, 391, None, 335),
+            (185, 448, None, 382),
+            (240, 528, None, 453),
+            (300, 608, None, 523),
+            (400, 726, None, None),
+            (500, 830, None, None),
+        ],
+        columns=[
+            "mm²",
+            "Volně ve vzduchu 1 žíla [A]",
+            "Na povrchu 2 žíly [A]",
+            "Na povrchu 2–3 žíly (sk. ovládací) [A]",
+        ],
+    )
+
+
+def df_safety_select() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            ("Provoz", "napětí, proud, ochranná opatření, způsob pokládky, sdružování, přístupnost"),
+            ("Vnější vlivy", "teplota, déšť/pára/voda, chemikálie, mechanika, hlodavci, plísně, UV"),
+            ("Životnost", "pevné kabely obecně déle než ohebné; limity DIN VDE / HD dodržovat společně"),
+            ("Barva pláště", "černá poskytuje vyšší stupeň ochrany (UV) než ostatní barvy"),
+            ("Účel", "není-li uvedeno jinak, jen přenos a rozvod el. energie"),
+        ],
+        columns=["Téma", "Požadavek (X 93)"],
+    )
+
+
+def df_pull_limits() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            ("Max. tah na všechny žíly dohromady", "1000 N (není-li schváleno jinak)"),
+            ("Pevné uložení při pokládce", "50 N/mm² na jádro"),
+            ("Ohebné / flex okruhy (staticky)", "15 N/mm²"),
+            ("Ohyb při pokládce", "HD 516 S2 tab. 6 / DIN VDE 0298-300, okolí (20 ± 10) °C"),
+            ("Zkrut", "ohebné kabely obecně nejsou na zkrut navrženy"),
+        ],
+        columns=["Situace", "Limit"],
+    )
+
+
+# ── Vyhledávací index (sekce se nemění, hledání na ně skočí) ──────────────────
+
+_SECTION_KEYS = [
+    ("scans", "📷 Všechny skeny"),
+    ("ktg", "🛢️ Bubny KTG — rozměry"),
+    ("ktgcap", "📦 Bubny KTG — kapacita (sken)"),
+    ("bend", "↩️ Min. poloměr ohybu (VDE)"),
+    ("colors", "🎨 Značení žil"),
+    ("current", "⚡ Proudová zatížitelnost"),
+    ("resist", "🔌 Odpor & průměry jader / AWG"),
+    ("formulas", "📐 Elektrotechnické vzorce"),
+    ("codes", "🏷️ Označovací kódy (H / NYY)"),
+    ("din", "📚 Normy DIN VDE"),
+    ("fire", "🔥 Požár, tah, materiály, SN"),
+    ("certs", "✅ Certifikační značky"),
+]
+
+
+def _radio_label(key: str, n_scans: int) -> str:
+    for k, lab in _SECTION_KEYS:
+        if k == key:
+            return f"{lab} ({n_scans})" if k == "scans" else lab
+    return key
+
+
+_KNOWN_X_PAGES: dict[int, tuple[str, str]] = {
+    5: ("Odkazy na normy DIN VDE (silová zařízení)", "din vde 0100 0101 nemocnice výbuch blesk"),
+    6: ("Odkazy na normy DIN VDE (kabely)", "din vde 0250 0262 0276 0281"),
+    7: ("Harmonizované kódy HD 361 — napětí a izolace", "h05 h07 pvc xlpe kód označení"),
+    8: ("Harmonizované kódy — jádra a žíly", "třída 1 5 6 -f -k -u"),
+    9: ("Harmonizované kódy — plášť", "plášť pur chloropren"),
+    10: ("Kovový plášť, stínění, pancíř HD 361", "stínění pancíř olovo koncentrický c4 z2"),
+    11: ("Speciální provedení H / H2 / H8", "plochý spirálový samonosný"),
+    12: ("Kódy silových kabelů DIN VDE 0271/0276", "nyy n2xy na2xs2y j o re rm"),
+    15: ("Průměry jader VDE 0295", "průměr jádra třída 1 2 5 6"),
+    16: ("Odpor jádra Ω/km", "odpor iec 60228 měď hliník"),
+    17: ("Konstrukce lanění a AWG", "awg kcmil 7x0,5 třída 2 5 6"),
+    19: ("Proud — provozní podmínky země / vzduch", "půda 0,7 m tepelný odpor 20 °c 30 °c"),
+    20: ("Proud — přepočty a uspořádání", "sdružování koeficient vzdálenost 2d"),
+    25: ("Proud C / E 90 °C jádro", "pokládka c e 90"),
+    26: ("Proud do 1000 V a teplotně odolné", "h07v h07rn-f jz-500 volně ve vzduchu"),
+    28: ("Proud ohebné kabely 30 °C", "skupina 1 2 3 pojistka"),
+    32: ("Proud N2XY / NA2XY / N2XCY 0,6/1 kV", "xlpe země vzduch 90 °c"),
+    41: ("XLPE 6–30 kV kapacita a indukčnost", "sn střední napětí µf/km mh/km trefoil"),
+    61: ("Značení žil DIN 40705 / IEC 60446", "pe pen l1 n světlemodrá zeleno-žlutá"),
+    62: ("Min. poloměr ohybu VDE 0298", "ohyb buben 4xd 6xd vlečný řetěz"),
+    73: ("Požární zatížení kWh/m", "n2xh nhxmh e30 halogen"),
+    90: ("Materiály izolace a pláště", "pvc xlpe pur silikon halogen"),
+    91: ("Vlastnosti materiálů — pokračování", "hustota teplota hořlavost"),
+    93: ("Bezpečnost a výběr kabelu", "vnější vlivy uv hlodavci chemikálie"),
+    106: ("Certifikační značky", "vde ce ul ccc kema öve"),
+    109: ("Rozměry bubnů KTG", "bubny fd kd l2 nosnost"),
+}
+
+
+def _scan_catalog_index() -> list[dict]:
+    """Každý soubor ≈ stránka X 5, X 6, … podle pořadí ve složce."""
+    out = []
+    for i, p in enumerate(list_catalog_scans()):
+        xpage = 5 + i
+        title, extra = _KNOWN_X_PAGES.get(xpage, (f"Technická příloha — strana X {xpage}", ""))
+        out.append({
+            "file": p.name,
+            "path": p,
+            "xpage": xpage,
+            "title": title,
+            "keywords": f"{title} {extra} x{xpage} {p.name}".lower(),
+        })
+    return out
+
+
+_EXTRACT_INDEX: list[dict] = [
+    {"key": "ktg", "title": "Rozměry dřevěných / plastových / nevratných bubnů",
+     "kw": "buben ktg čelo jádro fd kd l2 nosnost he 350"},
+    {"key": "ktgcap", "title": "Kapacita bubnu — kolik metrů se vejde",
+     "kw": "kapacita návin délka metr kd/d 15xd 20xd 40xd"},
+    {"key": "bend", "title": "Minimální poloměr ohybu VDE 0298 / 0891",
+     "kw": "ohyb bending radius buben vlečný řetěz kladka 4xd 6xd 7,5xd"},
+    {"key": "colors", "title": "Značení žil L1/L2/L3/N/PE a telefonní čtyřky",
+     "kw": "barva žíla pe pen n světlemodrá zeleno-žlutá vde 0816 hvězdicová"},
+    {"key": "current", "title": "Proudová zatížitelnost — ohebné, C/E, X 26, sdružování",
+     "kw": "proud ampér zatížitelnost 30°c 90°c skupina pojistka sdružování země vzduch n2xy"},
+    {"key": "current", "title": "Pokládka do země / vzduchu — hloubka, půda, vzdálenosti",
+     "kw": "země 0,7 m tepelný odpor vlhká suchá 2 cm 2d evu 0,7"},
+    {"key": "resist", "title": "Odpor jádra Ω/km, průměry, AWG",
+     "kw": "odpor ohm awg kcmil třída 1 2 5 6 průměr jádra iec 60228"},
+    {"key": "formulas", "title": "Vzorce — odpor, úbytek napětí, průřez",
+     "kw": "úbytek napětí kappa měď 58 hliník 33 smyčka cos phi průřez"},
+    {"key": "codes", "title": "Rozklad kódu H07RN-F, H05VV-F, NYY, NA2XS2Y",
+     "kw": "h07rn-f h05vv-f h07v-k nyy n2xy na2xs2y j o re rm stínění pancíř"},
+    {"key": "codes", "title": "HD 361 — plášť, stínění, pancíř, ploché H/H2/H8",
+     "kw": "hd 361 a2 c4 z2 pancíř olovo koncentrický spirálový"},
+    {"key": "din", "title": "Normy DIN VDE 0100 … 0816",
+     "kw": "din vde 0100 0101 0250 0276 0298 koupelna výbuch blesk nemocnice"},
+    {"key": "fire", "title": "Požární zatížení N2XH / E30, tah 50/15 N/mm²",
+     "kw": "požár kwh/m n2xh nhxmh e30 halogen tah 50 n/mm2 15 n/mm2"},
+    {"key": "fire", "title": "XLPE 6–30 kV — kapacita a indukčnost",
+     "kw": "xlpe 6/10 12/20 18/30 kv kapacita indukčnost trefoil"},
+    {"key": "fire", "title": "Materiály PVC, XLPE, PUR, silikon, bezhalogen",
+     "kw": "pvc xlpe pe pur chloropren silikon fep ptfe halogen teplota"},
+    {"key": "fire", "title": "Výběr kabelu — provoz a vnější vlivy",
+     "kw": "bezpečnost uv hlodavci chemikálie déšť výběr černá plášť"},
+    {"key": "certs", "title": "Značky VDE, CE, UL, CCC, KEMA, ÖVE…",
+     "kw": "certifikace vde ce ul ccc kema öve csa bsi imq nemko semko"},
+    {"key": "scans", "title": "Prohlížeč všech naskenovaných stránek",
+     "kw": "sken fotka katalog stránka x"},
+]
+
+
+def search_catalog(query: str) -> list[dict]:
+    """Vrátí zásahy ve výpiscích i ve skenech (název strany)."""
+    q = (query or "").strip().lower()
+    if len(q) < 2:
+        return []
+    hits: list[dict] = []
+    for item in _EXTRACT_INDEX:
+        blob = f"{item['title']} {item['kw']}".lower()
+        if q in blob or all(part in blob for part in q.split()):
+            hits.append({
+                "kind": "Výpisek",
+                "title": item["title"],
+                "key": item["key"],
+                "file": "",
+            })
+    for sc in _scan_catalog_index():
+        if q in sc["keywords"] or q in sc["file"].lower():
+            hits.append({
+                "kind": "Sken",
+                "title": f"X {sc['xpage']} — {sc['title']}",
+                "key": "scans",
+                "file": sc["file"],
+            })
+    # unique by title
+    seen: set[str] = set()
+    uniq = []
+    for h in hits:
+        k = h["title"]
+        if k not in seen:
+            seen.add(k)
+            uniq.append(h)
+    return uniq[:40]
 
 
 def explain_h_code(raw: str) -> list[str]:
@@ -692,30 +1069,38 @@ def render_helukabel_catalog() -> None:
     st.markdown("### 📗 Technické tabulky HELUKABEL")
     st.markdown(
         '<div class="info-box" style="margin-bottom:12px;">'
-        f"Digitální výpisky + prohlížeč všech skenů ze složky "
-        f"<code>assets/helukabel/</code> ({n_scans} stránek). "
-        "Husté matice zůstávají i jako originální sken. "
-        "Pro vlastní bubny použij kalkulačku <em>Kapacita bubnu</em>."
+        f"Digitální výpisky + prohlížeč skenů "
+        f"(<code>assets/helukabel/</code>, {n_scans} stránek). "
+        "Nahoře hledej — otevře se příslušná <strong>sekce</strong>."
         "</div>",
         unsafe_allow_html=True,
     )
 
+    q = st.text_input(
+        "Hledat v katalogu",
+        placeholder="např. ohyb, NYY, H07RN-F, proud, AWG, požár, VDE, buben…",
+        key="helu_q",
+    )
+    hits = search_catalog(q)
+    if q.strip() and not hits:
+        st.caption("Nic nenalezeno — zkus kratší slovo (ohyb, proud, NYY, PE…).")
+    elif hits:
+        labels = [f"{h['kind']}: {h['title']}" for h in hits]
+        chosen = st.selectbox("Nalezené položky", labels, key="helu_hit_sel")
+        hit = hits[labels.index(chosen)]
+        if st.button("Otevřít sekci", key="helu_go"):
+            st.session_state["helu_topic"] = _radio_label(hit["key"], n_scans)
+            if hit.get("file"):
+                st.session_state["helu_scan_q"] = hit["file"]
+            st.rerun()
+
+    options = [_radio_label(k, n_scans) for k, _ in _SECTION_KEYS]
+    if "helu_topic" not in st.session_state or st.session_state["helu_topic"] not in options:
+        st.session_state["helu_topic"] = options[0]
+
     topic = st.radio(
         "Sekce",
-        options=[
-            f"📷 Všechny skeny ({n_scans})",
-            "🛢️ Bubny KTG — rozměry",
-            "📦 Bubny KTG — kapacita (sken)",
-            "↩️ Min. poloměr ohybu (VDE)",
-            "🎨 Značení žil",
-            "⚡ Proudová zatížitelnost",
-            "🔌 Odpor & průměry jader / AWG",
-            "📐 Elektrotechnické vzorce",
-            "🏷️ Označovací kódy (H / NYY)",
-            "📚 Normy DIN VDE",
-            "🔥 Požár, tah, materiály, SN",
-            "✅ Certifikační značky",
-        ],
+        options=options,
         horizontal=True,
         key="helu_topic",
     )
@@ -748,27 +1133,28 @@ def render_helukabel_catalog() -> None:
 
 
 def _render_all_scans() -> None:
-    scans = list_catalog_scans()
-    if not scans:
+    meta = _scan_catalog_index()
+    if not meta:
         st.warning("Ve složce `assets/helukabel/` zatím nejsou žádné skeny.")
         return
-    q = st.text_input("Filtrovat název souboru", key="helu_scan_q")
+    q = st.text_input("Filtrovat název / stranu / téma", key="helu_scan_q")
     if q.strip():
-        scans = [p for p in scans if q.strip().lower() in p.name.lower()]
-    if not scans:
-        st.info("Žádný soubor neodpovídá filtru.")
+        ql = q.strip().lower()
+        meta = [s for s in meta if ql in s["keywords"] or ql in s["file"].lower()]
+    if not meta:
+        st.info("Žádný sken neodpovídá filtru.")
         return
     page_size = 10
-    n_pages = max(1, (len(scans) + page_size - 1) // page_size)
+    n_pages = max(1, (len(meta) + page_size - 1) // page_size)
     page = st.number_input(
-        f"List (po {page_size} skenech, celkem {len(scans)})",
+        f"List (po {page_size} skenech, zobrazeno {len(meta)})",
         min_value=1, max_value=n_pages, value=1, step=1,
         key="helu_scan_page",
     )
     start = (int(page) - 1) * page_size
-    for p in scans[start : start + page_size]:
-        with st.expander(p.name, expanded=False):
-            st.image(str(p), use_container_width=True)
+    for s in meta[start : start + page_size]:
+        with st.expander(f"X {s['xpage']} — {s['title']}  ({s['file']})", expanded=False):
+            st.image(str(s["path"]), use_container_width=True)
 
 
 def _render_ktg_dims() -> None:
@@ -901,16 +1287,33 @@ def _render_current() -> None:
     st.dataframe(df_current_flex(), use_container_width=True, hide_index=True)
     st.markdown("##### Přepočítací koeficienty — teplota okolí > 30 °C")
     st.dataframe(df_temp_corr_pvc_rubber(), use_container_width=True, hide_index=True)
-    _show_scan("08_proud_ohebne.png", "Proudová zatížitelnost ohebné")
 
     st.markdown("##### Kabely do 1000 V / teplotně odolné (X 26)")
-    st.info(
-        "Tabulka je závislá na typu kabelu a způsobu uložení — "
-        "pro přesnost otevři originální sken (více sloupců podle typů)."
+    st.caption(
+        "Volně ve vzduchu = 1 zatížená žíla (H07V-K, H07RN-F…). "
+        "Na povrchu 2–3 žíly = šňůry / ovládací (JZ, PUR, MULTIFLEX…)."
     )
-    _show_scan("09_proud_do1000v.png", "Proud do 1000 V")
+    st.dataframe(df_x26_current(), use_container_width=True, hide_index=True)
+
     st.markdown("##### Pevné uložení — pokládka C / E (90 °C jádro, 30 °C okolí)")
     st.dataframe(df_current_cefg_90(), use_container_width=True, hide_index=True)
+
+    st.markdown("##### Provozní podmínky (X 19) — země / vzduch")
+    st.dataframe(df_air_distances(), use_container_width=True, hide_index=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("###### Měrný tepelný odpor půdy")
+        st.dataframe(df_soil_thermal(), use_container_width=True, hide_index=True)
+    with c2:
+        st.markdown("###### Sdružování obvodů (orientační koeficient)")
+        st.dataframe(df_group_factors(), use_container_width=True, hide_index=True)
+    st.markdown("###### Způsoby pokládky IEC / VDE")
+    st.dataframe(df_install_methods(), use_container_width=True, hide_index=True)
+    st.caption(
+        "N2XY / NA2XY / N2XCY 0,6/1 kV (země 20 °C / vzduch 30 °C, XLPE 90 °C) — "
+        "hustá matice do 1000 mm² je ve skenech (strana X 32). "
+        "Hledej „N2XY“ nahoře."
+    )
 
 
 def _render_resistance_awg() -> None:
@@ -1043,6 +1446,13 @@ def _render_codes() -> None:
     raw = st.text_input("Rozložit kód", value="H07RN-F 3G1,5", key="helu_h_parse")
     for line in explain_h_code(raw):
         st.write(f"· {line}")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("###### Izolace / plášť")
+        st.dataframe(df_h_insulation(), use_container_width=True, hide_index=True)
+    with c2:
+        st.markdown("###### Jádro (-U/-R/-K/-F/-H)")
+        st.dataframe(df_h_cores(), use_container_width=True, hide_index=True)
     st.markdown("##### Srovnání nová / stará zkratka")
     st.dataframe(df_old_new_codes(), use_container_width=True, hide_index=True)
     st.markdown("##### Silové kabely DIN VDE 0271 / 0276 (NYY, N2XY…)")
@@ -1050,13 +1460,18 @@ def _render_codes() -> None:
         pd.DataFrame(_NYY_PARTS, columns=["Znak", "Význam"]),
         use_container_width=True, hide_index=True,
     )
-    st.caption("Příklad: NYY-J 5×2,5 RE 0,6/1 kV · NA2XS2Y 1×35 RM/16 6/10 kV")
+    st.markdown("###### Příklady rozkladu")
+    st.dataframe(df_nyy_examples(), use_container_width=True, hide_index=True)
+    st.markdown("##### HD 361 — kovový plášť, koncentrický vodič, stínění")
+    st.dataframe(df_hd_metal_shield(), use_container_width=True, hide_index=True)
+    st.markdown("##### HD 361 — pancíř, nosné prvky, ploché / spirálové")
+    st.dataframe(df_hd_armor(), use_container_width=True, hide_index=True)
 
 
 def _render_din_vde() -> None:
-    st.markdown("##### Odkazy na normy DIN VDE (výběr z X 5–X 6)")
+    st.markdown("##### Odkazy na normy DIN VDE (X 5–X 6)")
     st.dataframe(df_din_vde_refs(), use_container_width=True, hide_index=True)
-    st.caption("Kompletní seznam je ve skenech — sekce 📷 Všechny skeny.")
+    st.caption("Kompletní znění norem je ve skenech — hledej číslo normy nahoře.")
 
 
 def _render_fire_materials() -> None:
@@ -1068,6 +1483,7 @@ def _render_fire_materials() -> None:
             "Požární zatížení (výběr)",
             "Tah / ohyb při pokládce",
             "Materiály izolace a pláště",
+            "Výběr kabelu — bezpečnost (X 93)",
         ],
         key="helu_fire_sub",
     )
@@ -1083,16 +1499,12 @@ def _render_fire_materials() -> None:
         st.dataframe(df_fire_load_n2xh(), use_container_width=True, hide_index=True)
         st.caption("Výběr z X 73. Kompletní typy NHXAF / NHXMH / N2XH / N2XCH / E30 ve skenech.")
     elif sub.startswith("Tah"):
-        st.markdown(
-            "- **Max. tah na všechny žíly dohromady:** 1000 N (není-li schváleno jinak)\n"
-            "- **Pevné uložení při pokládce:** 50 N/mm² na jádro\n"
-            "- **Ohebné / flex okruhy:** 15 N/mm² staticky\n"
-            "- **Ohyb:** dle HD 516 S2 tab. 6 / DIN VDE 0298-300, okolí (20 ± 10) °C\n"
-            "- **Zkrut:** ohebné kabely obecně nejsou na zkrut navrženy"
-        )
-    else:
+        st.dataframe(df_pull_limits(), use_container_width=True, hide_index=True)
+    elif sub.startswith("Materiály"):
         st.dataframe(df_materials_key(), use_container_width=True, hide_index=True)
         st.caption("Zjednodušený výběr z X 90–91. Plná matice vlastností je ve skenech.")
+    else:
+        st.dataframe(df_safety_select(), use_container_width=True, hide_index=True)
 
 
 def _render_certs() -> None:
