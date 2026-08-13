@@ -490,21 +490,22 @@ Hodnota je **orientační** (ideální návin). Předvolby HELUKABEL KTG lze dop
 ### 8.3 Technické tabulky HELUKABEL (katalog)
 
 **Funkce:** `render_helukabel_catalog()` v `helukabel_tables.py`  
-**Skeny:** `assets/helukabel/*.png` (12 stránek)
-
-Jedna položka v hubu s vnitřním `st.radio` podle tématu:
+**Skeny:** `assets/helukabel/` — všechny PNG/JPG se načítají automaticky (prohlížeč po 10).
 
 | Sekce | Obsah |
 |-------|--------|
-| Bubny KTG — rozměry | Fd/Kd/Bd/I₁/I₂, nosnost, hmotnost (dřevo / plast / nevratné) |
-| Bubny KTG — kapacita | filtr Kd/D + originální matice délek (sken) |
-| Min. poloměr ohybu | VDE 0298-3 + 0891 + rychlá kontrola → Rmin / min. jádro |
-| Značení žil | DIN 40705/IEC 60446 + VDE 0816 (čtyřky) |
-| Proudová zatížitelnost | ohebné @ 30 °C + koef. teploty; sken do 1000 V |
-| Odpor & průměry / AWG | IEC 60228 Ω/km, VDE 0295 ø, převod AWG |
-| Elektrotechnické vzorce | κ/ρ + kalkulačka R / úbytek u / průřez q |
-
-Husté matice zůstávají jako sken v expanderu; přepisované tabulky jsou `st.dataframe`.
+| Všechny skeny | listování + filtr názvu |
+| Bubny KTG — rozměry | čelo / jádro / šířka, nosnost (dřevo / plast / nevratné) |
+| Bubny KTG — kapacita | filtr Kd/D + sken matice |
+| Min. poloměr ohybu | VDE 0298-3 + 0891 + rychlá kontrola |
+| Značení žil | DIN 40705/IEC 60446 + VDE 0816 |
+| Proudová zatížitelnost | ohebné @ 30 °C + pokládka C/E 90 °C |
+| Odpor & průměry / AWG | IEC 60228, VDE 0295, AWG |
+| Elektrotechnické vzorce | κ/ρ + R / úbytek / průřez |
+| Označovací kódy | H05/H07 + NYY/N2XY + stará/nová zkratka |
+| Normy DIN VDE | výběr odkazů X 5–X 6 |
+| Požár, tah, materiály, SN | kWh/m, 50/15 N/mm², XLPE 6–30 kV, materiály |
+| Certifikační značky | CE, VDE, UL, CCC… |
 
 ---
 
