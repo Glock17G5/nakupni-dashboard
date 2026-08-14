@@ -6,6 +6,7 @@ Použití: hub Nástroje & tipy → „Technické tabulky HELUKABEL“.
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import pandas as pd
 import streamlit as st
@@ -1647,8 +1648,8 @@ _EXTRACT_INDEX: list[dict] = [
      "kw": "odpor ohm awg kcmil třída 1 2 5 6 průměr jádra iec 60228 7x0,5"},
     {"key": "formulas", "title": "Vzorce — odpor, úbytek napětí, průřez, U0/U",
      "kw": "úbytek napětí kappa měď 58 hliník 33 smyčka cos phi průřez 0,6/1 kv"},
-    {"key": "codes", "title": "Rozklad kódu H07RN-F, H05VV-F, NYY, NA2XS2Y",
-     "kw": "h07rn-f h05vv-f h07v-k nyy n2xy na2xs2y j o re rm stínění pancíř"},
+    {"key": "codes", "title": "Rozkladač kódu H07RN-F, H05VV-F, NYY, NA2XS2Y",
+     "kw": "h07rn-f h05vv-f h07v-k nyy n2xy na2xs2y j o re rm stínění pancíř rozložit kód izolace plášť"},
     {"key": "codes", "title": "Zkratky Y 2X 11Y re rm -J -O Li (St)",
      "kw": "pvc xlpe pur re rm j o li stínění bezhalogen"},
     {"key": "din", "title": "Normy DIN VDE 0100 … 0816",
@@ -1706,31 +1707,279 @@ def search_catalog(query: str) -> list[dict]:
     return uniq[:40]
 
 
-def explain_h_code(raw: str) -> list[str]:
-    """Hrubý rozklad harmonizovaného kódu (H05VV-F, H07RN-F 3G1,5)."""
-    s = raw.upper().replace(" ", "").replace(",", ".")
-    bits: list[str] = []
-    if s.startswith("H"):
-        bits.append("H = harmonizovaný typ")
-    elif s.startswith("A"):
-        bits.append("A = schválený národní typ")
-    for k, v in _H_VOLTAGE.items():
-        if k in s[:4]:
-            bits.append(f"{k} = jmenovité napětí {v}")
+_H_SHAPE = {
+    "H8": "spirálový kabel",
+    "H7": "dvouvrstvá izolace",
+    "H6": "plochý (HD 359 / EN 50214)",
+    "H3": "můstkový",
+    "H2": "plochý nedělitelný",
+    "H": "plochý dělitelný",
+}
+
+_VDE_INSUL = [
+    ("NHX", "izolace bezhalogenová (NHX…)"),
+    ("HX", "izolace bezhalogenová zesítěná"),
+    ("2X", "izolace XLPE (VPE)"),
+    ("2Y", "izolace PE"),
+    ("11Y", "izolace PUR"),
+    ("5G", "izolace chloropren"),
+    ("2G", "izolace silikon"),
+    ("3G", "izolace EPR"),
+    ("Y", "izolace PVC"),
+    ("H", "izolace bezhalogenová směs"),
+    ("G", "izolace pryž"),
+    ("X", "izolace XLPE / zesítěný plast"),
+]
+
+_VDE_CONC = [
+    ("CW", "koncentrický Cu vodič — vlnový"),
+    ("CE", "koncentrický Cu vodič — na každé žíle"),
+    ("C", "koncentrický Cu vodič"),
+]
+
+_VDE_SCREEN = [
+    ("SE", "stínění Cu na každé žíle"),
+    ("S", "stínění Cu dráty / pásky"),
+]
+
+_VDE_ARMOR = [
+    ("B", "pancíř — ocelová páska"),
+    ("F", "pancíř — ploché ocelové dráty"),
+    ("R", "pancíř — kulaté ocelové dráty"),
+]
+
+_VDE_SHEATH = [
+    ("2Y", "plášť PE"),
+    ("2X", "plášť XLPE"),
+    ("HX", "plášť bezhalogenový zesítěný"),
+    ("Y", "plášť PVC"),
+    ("H", "plášť bezhalogenový"),
+    ("K", "plášť olověný"),
+    ("Q", "plášť PUR"),
+]
+
+_CONSTR = {
+    "RE": "kulaté plné jádro (tř. 1)",
+    "RM": "kulaté laněné jádro (tř. 2)",
+    "SE": "sektorové plné jádro",
+    "SM": "sektorové laněné jádro",
+}
+
+
+def _eat_longest(s: str, tokens: list[tuple[str, str]]) -> tuple[str, str, str] | None:
+    for code, meaning in sorted(tokens, key=lambda x: -len(x[0])):
+        if s.startswith(code):
+            return code, meaning, s[len(code):]
+    return None
+
+
+def _parse_cores_tail(tail: str, *, h_code: bool = False) -> list[tuple[str, str, str]]:
+    """nGq / nXq / n×q, RE/RM, /stínění, kV, E30."""
+    rows: list[tuple[str, str, str]] = []
+    t = tail.strip()
+    if not t:
+        return rows
+    pe_kind: str | None = None
+    m = None
+    if h_code:
+        m = re.search(
+            r"(?P<n>\d+)\s*G\s*(?P<q>\d+(?:[.,]\d+)?)",
+            t,
+            re.IGNORECASE,
+        )
+        if m:
+            pe_kind = "G"
+        else:
+            # HD 361: velké X = bez PE. České 3x1,5 / 3×1,5 = jen násobení.
+            m = re.search(
+                r"(?P<n>\d+)\s*X\s*(?P<q>\d+(?:[.,]\d+)?)",
+                t,
+            )
+            if m:
+                pe_kind = "X"
+    if m is None:
+        m = re.search(
+            r"(?P<n>\d+)\s*[×x*]\s*(?P<q>\d+(?:[.,]\d+)?)",
+            t,
+        )
+    if m:
+        n = m.group("n")
+        q = m.group("q").replace(",", ".")
+        rows.append(("Počet žil", n, f"{n} žil"))
+        if pe_kind == "G":
+            rows.append(("Ochranná žíla", "G", "se zeleno-žlutou (PE) — započtena v počtu žil"))
+        elif pe_kind == "X":
+            rows.append(("Ochranná žíla", "X", "bez zeleno-žluté ochranné žíly"))
+        rows.append(("Průřez", f"{q} mm²", f"jmenovitý průřez jádra {q} mm²"))
+        t = t[: m.start()] + t[m.end():]
+    m2 = re.search(r"\b(RE|RM|SE|SM)\b", t, re.IGNORECASE)
+    if m2:
+        c = m2.group(1).upper()
+        rows.append(("Konstrukce jádra", c, _CONSTR.get(c, c)))
+        t = t[: m2.start()] + t[m2.end():]
+    # Napětí dřív než /stínění, ať RM/16 6/10 kV nesplete 16/6.
+    m4 = re.search(
+        r"(\d+(?:[.,]\d+)?)\s*/\s*(\d+(?:[.,]\d+)?)\s*(?:kV|KV)",
+        t,
+        re.IGNORECASE,
+    )
+    if m4 is None:
+        m4 = re.search(
+            r"(\d+(?:[.,]\d+)?)\s*/\s*(\d+(?:[.,]\d+)?)",
+            t,
+        )
+        if m4:
+            try:
+                u0_val = float(m4.group(1).replace(",", "."))
+            except ValueError:
+                u0_val = 99.0
+            if u0_val >= 50:
+                m4 = None
+    if m4:
+        u0, u = m4.group(1).replace(",", "."), m4.group(2).replace(",", ".")
+        rows.append(("Jmenovité napětí", f"{u0}/{u} kV", f"U₀/U = {u0}/{u} kV"))
+        t = t[: m4.start()] + t[m4.end():]
+    m3 = re.search(r"/\s*(\d+(?:[.,]\d+)?)", t)
+    if m3:
+        rows.append(
+            ("Stínění / koncentrický", f"{m3.group(1)} mm²",
+             "průřez stínění nebo koncentrického vodiče"),
+        )
+        t = t[: m3.start()] + t[m3.end():]
+    up = t.upper().replace(" ", "")
+    for fire, meaning in (
+        ("E90", "funkční schopnost 90 min (požár)"),
+        ("E30", "funkční schopnost 30 min (požár)"),
+        ("FE180", "izolace odolná ohni 180 min"),
+        ("FE90", "izolace odolná ohni 90 min"),
+    ):
+        if fire in up:
+            rows.append(("Požární třída", fire, meaning))
             break
-    for k, v in sorted(_H_INSUL.items(), key=lambda x: -len(x[0])):
-        if k in s:
-            bits.append(f"{k} = {v}")
-    for k, v in _H_CORE.items():
-        if f"-{k}" in s or s.endswith(k) or f"{k}3" in s or f"{k}5" in s:
-            if any(k in part for part in (s[4:8], s[-3:])):
-                bits.append(f"{k} = jádro: {v}")
+    return rows
+
+
+def decode_cable_designation(raw: str) -> list[tuple[str, str, str]]:
+    """Rozklad H07RN-F / NYY-J / NA2XS2Y… → (část, znak, význam)."""
+    original = (raw or "").strip()
+    if len(original) < 2:
+        return []
+    compact = original.upper().replace(" ", "")
+    compact = compact.replace(",", ".")
+    u = original.upper().lstrip()
+
+    hcompact = compact.replace("×", "X").replace("*", "X")
+    hm = re.match(r"^(H|A)(01|03|05|07)(.*)$", hcompact)
+    if hm and (u.startswith("H") or u.startswith(("A01", "A03", "A05", "A07"))):
+        rows: list[tuple[str, str, str]] = []
+        pref, volt, rest = hm.groups()
+        rows.append((
+            "Původ",
+            pref,
+            "harmonizovaný typ (HD 361 / DIN VDE 0292)" if pref == "H"
+            else "schválený národní typ",
+        ))
+        rows.append(("Jmenovité napětí", volt, _H_VOLTAGE.get(volt, volt)))
+        core_m = re.search(r"-(U|R|K|F|H|D|E)(?=\d|$)", rest)
+        if core_m:
+            mat_block = rest[: core_m.start()]
+            core = core_m.group(1)
+        else:
+            split = re.match(r"^([A-Z]*?)(\d.*)?$", rest)
+            mat_block = (split.group(1) if split else rest) or ""
+            core = ""
+        shape = ""
+        for sh in ("H8", "H7", "H6", "H3", "H2"):
+            if mat_block.endswith(sh):
+                shape = sh
+                mat_block = mat_block[: -len(sh)]
                 break
-    if "G" in s[4:]:
-        bits.append("G = se zeleno-žlutou ochrannou žílou")
-    if "X" in s[5:] and "2X" not in s:
-        bits.append("X = bez ochranné žíly")
-    return bits or ["Kód nerozeznán — zkus např. H07RN-F 3G1,5 nebo H07V-K."]
+        roles = ["Izolace", "Plášť", "Další vrstva"]
+        i, ri = 0, 0
+        codes = sorted(_H_INSUL.keys(), key=len, reverse=True)
+        while i < len(mat_block) and ri < 3:
+            hit = next((c for c in codes if mat_block.startswith(c, i)), None)
+            if not hit:
+                i += 1
+                continue
+            rows.append((roles[ri], hit, _H_INSUL[hit]))
+            i += len(hit)
+            ri += 1
+        if core:
+            rows.append(("Jádro", f"-{core}", _H_CORE.get(core, core)))
+        if shape:
+            rows.append(("Provedení", shape, _H_SHAPE.get(shape, shape)))
+        rows.extend(_parse_cores_tail(original, h_code=True))
+        if any(r[0] in ("Izolace", "Jádro") for r in rows) or core or mat_block:
+            return rows
+
+    s = compact.replace("×", "X").replace("*", "X")
+    vde_rows: list[tuple[str, str, str]] = []
+    if s.startswith("(N)"):
+        vde_rows.append(("Norma", "(N)", "v souladu s DIN VDE (není plně normový typ)"))
+        s = s[3:]
+    elif s.startswith("N"):
+        vde_rows.append(("Norma", "N", "kabel podle DIN VDE"))
+        s = s[1:]
+    else:
+        return _parse_cores_tail(original, h_code=False)
+
+    if s.startswith("A") and (len(s) == 1 or s[1] in "Y2HGX"):
+        vde_rows.append(("Jádro — materiál", "A", "hliník (Al)"))
+        s = s[1:]
+    else:
+        vde_rows.append(("Jádro — materiál", "Cu", "měď (není-li A)"))
+
+    eaten = _eat_longest(s, _VDE_INSUL)
+    if eaten:
+        code, meaning, s = eaten
+        vde_rows.append(("Izolace", code, meaning))
+
+    eaten = _eat_longest(s, _VDE_CONC)
+    if eaten:
+        code, meaning, s = eaten
+        vde_rows.append(("Koncentrický vodič", code, meaning))
+
+    eaten = _eat_longest(s, _VDE_SCREEN)
+    if eaten:
+        code, meaning, s = eaten
+        vde_rows.append(("Stínění", code, meaning))
+
+    eaten = _eat_longest(s, _VDE_ARMOR)
+    if eaten:
+        code, meaning, s = eaten
+        vde_rows.append(("Pancíř", code, meaning))
+
+    eaten = _eat_longest(s, _VDE_SHEATH)
+    if eaten:
+        code, meaning, s = eaten
+        vde_rows.append(("Plášť", code, meaning))
+
+    pe = re.match(r"^-(JZ|OZ|J|O)", s)
+    if pe:
+        code = pe.group(1)
+        meaning = {
+            "J": "se zeleno-žlutou ochrannou žílou (PE)",
+            "O": "bez zeleno-žluté ochranné žíly",
+            "JZ": "s PE + číslované žíly",
+            "OZ": "bez PE + číslované žíly",
+        }[code]
+        vde_rows.append(("Ochranná žíla", f"-{code}", meaning))
+        s = s[pe.end():]
+
+    vde_rows.extend(_parse_cores_tail(original, h_code=False))
+    return vde_rows
+
+
+def explain_h_code(raw: str) -> list[str]:
+    """Rozklad označení kabelu (H05VV-F, H07RN-F, NYY-J…)."""
+    rows = decode_cable_designation(raw)
+    if not rows:
+        return [
+            "Kód nerozeznán — zkus např. H07RN-F 3G1,5 · H07V-K · "
+            "NYY-J 5×2,5 RE · NA2XS2Y 1×35 RM/16 6/10 kV."
+        ]
+    return [f"{part}: {code} — {meaning}" for part, code, meaning in rows]
 
 
 # ── UI ────────────────────────────────────────────────────────────────────────
@@ -2222,11 +2471,57 @@ def _render_formulas() -> None:
 
 
 def _render_codes() -> None:
+    st.markdown("##### Rozkladač označení kabelu")
+    st.caption(
+        "Napiš H07RN-F, H07V-K, NYY-J, NA2XS2Y… — izolace, plášť, jádro, žíly a napětí se doplní samy."
+    )
+    examples = [
+        "H07RN-F 3G1,5",
+        "H05VV-F 3G1,5",
+        "H07V-K 1×2,5",
+        "H07V-U",
+        "NYY-J 5×2,5 RE 0,6/1 kV",
+        "N2XY 3×150 RM",
+        "NA2XS2Y 1×35 RM/16 6/10 kV",
+        "NYCWY-J 4×50 SM",
+        "N2XH-J 4×16 RE",
+        "(N)HXH-E30 3×1,5",
+    ]
+    if "helu_h_parse" not in st.session_state:
+        st.session_state["helu_h_parse"] = examples[0]
+    cols = st.columns(5)
+    for i, ex in enumerate(examples[:5]):
+        if cols[i].button(ex, key=f"helu_ex_{i}"):
+            st.session_state["helu_h_parse"] = ex
+            st.rerun()
+    cols2 = st.columns(5)
+    for i, ex in enumerate(examples[5:]):
+        if cols2[i].button(ex, key=f"helu_ex_{i+5}"):
+            st.session_state["helu_h_parse"] = ex
+            st.rerun()
+
+    raw = st.text_input(
+        "Označení kabelu",
+        key="helu_h_parse",
+        placeholder="např. H07RN-F 3G2,5  nebo  NYY-J 5×2,5 RE",
+    )
+    decoded = decode_cable_designation(raw)
+    if decoded:
+        st.success(" · ".join(m for _p, _c, m in decoded))
+        st.markdown(" · ".join(f"**{p}** `{c}`" for p, c, _m in decoded))
+        st.dataframe(
+            pd.DataFrame(decoded, columns=["Část", "Znak", "Význam"]),
+            use_container_width=True,
+            hide_index=True,
+        )
+    elif raw.strip():
+        st.warning(
+            "Kód nerozeznán — zkus H07RN-F 3G1,5 · H07V-K · "
+            "NYY-J 5×2,5 RE · NA2XS2Y 1×35 RM/16 6/10 kV."
+        )
+
     st.markdown("##### Harmonizované kódy (DIN VDE 0292 / HD 361)")
     st.dataframe(df_h_code_legend(), use_container_width=True, hide_index=True)
-    raw = st.text_input("Rozložit kód", value="H07RN-F 3G1,5", key="helu_h_parse")
-    for line in explain_h_code(raw):
-        st.write(f"· {line}")
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("###### Izolace / plášť")
