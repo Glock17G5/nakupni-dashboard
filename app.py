@@ -10,6 +10,7 @@
 
 # ── Standardní knihovny ────────────────────────────────────────────────────────
 import base64
+import json
 import math
 import re
 import time
@@ -4980,12 +4981,13 @@ _TRUCK_LEG: list[dict] = [
 ]
 
 # Link4Future — stejné API, mění se jen IMEI (?devNo= / containerNo=).
-# Další zásilky: přidej IMEI nebo celý veřejný odkaz. GPS se do GitHubu neukládá.
+# Seznam zásilek spravuje UI (Přidat GPS / Smazat), ne kód.
 _LINK4FUTURE_API = "https://iot.link4future.com/prod-api/unLoginTrackContainer"
 _LINK4FUTURE_TTL = 900
-_LINK4FUTURE_TRACKERS: list[dict[str, str]] = [
-    {"imei": "862606278001977", "label": "FORU3343195"},
-]
+_GPS_TRACKERS_PATH = Path(__file__).resolve().parent / "gps_trackers.json"
+_GPS_SESSION_KEY = "gps_trackers"
+_GPS_HYDRATED_KEY = "gps_trackers_hydrated"
+_GPS_LS_KEY = "pbcable_gps_trackers"
 _LIVE_TRAIL_COLORS = ("#2563eb", "#dc2626", "#059669", "#d97706", "#7c3aed", "#db2777")
 
 
@@ -4999,31 +5001,145 @@ def _parse_link4future_imei(text: str) -> str | None:
     return m.group(0) if m else None
 
 
-def _configured_link4future_trackers() -> list[dict[str, str]]:
-    """Seznam trackerů z kódu + volitelně st.secrets['GPS_TRACKERS']."""
-    out: list[dict[str, str]] = []
+def _normalize_gps_tracker(item) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+    imei = _parse_link4future_imei(
+        str(item.get("imei") or item.get("url") or item.get("devNo") or "")
+    )
+    if not imei:
+        return None
+    container = str(item.get("container") or item.get("label") or item.get("name") or "").strip()
+    description = str(item.get("description") or item.get("popis") or "").strip()
+    added = str(item.get("added") or "").strip()
+    return {
+        "imei": imei,
+        "container": container or imei,
+        "description": description,
+        "added": added,
+    }
+
+
+def _normalize_gps_list(items) -> list[dict]:
+    out: list[dict] = []
     seen: set[str] = set()
-    extra: list = []
-    try:
-        extra = list(st.secrets.get("GPS_TRACKERS", []) or [])
-    except Exception:
-        extra = []
-    for item in list(_LINK4FUTURE_TRACKERS) + extra:
-        if isinstance(item, str):
-            imei = _parse_link4future_imei(item)
-            label = imei or item
-        elif isinstance(item, dict):
-            imei = _parse_link4future_imei(
-                str(item.get("imei") or item.get("url") or item.get("devNo") or "")
-            )
-            label = str(item.get("label") or item.get("name") or imei or "")
-        else:
+    if not isinstance(items, list):
+        return out
+    for item in items:
+        row = _normalize_gps_tracker(item)
+        if row is None or row["imei"] in seen:
             continue
-        if not imei or imei in seen:
-            continue
-        seen.add(imei)
-        out.append({"imei": imei, "label": label or imei})
+        seen.add(row["imei"])
+        out.append(row)
     return out
+
+
+def _read_gps_trackers_file() -> list[dict]:
+    try:
+        raw = json.loads(_GPS_TRACKERS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    return _normalize_gps_list(raw)
+
+
+def _gps_local_storage():
+    try:
+        from streamlit_local_storage import LocalStorage
+        return LocalStorage()
+    except Exception:
+        return None
+
+
+def _parse_gps_ls_value(raw) -> list[dict] | None:
+    """None = v úložišti nic / ještě nenačteno. Prázdný seznam je platný (uživatel smazal vše)."""
+    if raw is None:
+        return None
+    if isinstance(raw, list):
+        return _normalize_gps_list(raw)
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return None
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            return None
+        if isinstance(parsed, list):
+            return _normalize_gps_list(parsed)
+    return None
+
+
+def _hydrate_gps_trackers() -> None:
+    """Načte seznam z prohlížeče, jinak ze souboru. Jednou za relaci."""
+    if st.session_state.get(_GPS_HYDRATED_KEY):
+        return
+    items = None
+    ls = _gps_local_storage()
+    if ls is not None:
+        try:
+            items = _parse_gps_ls_value(ls.getItem(_GPS_LS_KEY))
+        except Exception:
+            items = None
+    if items is None:
+        items = _read_gps_trackers_file()
+    st.session_state[_GPS_SESSION_KEY] = items
+    st.session_state[_GPS_HYDRATED_KEY] = True
+
+
+def _gps_trackers() -> list[dict]:
+    _hydrate_gps_trackers()
+    rows = st.session_state.get(_GPS_SESSION_KEY) or []
+    return list(rows) if isinstance(rows, list) else []
+
+
+def _save_gps_trackers(items: list[dict]) -> None:
+    """Uloží seznam: relace + soubor + prohlížeč (dokud uživatel nesmaže)."""
+    items = _normalize_gps_list(items)
+    st.session_state[_GPS_SESSION_KEY] = items
+    st.session_state[_GPS_HYDRATED_KEY] = True
+    text = json.dumps(items, ensure_ascii=False, indent=2)
+    try:
+        _GPS_TRACKERS_PATH.write_text(text + "\n", encoding="utf-8")
+    except Exception:
+        pass
+    ls = _gps_local_storage()
+    if ls is not None:
+        try:
+            ls.setItem(_GPS_LS_KEY, text)
+            time.sleep(0.4)
+        except Exception:
+            pass
+
+
+def _add_gps_tracker(container: str, description: str, url_or_imei: str) -> str | None:
+    """Přidá zásilku. Vrací chybovou hlášku, nebo None při úspěchu."""
+    imei = _parse_link4future_imei(url_or_imei)
+    if not imei:
+        return "Vložte odkaz z Link4Future (nebo číslo ?devNo=)."
+    name = (container or "").strip()
+    if not name:
+        got = fetch_link4future_track(imei)
+        name = str((got or {}).get("label") or "").strip() or imei
+    rows = _gps_trackers()
+    now = now_prague().strftime("%d.%m.%Y")
+    for row in rows:
+        if row["imei"] == imei:
+            row["container"] = name
+            row["description"] = (description or "").strip()
+            _save_gps_trackers(rows)
+            return None
+    rows.append({
+        "imei": imei,
+        "container": name,
+        "description": (description or "").strip(),
+        "added": now,
+    })
+    _save_gps_trackers(rows)
+    return None
+
+
+def _delete_gps_tracker(imei: str) -> None:
+    _save_gps_trackers([row for row in _gps_trackers() if row.get("imei") != imei])
 
 
 def _mapbox_fit(lats: list[float], lons: list[float]) -> tuple[float, float, float]:
@@ -5215,46 +5331,77 @@ def _fix_label(fix: str) -> str:
 
 
 def _render_live_container_map() -> None:
-    """Živá mapa kontejnerů z Link4Future — stejné API, jiný IMEI."""
-    trackers = _configured_link4future_trackers()
+    """Živá mapa: formulář Přidat GPS, seznam se smazáním, všechny kontejnery v jedné mapě."""
+    trackers = _gps_trackers()
     st.markdown("##### Živá poloha kontejnerů")
     st.caption(
-        "Stejný GPS systém (Link4Future) — u další zásilky stačí jiná koncovka "
-        f"`?devNo=…`. Obnova max. jednou za {_LINK4FUTURE_TTL // 60} min. "
-        "Většina bodů je LBS (mobilní buňka), ne přesný satelit. "
-        "Do Gitu se poloha neukládá."
+        "Přidejte zásilku (jméno, popis, odkaz GPS). Zůstane tu, dokud ji sami nesmažete. "
+        "Všechny aktivní kontejnery jsou v jedné mapě. "
+        f"Poloha se obnovuje max. jednou za {_LINK4FUTURE_TTL // 60} min. "
+        "Většina bodů je LBS (buňka), ne satelit."
     )
-    if not trackers:
-        st.info("Zatím není zadaný žádný tracker. Pošlete veřejný odkaz `unLoginHistoryTrack?devNo=…`.")
-        return
 
-    labels = [t.get("label") or t["imei"] for t in trackers]
-    options = ["Všechny"] + labels if len(trackers) > 1 else labels
-    pick = options[0]
-    col_sel, col_btn = st.columns([3, 1])
-    with col_sel:
-        if len(options) > 1:
-            pick = st.selectbox("Kontejner", options, index=0)
+    with st.form("add_gps_tracker", clear_on_submit=True):
+        c_name, c_desc, c_url = st.columns([1.1, 1.4, 1.8])
+        with c_name:
+            new_name = st.text_input("Jméno kontejneru", placeholder="FORU3343195")
+        with c_desc:
+            new_desc = st.text_input("Popis", placeholder="např. XLPE květen 2026")
+        with c_url:
+            new_url = st.text_input(
+                "Odkaz GPS / IMEI",
+                placeholder="https://iot.link4future.com/unLoginHistoryTrack?devNo=…",
+                help="Stejný veřejný odkaz jako doteď — mění se jen koncovka ?devNo=",
+            )
+        added = st.form_submit_button("Přidat GPS", type="primary")
+    if added:
+        err = _add_gps_tracker(new_name, new_desc, new_url)
+        if err:
+            st.error(err)
+        else:
+            st.success("Kontejner je v seznamu.")
+            st.rerun()
+
+    trackers = _gps_trackers()
+    if trackers:
+        st.markdown("**Aktivní zásilky**")
+        for row in trackers:
+            col_a, col_b, col_c, col_d = st.columns([1.4, 2.2, 1.0, 0.8])
+            with col_a:
+                st.markdown(f"**{row['container']}**")
+            with col_b:
+                st.caption(row["description"] or "—")
+            with col_c:
+                st.caption(row["added"] or "")
+            with col_d:
+                if st.button("Smazat", key=f"del_gps_{row['imei']}", use_container_width=True):
+                    _delete_gps_tracker(row["imei"])
+                    st.rerun()
+    else:
+        st.info("Seznam je prázdný. Přidejte první kontejner formulářem výše.")
+
+    col_btn, _ = st.columns([1, 4])
     with col_btn:
-        st.markdown("<br>", unsafe_allow_html=True)
         if st.button("Obnovit GPS", use_container_width=True):
             fetch_link4future_track.clear()
             st.rerun()
 
-    wanted = trackers if pick == "Všechny" else [
-        t for t in trackers if (t.get("label") or t["imei"]) == pick
-    ]
+    if not trackers:
+        return
+
     tracks: list[dict] = []
     failed: list[str] = []
     with st.spinner("Stahuji polohu z Link4Future…"):
-        for t in wanted:
+        for t in trackers:
             got = fetch_link4future_track(t["imei"])
             if got is None:
-                failed.append(t.get("label") or t["imei"])
+                failed.append(t["container"])
                 continue
-            if t.get("label"):
-                got = {**got, "label": t["label"]}
-            tracks.append(got)
+            label = t["container"]
+            if t.get("description"):
+                label = f"{t['container']} · {t['description']}"
+            tracks.append({**got, "label": label, "container": t["container"],
+                           "description": t.get("description") or ""})
 
     if failed:
         st.warning("Nepodařilo se načíst: " + ", ".join(failed))
@@ -5272,7 +5419,8 @@ def _render_live_container_map() -> None:
         color = _LIVE_TRAIL_COLORS[i % len(_LIVE_TRAIL_COLORS)]
         pts = _downsample_track(tr["points"])
         last = tr["last"]
-        name = tr["label"]
+        name = tr["container"]
+        hover_name = tr["label"]
         fig.add_trace(go.Scattermap(
             lat=[p["lat"] for p in pts],
             lon=[p["lon"] for p in pts],
@@ -5289,7 +5437,7 @@ def _render_live_container_map() -> None:
             name=f"{name} · body",
             showlegend=False,
             hovertext=[
-                f"<b>{name}</b><br>{p['t']}<br>{_fix_label(p['fix'])}<br>"
+                f"<b>{hover_name}</b><br>{p['t']}<br>{_fix_label(p['fix'])}<br>"
                 f"{p['loc'] or '—'}"
                 for p in pts
             ],
@@ -5299,13 +5447,13 @@ def _render_live_container_map() -> None:
             lat=[last["lat"]],
             lon=[last["lon"]],
             mode="markers+text",
-            marker=dict(size=14, color="#dc2626"),
+            marker=dict(size=14, color=color),
             text=[name],
             textposition="top right",
             textfont=dict(size=12, color="#111827"),
             name=f"{name} · teď",
             hovertext=(
-                f"<b>{name}</b><br>{last['t']}<br>{_fix_label(last['fix'])}<br>"
+                f"<b>{hover_name}</b><br>{last['t']}<br>{_fix_label(last['fix'])}<br>"
                 f"{last['loc'] or '—'}<br>"
                 f"baterie {last['bat'] if last['bat'] is not None else '—'} %"
             ),
@@ -5321,16 +5469,18 @@ def _render_live_container_map() -> None:
         loc = last.get("loc") or "—"
         if len(loc) > 90:
             loc = loc[:87] + "…"
+        extra = tr.get("description") or ""
         with cols[i % len(cols)]:
             st.markdown(
                 f"""
                 <div class="spread-card">
-                    <div class="spread-label">{tr['label']}</div>
+                    <div class="spread-label">{tr['container']}</div>
                     <div class="spread-value" style="color:#3b82f6;font-size:1.0rem;">
                         {last['t'] or '—'}
                     </div>
                     <div style="font-family:'IBM Plex Mono',monospace;font-size:0.68rem;
                                 color:#B8C2D0;margin-top:6px;line-height:1.35;">
+                        {extra + '<br>' if extra else ''}
                         {_fix_label(last.get('fix', ''))} · baterie {bat_s}<br>
                         {tr['n']} bodů · LBS {tr['lbs_n']} / sat {tr['sat_n']}<br>
                         {loc}
