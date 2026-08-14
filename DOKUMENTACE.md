@@ -203,21 +203,23 @@ Interpretace: **kolik USD stojí 1 CNY** (přepočet CNY/t → USD/t).
 
 ### 3.2 Proxy model plastů (`calc_plastic_prices`)
 
-**Vstup:** živá cena Brent `BZ=F` (`fetch_oil_data()` → `fetch_yf_spot`).
+**Vstup:** Brent `BZ=F` (`fetch_oil_data()` → `fetch_yf_spot` z `robot_data.json`).  
+Karty PVC/XLPE používají Brent **před 42 dny** (`_PLASTIC_LAG_DAYS`, střed 4–8 týdnů). Bez historie spadne na dnešní spot.
 
-**Rovnice (USD/t), zaokrouhleno na celé USD:**
+**Rovnice (USD/t), zaokrouhleno na celé USD, v UI přepočet do zvolené měny:**
 
-| Materiál | Vzorec |
-|----------|--------|
-| PVC (kabelový granulát) | `800 + 8.5 × Brent` |
-| XLPE | `1200 + 14.0 × Brent` |
-| PA12 (nylonový plášť) | `2500 + 20.0 × Brent` |
-| LLDPE (fólie/separátor) | `900 + 10.0 × Brent` |
+| Materiál | Vzorec | UI |
+|----------|--------|-----|
+| PVC (kabelový granulát) | `800 + 8.5 × Brent` | karta |
+| XLPE | `1200 + 14.0 × Brent` | karta |
+| LLDPE (separátor) | `900 + 10.0 × Brent` | jen tabulka |
+| PA12 | — | odstraněno (silové kabely skoro nepoužívají) |
 
-- UI označuje ceny jako **orientační model** se zpožděním trhu plastů **4–8 týdnů** vůči ropě.
-- Bez Brent ceny: karty plastů `error_card`, `calc_plastic_prices` vrací `None`.
+Delta na kartě = sklon × denní změna Brent (citlivost, ne lag).  
+Bez Brent: karty `error_card`.
 
-**Historie ropy:** `fetch_oil_history()` → `BZ=F`, graf + **SMA 30d**: `Close.rolling(30, min_periods=1).mean()`.
+**Historie ropy:** plná řada `BZ=F` → SMA 20/50 z plné historie, pak ořez obdobím (jako kovy).  
+**Predikce:** stejný ensemble jako LME (Trend / Holt / SMA50), 2 desetinná místa, MAPE backtest. Proxy plastů z predikce Brentu se dopředu nepočítá.
 
 ### 3.3 Landed Cost — Čína → ČR (`compute_invoice_landed`)
 

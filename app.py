@@ -1071,22 +1071,28 @@ def metric_card(
     sparkline_html: str | None = None,
 ) -> str:
     """Sestaví HTML pro metrickou kartu a vrátí jako řetězec."""
-    delta_row = f'<div class="card-delta-row">{delta_html or delta_chip(delta, delta_suffix)}</div>'
+    if delta_html is not None:
+        delta_row = f'<div class="card-delta-row">{delta_html}</div>'
+    elif delta is not None:
+        delta_row = f'<div class="card-delta-row">{delta_chip(delta, delta_suffix)}</div>'
+    else:
+        delta_row = ""
     extra_cls = "card-extra card-extra-emphasis" if emphasis else "card-extra"
     unit_cls = "card-unit card-unit-emphasis" if emphasis else "card-unit"
-    extra_row = f'<div class="{extra_cls}">{extra}</div>' if extra else ""
+    extra_row = (
+        f'<span class="{extra_cls}" style="display:block;margin-top:8px;">{extra}</span>'
+        if extra else ""
+    )
     spark_row = f'<div class="card-spark">{sparkline_html}</div>' if sparkline_html else ""
     size_cls = " card-value-sm" if value_size == "sm" else ""
-    return f"""
-    <div class="metric-card {card_class}">
-        <div class="card-label">{label}</div>
-        <div class="card-value{size_cls}">{value}</div>
-        <div class="{unit_cls}">{unit}</div>
-        {delta_row}
-        {spark_row}
-        {extra_row}
-    </div>
-    """
+    return (
+        f'<div class="metric-card {card_class}">'
+        f'<div class="card-label">{label}</div>'
+        f'<div class="card-value{size_cls}">{value}</div>'
+        f'<div class="{unit_cls}">{unit}</div>'
+        f"{delta_row}{spark_row}{extra_row}"
+        f"</div>"
+    )
 
 
 def error_card(label: str, card_class: str = "card-neutral", msg: str = "Data momentálně nedostupná") -> str:
@@ -2074,29 +2080,48 @@ def fetch_oil_data() -> dict | None:
     return None
 
 
+_PLASTIC_LAG_DAYS = 42  # střed 4–8 týdnů zpoždění petrochemie za ropou
+_PLASTIC_SPECS: dict[str, dict] = {
+    "pvc":   {"a": 800.0,  "b": 8.5,  "desc": "PVC granulát (kabelový)", "formula": "800 + 8,5 × Brent"},
+    "xlpe":  {"a": 1200.0, "b": 14.0, "desc": "XLPE granulát",           "formula": "1 200 + 14 × Brent"},
+    "lldpe": {"a": 900.0,  "b": 10.0, "desc": "LLDPE separátor",         "formula": "900 + 10 × Brent"},
+}
+
+
+def _brent_close_n_days_ago(days: int) -> float | None:
+    """Close Brent před N kalendářními dny (pro zpožděný proxy plastů)."""
+    try:
+        df = _yf_history("BZ=F")
+        if df is None or df.empty:
+            return None
+        out = df.dropna(subset=["Close", "Date"]).sort_values("Date")
+        cutoff = pd.to_datetime(out["Date"].max()) - pd.Timedelta(days=days)
+        past = out[pd.to_datetime(out["Date"]) <= cutoff]
+        if past.empty:
+            return None
+        return float(past["Close"].iloc[-1])
+    except Exception:
+        return None
+
+
 def calc_plastic_prices(brent_usd: float | None) -> dict | None:
     """
-    Proxy model pro odhad cen plastů na základě ceny Brent ropy.
-
-    Koeficienty jsou lineární aproximace historických vztahů:
-        PVC  (kabelový granulát):  800 + 8.5  × Brent  [USD/t]
-        XLPE (síťovaný polyetylen): 1200 + 14.0 × Brent  [USD/t]
-        PA12 (nylonový plášť):     2500 + 20.0 × Brent  [USD/t]
-        LLDPE (fólie/separátor):    900 + 10.0 × Brent  [USD/t]
-
-    ⚠ Zpoždění trhů plastů za ropou: typicky 4–8 týdnů.
+    Lineární proxy cen kabelových plastů z Brent [USD/t].
+    PVC / XLPE / LLDPE — bez PA12 (v silových kabelech se skoro nepoužívá).
     """
     if brent_usd is None:
         return None
     try:
         b = float(brent_usd)
-        return {
-            "pvc":   {"price": round(800  + 8.5  * b, 0), "desc": "PVC Granulát (kabelový)"},
-            "xlpe":  {"price": round(1200 + 14.0 * b, 0), "desc": "XLPE Granulát"},
-            "pa12":  {"price": round(2500 + 20.0 * b, 0), "desc": "PA12 Plášť (Nylon)"},
-            "lldpe": {"price": round(900  + 10.0 * b, 0), "desc": "LLDPE Separátor"},
-            "_brent": b,
-        }
+        out: dict = {"_brent": b}
+        for key, spec in _PLASTIC_SPECS.items():
+            out[key] = {
+                "price": round(spec["a"] + spec["b"] * b, 0),
+                "desc": spec["desc"],
+                "formula": spec["formula"],
+                "slope": spec["b"],
+            }
+        return out
     except (ValueError, TypeError):
         return None
 
@@ -2713,24 +2738,16 @@ def interactive_oil_chart(
     color: str = "#f59e0b",
     height: int = 300,
 ) -> go.Figure | None:
-    """Brent graf s historickou cenou a 30denním klouzavým průměrem (trend)."""
+    """Brent graf — SMA 20/50 musí být ve `df` spočítané z plné historie před ořezem."""
     if df is None or df.empty:
         return None
-    plot_df = df.copy()
-    plot_df["SMA30"] = plot_df["Close"].rolling(window=30, min_periods=1).mean()
     return interactive_line_chart(
-        plot_df,
+        df,
         title,
         color=color,
         y_label=oil_unit_label(),
         height=height,
-        extra_traces=[{
-            "y": plot_df["SMA30"],
-            "name": "SMA 30d (trend)",
-            "color": "#94a3b8",
-            "dash": "dot",
-            "width": 2.0,
-        }],
+        extra_traces=_sma_extra_traces(df),
         show_legend=True,
     )
 
@@ -3587,10 +3604,13 @@ def _forecast_chart(
     color: str,
     y_label: str,
     height: int = 320,
+    decimals: int = 0,
 ) -> go.Figure:
     """Vějířový graf: 60 dní historie + projekce všech modelů s pásmem nejistoty."""
     tail = hist.tail(60).copy()
     tail["Date"] = pd.to_datetime(tail["Date"])
+    y_hover = f"%{{y:,.{decimals}f}}"
+    y_ticks = f",.{decimals}f"
 
     # Napojení projekcí na poslední známý bod (bez vizuální mezery)
     last_date = tail["Date"].iloc[-1]
@@ -3616,7 +3636,7 @@ def _forecast_chart(
     fig.add_trace(go.Scatter(
         x=tail["Date"], y=tail["Close"], mode="lines",
         name="Historie", line=dict(color=color, width=2.2),
-        hovertemplate=f"<b>%{{x|%d.%m.%Y}}</b><br>{y_label}: %{{y:,.0f}}<extra></extra>",
+        hovertemplate=f"<b>%{{x|%d.%m.%Y}}</b><br>{y_label}: {y_hover}<extra></extra>",
     ))
 
     # Jednotlivé modely (přerušované čáry)
@@ -3627,7 +3647,7 @@ def _forecast_chart(
         fig.add_trace(go.Scatter(
             x=x_fc, y=[last_price] + path, mode="lines",
             name=name, line=dict(color=mdl_color, width=1.7, dash=dash),
-            hovertemplate=f"<b>%{{x|%d.%m.%Y}}</b><br>{name}: %{{y:,.0f}}<extra></extra>",
+            hovertemplate=f"<b>%{{x|%d.%m.%Y}}</b><br>{name}: {y_hover}<extra></extra>",
         ))
 
     # Těsný rozsah osy Y přes historii, modely i pásmo
@@ -3653,7 +3673,7 @@ def _forecast_chart(
             bgcolor=_PLOT_PAPER,
         ),
         xaxis=dict(**_TICK_AXIS, tickformat="%d.%m."),
-        yaxis=dict(**_TICK_AXIS, tickformat=",.0f", title=dict(text=y_label, standoff=8),
+        yaxis=dict(**_TICK_AXIS, tickformat=y_ticks, title=dict(text=y_label, standoff=8),
                    range=[y_min - pad, y_max + pad], autorange=False),
         hoverlabel=_HOVER_LABEL,
         hovermode="x unified",
@@ -3674,7 +3694,14 @@ def _forecast_direction(end_price: float, last_price: float) -> str:
 _DIR_WORDS = {"up": "růst 📈", "down": "pokles 📉", "flat": "stagnaci ➡️"}
 
 
-def _render_forecast_for_metal(name: str, color: str, hist: pd.DataFrame | None, y_unit: str) -> None:
+def _render_forecast_for_metal(
+    name: str,
+    color: str,
+    hist: pd.DataFrame | None,
+    y_unit: str,
+    *,
+    decimals: int = 0,
+) -> None:
     """Jedna predikce: graf všech modelů + konsenzus a shrnutí za horizont."""
     if hist is None or hist.empty:
         st.markdown(
@@ -3693,7 +3720,10 @@ def _render_forecast_for_metal(name: str, color: str, hist: pd.DataFrame | None,
 
     last_price = fc["last_price"]
 
-    fig = _forecast_chart(hist, fc, f"{name} — projekce {_FORECAST_HORIZON} obch. dní", color, y_unit)
+    fig = _forecast_chart(
+        hist, fc, f"{name} — projekce {_FORECAST_HORIZON} obch. dní",
+        color, y_unit, decimals=decimals,
+    )
     _show_plotly(fig)
 
     # Konsenzus: na čem se modely shodují?
@@ -3710,7 +3740,7 @@ def _render_forecast_for_metal(name: str, color: str, hist: pd.DataFrame | None,
     ens_sign = "+" if ens_pct >= 0 else ""
 
     model_bits = " · ".join(
-        f"{mdl_name.split(' (')[0]}: <strong>{format_num(path[-1], 0)}</strong>"
+        f"{mdl_name.split(' (')[0]}: <strong>{format_num(path[-1], decimals)}</strong>"
         for mdl_name, path in fc["models"].items()
     )
 
@@ -3736,8 +3766,8 @@ def _render_forecast_for_metal(name: str, color: str, hist: pd.DataFrame | None,
     if bt and bt.get("ensemble_mape") is not None:
         mape = bt["ensemble_mape"]
         model_mape = " · ".join(
-            f"{name.split(' (')[0]} {m:.1f} %"
-            for name, m in bt["models_mape"].items()
+            f"{mname.split(' (')[0]} {m:.1f} %"
+            for mname, m in bt["models_mape"].items()
             if m is not None
         )
         bt_html = (
@@ -3750,11 +3780,11 @@ def _render_forecast_for_metal(name: str, color: str, hist: pd.DataFrame | None,
 
     st.markdown(
         f'<div class="{verdict_cls}" style="margin:-4px 0 6px 0;">{verdict}</div>'
-        f'<div class="card-extra" style="margin:0 0 14px 4px;">'
-        f'Průměr modelů za ~1 měsíc: <strong>{format_num(ens_end, 0)} {y_unit}</strong> '
+        f'<p class="card-extra" style="margin:0 0 14px 4px;">'
+        f'Průměr modelů za ~1 měsíc: <strong>{format_num(ens_end, decimals)} {y_unit}</strong> '
         f'({ens_sign}{ens_pct:.1f} % vůči poslední ceně) · '
-        f'80% pásmo: {format_num(fc["lo"][-1], 0)} – {format_num(fc["hi"][-1], 0)} {y_unit}<br>'
-        f'{model_bits} {y_unit}{bt_html}</div>',
+        f'80% pásmo: {format_num(fc["lo"][-1], decimals)} – {format_num(fc["hi"][-1], decimals)} {y_unit}<br>'
+        f'{model_bits} {y_unit}{bt_html}</p>',
         unsafe_allow_html=True,
     )
 
@@ -4103,12 +4133,16 @@ def render_fx() -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def render_oil_plastics() -> None:
-    """Sekce 3 – ropa Brent/WTI, proxy model cen plastů, historický graf."""
+    """Sekce 3 – ropa Brent/WTI, proxy model cen plastů, SMA 20/50, predikce."""
 
-    oil  = fetch_oil_data()
-    brent_price  = (oil or {}).get("brent", {}).get("price")
+    oil = fetch_oil_data()
+    brent_price = (oil or {}).get("brent", {}).get("price")
+    brent_delta = (oil or {}).get("brent", {}).get("delta")
     live = brent_price is not None
-    plastics     = calc_plastic_prices(brent_price) if brent_price else None
+    brent_lag = _brent_close_n_days_ago(_PLASTIC_LAG_DAYS)
+    plastics = calc_plastic_prices(brent_lag or brent_price) if (brent_lag or brent_price) else None
+    plastics_spot = calc_plastic_prices(brent_price) if brent_price else None
+    used_lag = brent_lag is not None
 
     if not live:
         st.warning("Brent (BZ=F): Yahoo Finance nevrátilo živou cenu — data nedostupná.")
@@ -4119,12 +4153,12 @@ def render_oil_plastics() -> None:
         badge_html(False, "", model=True) if plastics else badge_html(False),
     )
 
-    # ── Karty ropy ─────────────────────────────────────────────────────────────
-    col_br, col_wt, col_spr, col_pvc, col_xlpe, col_pa12 = st.columns(6)
-
     ccy_oil = get_display_currency()
     oil_unit = oil_unit_label()
     oil_d_suffix = currency_delta_suffix()
+    plastic_unit = f"{ccy_oil}/t (model)"
+
+    col_br, col_wt, col_spr, col_pvc, col_xlpe = st.columns(5)
 
     with col_br:
         if oil and "brent" in oil:
@@ -4136,6 +4170,7 @@ def render_oil_plastics() -> None:
                 delta=usd_to_display(b["delta"], ccy_oil),
                 delta_suffix=oil_d_suffix,
                 card_class="card-oil",
+                extra=f"den {b['delta_pct']:+.1f} %" if b.get("delta_pct") is not None else None,
             ), unsafe_allow_html=True)
         else:
             st.markdown(
@@ -4146,114 +4181,201 @@ def render_oil_plastics() -> None:
     with col_wt:
         if oil and "wti" in oil:
             w = oil["wti"]
-            st.markdown(metric_card("WTI Crude Oil", f"${w['price']:.2f}", "USD / barel",
-                                     delta=w["delta"], delta_suffix=" USD", card_class="card-oil"),
-                        unsafe_allow_html=True)
+            st.markdown(metric_card(
+                "WTI Crude Oil",
+                format_oil_price(w["price"]),
+                oil_unit,
+                delta=usd_to_display(w["delta"], ccy_oil),
+                delta_suffix=oil_d_suffix,
+                card_class="card-oil",
+                extra=f"den {w['delta_pct']:+.1f} %" if w.get("delta_pct") is not None else None,
+            ), unsafe_allow_html=True)
         else:
             st.markdown(error_card("WTI Crude Oil", "card-oil"), unsafe_allow_html=True)
 
     with col_spr:
         if oil and "brent" in oil and "wti" in oil:
-            spread = oil["brent"]["price"] - oil["wti"]["price"]
-            st.markdown(metric_card("Brent / WTI", f"${spread:+.2f}", "USD / barel",
-                                     card_class="card-neutral", extra="Brent premium nad WTI"),
-                        unsafe_allow_html=True)
+            spread_usd = oil["brent"]["price"] - oil["wti"]["price"]
+            spread_disp = usd_to_display(spread_usd, ccy_oil)
+            st.markdown(metric_card(
+                "Brent / WTI",
+                format_oil_price(spread_usd) if spread_disp is not None else "N/A",
+                oil_unit,
+                card_class="card-neutral",
+                extra="prémie Brent nad WTI",
+            ), unsafe_allow_html=True)
         else:
             st.markdown(error_card("Brent / WTI", "card-neutral"), unsafe_allow_html=True)
 
-    plastic_cards = [
-        (col_pvc,  "pvc",   "PVC Granulát"),
-        (col_xlpe, "xlpe",  "XLPE Granulát"),
-        (col_pa12, "pa12",  "PA12 Plášť"),
-    ]
-    for col, key, label in plastic_cards:
+    for col, key, label in (
+        (col_pvc, "pvc", "PVC granulát"),
+        (col_xlpe, "xlpe", "XLPE granulát"),
+    ):
         with col:
             if plastics and key in plastics:
+                px_usd = plastics[key]["price"]
+                px_disp = usd_to_display(px_usd, ccy_oil)
+                slope = float(plastics[key]["slope"])
+                d_usd = (slope * float(brent_delta)) if brent_delta is not None else None
+                d_disp = usd_to_display(d_usd, ccy_oil) if d_usd is not None else None
+                spot_txt = ""
+                if used_lag and plastics_spot and key in plastics_spot:
+                    spot_disp = usd_to_display(plastics_spot[key]["price"], ccy_oil)
+                    spot_txt = f"spot dnes ~{format_num(spot_disp, 0)}"
+                extra = " · ".join(
+                    x for x in (
+                        f"Brent −{_PLASTIC_LAG_DAYS // 7}t" if used_lag else "Brent spot (bez historie)",
+                        spot_txt,
+                    ) if x
+                )
                 st.markdown(
-                    metric_card(label, format_num(plastics[key]["price"], 0, prefix="~"), "USD/t (model)",
-                                 card_class="card-plastic", extra="Lag 4–8 týdnů"),
+                    metric_card(
+                        label,
+                        format_num(px_disp, 0, prefix="~") if px_disp is not None else "N/A",
+                        plastic_unit,
+                        delta=d_disp,
+                        delta_suffix=f" {ccy_oil}",
+                        card_class="card-plastic",
+                        extra=extra or None,
+                    ),
                     unsafe_allow_html=True,
                 )
             else:
                 st.markdown(error_card(label, "card-plastic"), unsafe_allow_html=True)
 
-    # Disclaimer pro plastový model
-    st.markdown("""
-    <div class="warning-box">
-        ⚠️ <strong>Model plastů:</strong> Ceny PVC, XLPE, PA12 a LLDPE jsou <em>orientační odhady</em>
-        vypočítané lineárním proxy modelem z ceny Brent ropy. Skutečné spotové ceny závisejí na
-        nabídce/poptávce, alokaci kapacit petrochemických závodů a logistice.
-        Historické časové zpoždění reakce trhu: <strong>4–8 týdnů</strong>.
-    </div>
-    """, unsafe_allow_html=True)
+    lag_note = (
+        f"Karty PVC/XLPE berou Brent před <strong>{_PLASTIC_LAG_DAYS} dny</strong> "
+        f"(střed pásma 4–8 týdnů), ne dnešní spot — petrochemie se hýbe se zpožděním."
+        if used_lag else
+        "Historie Brentu chybí, proxy je z <strong>dnešního</strong> spotu (bez zpoždění)."
+    )
+    st.markdown(
+        f'<div class="warning-box">'
+        f"⚠️ <strong>Model plastů</strong> je orientační lineární odhad z Brent, "
+        f"ne burzovní kotace. {lag_note} "
+        "Skutečný granulát závisí na alokaci kraků, kontraktech a logistice. "
+        "PA12 v silových kabelech skoro nefiguruje, proto v kartách není."
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Brent graf (BZ=F) + SMA 30d trend + přepínač období ─────────────────
+    period_lbl = get_chart_period_label()
     st.markdown(
         "<div style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
         "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
-        "Brent Crude (BZ=F) — historie &amp; SMA 30d</div>",
+        f"Brent Crude (BZ=F) — historie &amp; SMA 20 / SMA 50 · {period_lbl}</div>",
         unsafe_allow_html=True,
     )
-    period_lbl = get_chart_period_label()
-    oil_hist = fetch_oil_history(get_chart_period())
-    if oil_hist is not None and not oil_hist.empty:
-        oil_plot = apply_currency_to_df(oil_hist.copy())
+    oil_full = _yf_history("BZ=F")
+    oil_plot = None
+    if oil_full is not None and not oil_full.empty:
+        oil_sma = _add_sma_columns(apply_currency_to_df(oil_full.copy()))
+        oil_plot = filter_history_by_period(oil_sma)
         fig_oil = interactive_oil_chart(
             oil_plot,
-            f"Brent Crude Oil ({ccy_oil}) — {period_lbl} · SMA 30d = trend",
+            f"Brent Crude Oil ({ccy_oil}) — {period_lbl} · SMA 20 / SMA 50",
             "#f59e0b",
             320,
         )
         if fig_oil:
             _show_plotly(fig_oil)
+        else:
+            st.markdown(
+                '<div class="error-box">Graf ropy momentálně nedostupný</div>',
+                unsafe_allow_html=True,
+            )
     else:
-        st.markdown('<div class="error-box">Graf ropy momentálně nedostupný</div>',
-                    unsafe_allow_html=True)
+        st.markdown(
+            '<div class="error-box">Graf ropy momentálně nedostupný</div>',
+            unsafe_allow_html=True,
+        )
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Tabulka plastů ────────────────────────────────────────────────────────
     col_g, col_t = st.columns([3, 1])
-
     with col_g:
+        sma_now = ""
+        if oil_plot is not None and not oil_plot.empty:
+            last = oil_plot.iloc[-1]
+            if "SMA20" in last and pd.notna(last["SMA20"]):
+                sma20 = float(last["SMA20"])
+                sma50 = (
+                    float(last["SMA50"])
+                    if "SMA50" in last and pd.notna(last["SMA50"]) else None
+                )
+                close = float(last["Close"])
+                vs20 = "nad" if close >= sma20 else "pod"
+                sma_now = (
+                    f"Poslední close je <strong>{vs20} SMA20</strong> "
+                    f"({format_num(sma20, 2)} {ccy_oil}/bbl"
+                    + (f", SMA50 {format_num(sma50, 2)}" if sma50 is not None else "")
+                    + ")."
+                )
         st.markdown(
-            f'<div class="info-box">Graf výše: <strong>oranžová</strong> = spot Brent (BZ=F) v {ccy_oil}, '
-            '<strong>šedá přerušovaná</strong> = 30denní klouzavý průměr (indikace trendu). '
-            'Historie z Yahoo Finance.</div>',
+            f'<div class="info-box">'
+            f"Graf: <strong>oranžová</strong> = Brent spot, "
+            f"<strong>modrá tečkovaná</strong> = SMA 20d, "
+            f"<strong>fialová čárkovaná</strong> = SMA 50d. "
+            f"{sma_now} Historie z Yahoo (robot_history.csv)."
+            f"</div>",
             unsafe_allow_html=True,
         )
 
     with col_t:
         if plastics:
-            rows = "".join([
-                f'<tr><td>{plastics[k]["desc"]}</td>'
-                f'<td style="color:#14b8a6;text-align:right;">{format_num(plastics[k]["price"], 0, prefix="~")}</td></tr>'
-                for k in ["pvc", "xlpe", "pa12", "lldpe"]
-            ])
-            st.markdown(f"""
-            <div class="data-table-wrap" style="height:100%;">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Materiál</th>
-                            <th style="text-align:right;">USD/t</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {rows}
-                    </tbody>
-                </table>
-                <div style="margin-top:12px;font-family:'IBM Plex Mono',monospace;
-                            font-size:0.65rem;color:#8D99AB;line-height:1.7;">
-                    Základ (Brent):<br>
-                    <strong style="color:#E9EDF3;">${plastics['_brent']:.2f}/bbl</strong><br><br>
-                    Model: lineární proxy<br>
-                    Zdroj: Yahoo Finance
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            ccy_hdr = f"{ccy_oil}/t"
+            rows = []
+            for k in ("pvc", "xlpe", "lldpe"):
+                p = plastics[k]
+                disp = usd_to_display(p["price"], ccy_oil)
+                rows.append(
+                    f'<tr><td>{p["desc"]}<br>'
+                    f'<span style="color:#8D99AB;font-size:0.65rem;">{p["formula"]}</span></td>'
+                    f'<td style="color:#14b8a6;text-align:right;">{format_num(disp, 0, prefix="~")}</td></tr>'
+                )
+            brent_used = plastics["_brent"]
+            st.markdown(
+                f'<div class="data-table-wrap" style="height:100%;">'
+                f"<table><thead><tr><th>Materiál</th>"
+                f'<th style="text-align:right;">{ccy_hdr}</th></tr></thead>'
+                f"<tbody>{''.join(rows)}</tbody></table>"
+                f'<p style="margin-top:12px;font-family:\'IBM Plex Mono\',monospace;'
+                f'font-size:0.65rem;color:#8D99AB;line-height:1.7;">'
+                f"Brent v modelu:<br><strong style=\"color:#E9EDF3;\">"
+                f"${brent_used:.2f}/bbl</strong>"
+                f"{' (před 6 týdny)' if used_lag else ' (spot)'}"
+                f"<br>LLDPE jen v tabulce — separátor, ne karta."
+                f"</p></div>",
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown(
+        "<div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;'>"
+        "<span style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
+        "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;'>"
+        f"Predikce trendu Brent — ~1 měsíc dopředu ({oil_unit})</span>"
+        f"{badge_html(False, 'statistická extrapolace', model=True)}</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="warning-box">⚠️ <strong>Stejný model jako u kovů</strong> — '
+        "Trend / Holt / návrat k SMA50. Není to předpověď OPEC ani zásob EIA. "
+        "Proxy plastů z predikce Brentu nepočítáme dopředu (lag 4–8 týdnů by to zkreslil).</div>",
+        unsafe_allow_html=True,
+    )
+    if ccy_oil == "EUR" and not get_eurusd_rate():
+        st.warning("Predikce ropy: chybí kurz EUR/USD — přepněte na USD.")
+    elif oil_full is not None and not oil_full.empty:
+        oil_fc = apply_currency_to_df(oil_full.copy())
+        _render_forecast_for_metal("Brent Crude", "#f59e0b", oil_fc, oil_unit, decimals=2)
+    else:
+        st.markdown(
+            '<div class="error-box">Predikce Brent: historie BZ=F není k dispozici</div>',
+            unsafe_allow_html=True,
+        )
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
