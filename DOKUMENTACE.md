@@ -485,27 +485,50 @@ Doplňky:
 - volitelně max. nosnost [kg] + váha kabelu [kg/km] → použitelná délka = min(prostor, limit hmotnosti)
 - orientační vrstvy ≈ `(F_eff − Kd) / (2D)`, závity na vrstvu ≈ `l₂ / D`
 
-Hodnota je **orientační** (ideální návin). Předvolby HELUKABEL KTG lze doplnit později — základ jsou vlastní rozměry.
+Hodnota je **orientační** (ideální návin). Rozměry a kapacitní matici HELUKABEL KTG (X 109 / X 110) má hub **Technické tabulky HELUKABEL**.
 
 ### 8.3 Technické tabulky HELUKABEL (katalog)
 
 **Funkce:** `render_helukabel_catalog()` v `helukabel_tables.py`  
-**Skeny:** `assets/helukabel/` — všechny PNG/JPG se načítají automaticky (prohlížeč po 10).
+**Skeny:** `assets/helukabel/` — JPG (`IMG_20260813_*.jpg`) + aliasy starých PNG názvů (`_SCAN_ALIASES`). Chybějící soubor `_show_scan()` **tiše přeskočí** (nikdy hláška „nenalezen“).  
+**Hledání:** `search_catalog()` — výpisky i paty skenů (`_SCAN_META`); tlačítko otevře příslušnou sekci.
 
 | Sekce | Obsah |
 |-------|--------|
-| Všechny skeny | listování + filtr názvu |
-| Bubny KTG — rozměry | čelo / jádro / šířka, nosnost (dřevo / plast / nevratné) |
-| Bubny KTG — kapacita | filtr Kd/D + sken matice |
+| Všechny skeny | listování + filtr názvu / strany X |
+| Bubny KTG — rozměry | čelo / jádro / šířka, nosnost (dřevo / plast / nevratné, X 109) |
+| Bubny KTG — kapacita | filtr Kd/D + sken matice X 110 |
 | Min. poloměr ohybu | VDE 0298-3 + 0891 + rychlá kontrola |
 | Značení žil | DIN 40705/IEC 60446 + VDE 0816 |
-| Proudová zatížitelnost | ohebné @ 30 °C + pokládka C/E 90 °C |
-| Odpor & průměry / AWG | IEC 60228, VDE 0295, AWG |
-| Elektrotechnické vzorce | κ/ρ + R / úbytek / průřez |
-| Označovací kódy | H05/H07 + NYY/N2XY + stará/nová zkratka |
+| Proudová zatížitelnost | A1–B2 / C–G @ 70 °C a 90 °C, NYY/NAYY země+vzduch, NYKY, NSGAÖU, silikon 150 °C, sdružování X 34, okolní teplota X 35 |
+| Odpor & průměry / AWG | IEC 60228, VDE 0295, lanění n×ø (X 17), AWG |
+| Elektrotechnické vzorce | κ/ρ + R / úbytek / průřez + cheatsheet X 107–108, U₀/U (X 18) |
+| Označovací kódy | **rozkladač** + legendy HD 361 / DIN VDE (viz 8.3.1) |
 | Normy DIN VDE | výběr odkazů X 5–X 6 |
-| Požár, tah, materiály, SN | kWh/m, 50/15 N/mm², XLPE 6–30 kV, materiály |
+| Požár, tah, materiály, SN | kWh/m (filtrovatelné), tah 50/15 N/mm², XLPE 6–30 kV (R20, Rδ kalkulačka, Rac, XL, C, L, zkrat jádro/stínění), materiály X 90–91 |
 | Certifikační značky | CE, VDE, UL, CCC… |
+
+Matice proudu N2XY (X 32) zůstává ve skenu. Strana odporu jádra X 16 ve sadě skenů chybí — hodnoty jsou ve výpisku.
+
+#### 8.3.1 Rozkladač označení kabelu
+
+**UI:** sekce *Označovací kódy (H / NYY)* — pole „Označení kabelu“ + příkladová tlačítka.  
+**Funkce:** `decode_cable_designation(raw)` → seznam `(část, znak, význam)`; `explain_h_code()` stejný rozklad jako řádky textu.
+
+Rozpozná mimo jiné:
+
+| Vstup (příklad) | Co se vyhodnotí |
+|-----------------|-----------------|
+| `H07RN-F 3G1,5` | HD 361: 450/750 V, izolace EPR, plášť chloropren, jádro tř. 5, 3 žíly **s PE**, 1,5 mm² |
+| `H05VV-F 3G1,5` | 300/500 V, PVC/PVC, flex |
+| `H07V-K` / `H07V-U` | PVC izolace, jádro -K (pevné uložení) / -U (plné) |
+| `NYY-J 5×2,5 RE 0,6/1 kV` | Cu, PVC/PVC, -J PE, RE, 0,6/1 kV |
+| `NA2XS2Y 1×35 RM/16 6/10 kV` | Al, XLPE, stínění S, plášť PE, RM, stínění 16 mm², 6/10 kV |
+| `N2XH-J`, `(N)HXH-E30` | bezhalogenový plášť / HX+H, třída E30 |
+
+Pravidla žil u H-kódů: `3G` = s ochrannou žílou, velké `3X` = bez PE (HD 361). České `3x1,5` / `3×1,5` je jen počet × průřez. U VDE typů PE řeší `-J` / `-O` / `-JZ` / `-OZ`, násobení `×`/`x` není „bez PE“.
+
+Pod rozkladačem zůstávají tabulky: legenda H, izolace/plášť, jádra -U/-R/-K/-F/-H, stará/nová zkratka, NYY části, HD 361 kov/pancíř, zkratky X 14.
 
 ---
 
@@ -551,6 +574,8 @@ flowchart TB
 | Položka | Účel |
 |---------|------|
 | `app.py` | Celá aplikace |
+| `helukabel_tables.py` | Katalog HELUKABEL: výpisky, skeny, rozkladač kódů |
+| `assets/helukabel/` | Skeny katalogu (JPG; aliasy PNG → JPG) |
 | `.streamlit/secrets.toml` | `APP_KEY`, `SUPPLIER_KEY` |
 | `TPKBB3_dřevěné bubny_2017.xlsx - List1.csv` | Katalog bubnů (povinný pro plánování nakládky) |
 | `requirements.txt` | Python závislosti |
@@ -564,4 +589,4 @@ flowchart TB
 - Yahoo a veřejné OSRM/Nominatim mohou rate-limitovat nebo být dočasně nedostupné.
 - Proxy plasty a transitní dny Čína→ČR jsou **modely**, ne tržní feed — ale vždy vycházejí z reálných vstupů nebo uživatelských parametrů, nikoli z náhodných mock čísel.
 
-*Dokumentace odpovídá stavu `app.py` včetně záložky Nástroje & tipy (Fill factor, kapacita bubnu, tabulky HELUKABEL), hlídače stáří dat robota, ensemble predikce s backtestem a SVG sparklinů na FX kartách.*
+*Dokumentace odpovídá stavu `app.py` + `helukabel_tables.py` včetně záložky Nástroje & tipy (Fill factor, kapacita bubnu, tabulky HELUKABEL s rozkladačem H/NYY), hlídače stáří dat robota, ensemble predikce s backtestem a SVG sparklinů na FX kartách.*
