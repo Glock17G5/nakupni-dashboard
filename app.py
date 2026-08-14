@@ -4923,6 +4923,424 @@ def render_landed_cost_pricing() -> None:
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
 
+# Ilustrační železniční koridor Čína → ČR (schéma, ne GPS stopa konkrétního vlaku).
+# Východní Čína → Xi'an → Khorgos (1435→1520) → KZ/RU/BY → Brest → Małaszewicze
+# (1520→1435 + EU clo) → Česká Třebová (METRANS / Lichkov) → Ostrava → kamion Metylovice.
+_RAIL_CORRIDOR: list[dict] = [
+    {"name": "Ningbo (východní Čína)", "lat": 29.868, "lon": 121.544},
+    {"name": "Xi'an", "lat": 34.341, "lon": 108.940},
+    {"name": "Lanzhou", "lat": 36.061, "lon": 103.834},
+    {"name": "Urumqi", "lat": 43.825, "lon": 87.617},
+    {
+        "name": "Khorgos / Altynkol",
+        "lat": 44.214,
+        "lon": 80.414,
+        "pin": True,
+        "note": "Překládka 1435 → 1520 mm",
+    },
+    {"name": "Astana", "lat": 51.169, "lon": 71.449},
+    {"name": "Jekatěrinburg", "lat": 56.838, "lon": 60.597},
+    {"name": "Smolensk", "lat": 54.782, "lon": 32.045},
+    {"name": "Minsk", "lat": 53.900, "lon": 27.567},
+    {"name": "Brest", "lat": 52.097, "lon": 23.687},
+    {
+        "name": "Małaszewicze",
+        "lat": 52.049,
+        "lon": 23.361,
+        "pin": True,
+        "note": "Překládka 1520 → 1435 mm · EU clo",
+    },
+    {"name": "Varšava", "lat": 52.230, "lon": 21.011},
+    {"name": "Wrocław", "lat": 51.107, "lon": 17.038},
+    {"name": "Lichkov", "lat": 50.098, "lon": 16.666},
+    {
+        "name": "Česká Třebová",
+        "lat": 49.902,
+        "lon": 16.447,
+        "pin": True,
+        "note": "METRANS · vstup do ČR",
+    },
+    {
+        "name": "Ostrava",
+        "lat": 49.835,
+        "lon": 18.282,
+        "pin": True,
+        "note": "Železniční uzel · konec vlaku",
+    },
+]
+_TRUCK_LEG: list[dict] = [
+    {"name": "Ostrava", "lat": 49.835, "lon": 18.282},
+    {
+        "name": "Sklad Metylovice 325",
+        "lat": 49.606,
+        "lon": 18.329,
+        "pin": True,
+        "note": "pbcable · kamion z Ostravy",
+    },
+]
+
+# Link4Future — stejné API, mění se jen IMEI (?devNo= / containerNo=).
+# Další zásilky: přidej IMEI nebo celý veřejný odkaz. GPS se do GitHubu neukládá.
+_LINK4FUTURE_API = "https://iot.link4future.com/prod-api/unLoginTrackContainer"
+_LINK4FUTURE_TTL = 900
+_LINK4FUTURE_TRACKERS: list[dict[str, str]] = [
+    {"imei": "862606278001977", "label": "FORU3343195"},
+]
+_LIVE_TRAIL_COLORS = ("#2563eb", "#dc2626", "#059669", "#d97706", "#7c3aed", "#db2777")
+
+
+def _parse_link4future_imei(text: str) -> str | None:
+    """IMEI z veřejného odkazu (?devNo= / containerNo=) nebo holé číslo."""
+    raw = (text or "").strip()
+    m = re.search(r"(?:devNo|containerNo)=(\d{10,20})", raw, re.I)
+    if m:
+        return m.group(1)
+    m = re.fullmatch(r"\d{10,20}", raw)
+    return m.group(0) if m else None
+
+
+def _configured_link4future_trackers() -> list[dict[str, str]]:
+    """Seznam trackerů z kódu + volitelně st.secrets['GPS_TRACKERS']."""
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    extra: list = []
+    try:
+        extra = list(st.secrets.get("GPS_TRACKERS", []) or [])
+    except Exception:
+        extra = []
+    for item in list(_LINK4FUTURE_TRACKERS) + extra:
+        if isinstance(item, str):
+            imei = _parse_link4future_imei(item)
+            label = imei or item
+        elif isinstance(item, dict):
+            imei = _parse_link4future_imei(
+                str(item.get("imei") or item.get("url") or item.get("devNo") or "")
+            )
+            label = str(item.get("label") or item.get("name") or imei or "")
+        else:
+            continue
+        if not imei or imei in seen:
+            continue
+        seen.add(imei)
+        out.append({"imei": imei, "label": label or imei})
+    return out
+
+
+def _mapbox_fit(lats: list[float], lons: list[float]) -> tuple[float, float, float]:
+    """Střed a zoom, aby šla do výřezu celá trasa."""
+    lat_min, lat_max = min(lats), max(lats)
+    lon_min, lon_max = min(lons), max(lons)
+    center_lat = (lat_min + lat_max) / 2.0
+    center_lon = (lon_min + lon_max) / 2.0
+    lat_span = max((lat_max - lat_min) * 1.25, 0.6)
+    lon_span = max((lon_max - lon_min) * 1.25, 0.6)
+    span = max(lat_span, lon_span * max(0.35, math.cos(math.radians(center_lat))))
+    zoom = math.log2(max(360.0 / span, 1.01)) - 0.35
+    return center_lat, center_lon, float(max(2.3, min(zoom, 11.5)))
+
+
+def _downsample_track(points: list[dict], max_n: int = 280) -> list[dict]:
+    if len(points) <= max_n:
+        return points
+    step = max(1, len(points) // max_n)
+    out = points[::step]
+    if out[-1] is not points[-1]:
+        out.append(points[-1])
+    return out
+
+
+def _show_plotly_map(fig: go.Figure | None) -> None:
+    """Mapa s zoom kolečkem — na rozdíl od finančních grafů."""
+    if fig is None:
+        return
+    st.markdown('<div class="chart-wrap">', unsafe_allow_html=True)
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        config={
+            "displayModeBar": True,
+            "displaylogo": False,
+            "responsive": True,
+            "scrollZoom": True,
+            "modeBarButtonsToRemove": ["lasso2d", "select2d"],
+        },
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def _new_osm_map(lats: list[float], lons: list[float], height: int = 520) -> go.Figure:
+    center_lat, center_lon, zoom = _mapbox_fit(lats, lons)
+    fig = go.Figure()
+    fig.update_layout(
+        separators=_PLOT_SEPARATORS,
+        paper_bgcolor=_PLOT_PAPER,
+        margin=dict(l=0, r=0, t=8, b=0),
+        height=height,
+        hoverlabel=_HOVER_LABEL,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=0.01,
+            x=0.01,
+            bgcolor="rgba(30,36,46,0.82)",
+            font=dict(family="IBM Plex Mono, monospace", size=10, color="#E9EDF3"),
+        ),
+        map=dict(
+            style="open-street-map",
+            center=dict(lat=center_lat, lon=center_lon),
+            zoom=zoom,
+        ),
+    )
+    return fig
+
+
+def _render_china_rail_corridor_map() -> None:
+    """Ilustrační mapa typické trasy vlak → kamion."""
+    st.markdown("##### Ilustrační koridor Čína → Metylovice")
+    st.caption(
+        "Modrá = vlak, červená = kamion Ostrava → sklad. Typická trasa CR Express "
+        "přes Khorgos a Małaszewicze, dál METRANS (Wrocław – Lichkov – Česká Třebová) "
+        "do Ostravy. Nejde o GPS konkrétního vlaku. Když zásilka pojede přes Bohumín, "
+        "Ostrava je na trase dřív než Třebová."
+    )
+    rail_lats = [float(p["lat"]) for p in _RAIL_CORRIDOR]
+    rail_lons = [float(p["lon"]) for p in _RAIL_CORRIDOR]
+    truck_lats = [float(p["lat"]) for p in _TRUCK_LEG]
+    truck_lons = [float(p["lon"]) for p in _TRUCK_LEG]
+    fig = _new_osm_map(rail_lats + truck_lats, rail_lons + truck_lons)
+
+    fig.add_trace(go.Scattermap(
+        lat=rail_lats,
+        lon=rail_lons,
+        mode="lines",
+        line=dict(width=4, color="#2563eb"),
+        name="Vlak (ilustrace)",
+        hoverinfo="skip",
+    ))
+    fig.add_trace(go.Scattermap(
+        lat=truck_lats,
+        lon=truck_lons,
+        mode="lines",
+        line=dict(width=3, color="#dc2626"),
+        name="Kamion Ostrava → sklad",
+        hoverinfo="skip",
+    ))
+
+    pins = [p for p in _RAIL_CORRIDOR if p.get("pin")] + [
+        p for p in _TRUCK_LEG if p.get("pin")
+    ]
+    fig.add_trace(go.Scattermap(
+        lat=[float(p["lat"]) for p in pins],
+        lon=[float(p["lon"]) for p in pins],
+        mode="markers+text",
+        marker=dict(size=11, color="#f59e0b"),
+        text=[p["name"] for p in pins],
+        textposition="top right",
+        textfont=dict(size=11, color="#111827"),
+        name="Uzly",
+        hovertext=[
+            f"<b>{p['name']}</b><br>{p.get('note') or ''}" for p in pins
+        ],
+        hoverinfo="text",
+    ))
+    _show_plotly_map(fig)
+
+
+@st.cache_data(ttl=_LINK4FUTURE_TTL, show_spinner=False)
+def fetch_link4future_track(imei: str) -> dict | None:
+    """Veřejné JSON API Link4Future (bez loginu) — historie bodů jednoho IMEI."""
+    try:
+        r = requests.get(
+            _LINK4FUTURE_API,
+            params={"containerNo": imei},
+            headers={
+                "User-Agent": "pbcable-dashboard",
+                "Accept": "application/json, text/plain, */*",
+                "Referer": f"https://iot.link4future.com/unLoginHistoryTrack?devNo={imei}",
+            },
+            timeout=40,
+        )
+        r.raise_for_status()
+        payload = r.json()
+    except Exception:
+        return None
+    if not isinstance(payload, dict) or payload.get("code") not in (0, "0"):
+        return None
+    data = payload.get("data") or {}
+    raw = data.get("containerRawDataList") or []
+    points: list[dict] = []
+    for row in raw:
+        try:
+            lat = float(row.get("locationLat"))
+            lon = float(row.get("locationLng"))
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(lat) or not math.isfinite(lon):
+            continue
+        fix = str(row.get("labelOne") or row.get("locationType") or "").strip()
+        points.append({
+            "t": str(row.get("reportTime") or ""),
+            "lat": lat,
+            "lon": lon,
+            "loc": str(row.get("location") or "").strip(),
+            "fix": fix,
+            "bat": row.get("batteryPower"),
+            "temp": row.get("temperatureInside") or row.get("temperatureOutside"),
+            "ref": str(row.get("referenceNo") or "").strip(),
+        })
+    if not points:
+        return None
+    points.sort(key=lambda p: p["t"])
+    last = points[-1]
+    lbs_n = sum(1 for p in points if "LBS" in str(p["fix"]).upper())
+    sat_n = sum(1 for p in points if str(p["fix"]).upper().startswith("SAT"))
+    return {
+        "imei": imei,
+        "label": last.get("ref") or imei,
+        "points": points,
+        "last": last,
+        "lbs_n": lbs_n,
+        "sat_n": sat_n,
+        "n": len(points),
+    }
+
+
+def _fix_label(fix: str) -> str:
+    u = (fix or "").upper()
+    if "LBS" in u:
+        return "LBS (buňka)"
+    if u.startswith("SAT"):
+        return "GPS (satelit)"
+    return fix or "—"
+
+
+def _render_live_container_map() -> None:
+    """Živá mapa kontejnerů z Link4Future — stejné API, jiný IMEI."""
+    trackers = _configured_link4future_trackers()
+    st.markdown("##### Živá poloha kontejnerů")
+    st.caption(
+        "Stejný GPS systém (Link4Future) — u další zásilky stačí jiná koncovka "
+        f"`?devNo=…`. Obnova max. jednou za {_LINK4FUTURE_TTL // 60} min. "
+        "Většina bodů je LBS (mobilní buňka), ne přesný satelit. "
+        "Do Gitu se poloha neukládá."
+    )
+    if not trackers:
+        st.info("Zatím není zadaný žádný tracker. Pošlete veřejný odkaz `unLoginHistoryTrack?devNo=…`.")
+        return
+
+    labels = [t.get("label") or t["imei"] for t in trackers]
+    options = ["Všechny"] + labels if len(trackers) > 1 else labels
+    pick = options[0]
+    col_sel, col_btn = st.columns([3, 1])
+    with col_sel:
+        if len(options) > 1:
+            pick = st.selectbox("Kontejner", options, index=0)
+    with col_btn:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("Obnovit GPS", use_container_width=True):
+            fetch_link4future_track.clear()
+            st.rerun()
+
+    wanted = trackers if pick == "Všechny" else [
+        t for t in trackers if (t.get("label") or t["imei"]) == pick
+    ]
+    tracks: list[dict] = []
+    failed: list[str] = []
+    with st.spinner("Stahuji polohu z Link4Future…"):
+        for t in wanted:
+            got = fetch_link4future_track(t["imei"])
+            if got is None:
+                failed.append(t.get("label") or t["imei"])
+                continue
+            if t.get("label"):
+                got = {**got, "label": t["label"]}
+            tracks.append(got)
+
+    if failed:
+        st.warning("Nepodařilo se načíst: " + ", ".join(failed))
+    if not tracks:
+        st.markdown(
+            '<div class="error-box">Živá poloha teď není dostupná (API Link4Future neodpovědělo).</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    all_lats = [p["lat"] for tr in tracks for p in tr["points"]]
+    all_lons = [p["lon"] for tr in tracks for p in tr["points"]]
+    fig = _new_osm_map(all_lats, all_lons, height=540)
+    for i, tr in enumerate(tracks):
+        color = _LIVE_TRAIL_COLORS[i % len(_LIVE_TRAIL_COLORS)]
+        pts = _downsample_track(tr["points"])
+        last = tr["last"]
+        name = tr["label"]
+        fig.add_trace(go.Scattermap(
+            lat=[p["lat"] for p in pts],
+            lon=[p["lon"] for p in pts],
+            mode="lines",
+            line=dict(width=3, color=color),
+            name=f"{name} · stopa",
+            hoverinfo="skip",
+        ))
+        fig.add_trace(go.Scattermap(
+            lat=[p["lat"] for p in pts],
+            lon=[p["lon"] for p in pts],
+            mode="markers",
+            marker=dict(size=5, color=color, opacity=0.55),
+            name=f"{name} · body",
+            showlegend=False,
+            hovertext=[
+                f"<b>{name}</b><br>{p['t']}<br>{_fix_label(p['fix'])}<br>"
+                f"{p['loc'] or '—'}"
+                for p in pts
+            ],
+            hoverinfo="text",
+        ))
+        fig.add_trace(go.Scattermap(
+            lat=[last["lat"]],
+            lon=[last["lon"]],
+            mode="markers+text",
+            marker=dict(size=14, color="#dc2626"),
+            text=[name],
+            textposition="top right",
+            textfont=dict(size=12, color="#111827"),
+            name=f"{name} · teď",
+            hovertext=(
+                f"<b>{name}</b><br>{last['t']}<br>{_fix_label(last['fix'])}<br>"
+                f"{last['loc'] or '—'}<br>"
+                f"baterie {last['bat'] if last['bat'] is not None else '—'} %"
+            ),
+            hoverinfo="text",
+        ))
+    _show_plotly_map(fig)
+
+    cols = st.columns(min(4, max(1, len(tracks))))
+    for i, tr in enumerate(tracks):
+        last = tr["last"]
+        bat = last.get("bat")
+        bat_s = f"{bat:.0f} %" if isinstance(bat, (int, float)) else "—"
+        loc = last.get("loc") or "—"
+        if len(loc) > 90:
+            loc = loc[:87] + "…"
+        with cols[i % len(cols)]:
+            st.markdown(
+                f"""
+                <div class="spread-card">
+                    <div class="spread-label">{tr['label']}</div>
+                    <div class="spread-value" style="color:#3b82f6;font-size:1.0rem;">
+                        {last['t'] or '—'}
+                    </div>
+                    <div style="font-family:'IBM Plex Mono',monospace;font-size:0.68rem;
+                                color:#B8C2D0;margin-top:6px;line-height:1.35;">
+                        {_fix_label(last.get('fix', ''))} · baterie {bat_s}<br>
+                        {tr['n']} bodů · LBS {tr['lbs_n']} / sat {tr['sat_n']}<br>
+                        {loc}
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+
 def render_logistics() -> None:
     """Sekce 4 – kalkulačka transitního času Čína → ČR s progress barem."""
 
@@ -5016,6 +5434,10 @@ def render_logistics() -> None:
             </div>
             """, unsafe_allow_html=True)
 
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    _render_china_rail_corridor_map()
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+    _render_live_container_map()
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
 
@@ -6931,6 +7353,7 @@ def render_footer() -> None:
         <div>
             Zdroje: westmetall.com (LME Cash) &nbsp;·&nbsp; ČNB &nbsp;·&nbsp;
             Yahoo Finance (grafy, ropa BZ=F) &nbsp;·&nbsp; Transitní model Čína→ČR
+            &nbsp;·&nbsp; Link4Future (GPS kontejnerů)
         </div>
         <div>
             Generováno: {now.strftime("%d.%m.%Y %H:%M:%S")} &nbsp;·&nbsp;
