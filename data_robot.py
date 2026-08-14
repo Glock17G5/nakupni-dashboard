@@ -1,4 +1,4 @@
-import json, requests, re, os
+import json, requests, re, os, sys
 from bs4 import BeautifulSoup
 import yfinance as yf
 import pandas as pd
@@ -72,11 +72,6 @@ def main():
                 }
         except: pass
 
-    with open("robot_data.json", "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-
-    # CCMN historie se STŘÁDÁ (append) — čínský web historii nenabízí, proto se
-    # tento soubor nikdy nepřepisuje celý, jen se doplňuje/aktualizuje dnešní řádek.
     print("Ukládám denní CCMN historii (append)...")
     today = datetime.now().strftime("%Y-%m-%d")
     cu, al = data["ccmn"]["copper"], data["ccmn"]["aluminum"]
@@ -85,7 +80,7 @@ def main():
             ccmn_hist = pd.read_csv("ccmn_history.csv", dtype={"Date": str})
         except FileNotFoundError:
             ccmn_hist = pd.DataFrame(columns=["Date", "CCMN_Cu", "CCMN_Al"])
-        ccmn_hist = ccmn_hist[ccmn_hist["Date"] != today]  # 2. běh dne přepíše jen dnešek
+        ccmn_hist = ccmn_hist[ccmn_hist["Date"] != today]
         new_row = pd.DataFrame([{"Date": today, "CCMN_Cu": cu, "CCMN_Al": al}])
         ccmn_hist = pd.concat([ccmn_hist, new_row], ignore_index=True)
         ccmn_hist.sort_values("Date").to_csv("ccmn_history.csv", index=False)
@@ -108,6 +103,22 @@ def main():
         df = pd.DataFrame(hist_dict)
         df.index.name = "Date"
         df.to_csv("robot_history.csv")
+
+    health = {
+        "ccmn_copper": data["ccmn"].get("copper") is not None,
+        "ccmn_aluminum": data["ccmn"].get("aluminum") is not None,
+        "brent": "BZ=F" in data["yf_spot"],
+        "eurusd": "EURUSD=X" in data["yf_spot"],
+        "history": bool(hist_dict),
+    }
+    data["_health"] = health
+    with open("robot_data.json", "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+    failed = [k for k, ok in health.items() if not ok]
+    if failed:
+        print("ALERT vypadek zdroju:", ", ".join(failed))
+        sys.exit(1)
 
     print("Hotovo! Data a historie uložena.")
 

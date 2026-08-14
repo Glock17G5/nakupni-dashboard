@@ -763,6 +763,51 @@ footer { visibility: hidden; }
 .success-box strong { color: #7FEBC0; }
 .warning-box strong { color: #F5DA7A; }
 
+.briefing-grid {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 8px;
+    margin: 4px 0 10px 0;
+}
+@media (max-width: 1100px) {
+    .briefing-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+    .briefing-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.briefing-tile {
+    background: rgba(30, 36, 46, 0.92);
+    border: 1px solid #2C3442;
+    border-radius: 12px;
+    padding: 10px 12px;
+    border-left: 3px solid #3D4859;
+}
+.briefing-tile.ok { border-left-color: #34C98E; }
+.briefing-tile.warn { border-left-color: #FACC15; }
+.briefing-tile.bad { border-left-color: #F0565E; }
+.briefing-tile .bl {
+    font-family: 'Syne', sans-serif;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.7px;
+    text-transform: uppercase;
+    color: #8D99AB;
+}
+.briefing-tile .bv {
+    font-family: 'Syne', sans-serif;
+    font-size: 1.12rem;
+    font-weight: 700;
+    color: #E9EDF3;
+    margin-top: 2px;
+    line-height: 1.2;
+}
+.briefing-tile .bs {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.68rem;
+    color: #8D99AB;
+    margin-top: 4px;
+}
+
 .data-table-wrap {
     background: rgba(30, 36, 46, 0.92);
     border: 1px solid #2C3442;
@@ -2698,20 +2743,35 @@ def interactive_oil_chart(
 
 # Po kolika obchodních dnech bez běhu robota zobrazit varování
 _ROBOT_STALE_BDAYS = 2
+# Prahy ranního briefingu (jen tržní data — žádné interní nákupy)
+_ALERT_METAL_7D_PCT = 3.0
+_ALERT_CHINA_CHEAP_PCT = -2.0
+_ALERT_CHINA_RICH_PCT = 5.0
+_ALERT_BRENT_DAY_PCT = 3.0
+_ALERT_EURCZK_7D_PCT = 1.5
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def _load_robot_payload() -> dict | None:
+    """Načte robot_data.json (CCMN, Yahoo spot, _ts, volitelně _health)."""
+    try:
+        import json
+        with open("robot_data.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
 
 
 @st.cache_data(ttl=CACHE_TTL)
 def _robot_last_run() -> str | None:
     """Čas posledního běhu data robota (ISO string kvůli cache serializaci)."""
-    try:
-        import json
-        with open("robot_data.json", "r", encoding="utf-8") as f:
-            ts = json.load(f).get("_ts")
-        if ts:
-            return str(pd.Timestamp(ts))
-    except Exception:
-        pass
-    # záloha: poslední datum v historii Yahoo
+    data = _load_robot_payload()
+    if data and data.get("_ts"):
+        try:
+            return str(pd.Timestamp(data["_ts"]))
+        except Exception:
+            pass
     try:
         df = pd.read_csv("robot_history.csv", parse_dates=["Date"])
         if not df.empty:
@@ -2721,30 +2781,384 @@ def _robot_last_run() -> str | None:
     return None
 
 
-def render_robot_watchdog() -> None:
-    """Varovný banner, pokud data robot (GitHub Action) delší dobu neběžel."""
+def _robot_stale_bdays() -> int | None:
+    """Obchodní dny od posledního běhu robota; None = soubor chybí."""
     last_str = _robot_last_run()
     if last_str is None:
-        st.markdown(
-            '<div class="error-box">🤖 <strong>Data robota nenalezena</strong> '
-            "(robot_data.json / robot_history.csv chybí) — čínské ceny a historické "
-            "grafy nebudou fungovat. Zkontroluj GitHub Action <code>data_robot.yml</code>.</div>",
-            unsafe_allow_html=True,
-        )
-        return
+        return None
     last = pd.Timestamp(last_str)
     today = now_prague().date()
-    # obchodní dny ostře PO posledním běhu (víkendy se nepočítají)
-    stale_bdays = len(pd.bdate_range(last.date() + timedelta(days=1), today))
-    if stale_bdays > _ROBOT_STALE_BDAYS:
+    return len(pd.bdate_range(last.date() + timedelta(days=1), today))
+
+
+def _expected_cnb_date(now: datetime | None = None):
+    """Očekávané datum ČNB lístku (před ~15:00 ještě předchozí pracovní den)."""
+    now = now or now_prague()
+    d = now.date()
+    if d.weekday() >= 5:
+        while d.weekday() >= 5:
+            d -= timedelta(days=1)
+        return d
+    if now.hour < 15:
+        d -= timedelta(days=1)
+        while d.weekday() >= 5:
+            d -= timedelta(days=1)
+    return d
+
+
+def _parse_cnb_date(date_str: str):
+    try:
+        return datetime.strptime(str(date_str).strip(), "%d.%m.%Y").date()
+    except (TypeError, ValueError):
+        return None
+
+
+def _close_trend_pct(df: pd.DataFrame | None, days: int) -> float | None:
+    """% změna Close za N dní."""
+    try:
+        if df is None or df.empty or "Close" not in df.columns or "Date" not in df.columns:
+            return None
+        out = df.dropna(subset=["Close"]).sort_values("Date")
+        last_date = out["Date"].iloc[-1]
+        last = float(out["Close"].iloc[-1])
+        past = out[out["Date"] <= last_date - pd.Timedelta(days=days)]
+        if past.empty:
+            return None
+        ref = float(past["Close"].iloc[-1])
+        if ref == 0:
+            return None
+        return (last / ref - 1.0) * 100.0
+    except Exception:
+        return None
+
+
+def _collect_health_alerts(
+    wm_data: dict | None,
+    cnb: dict | None,
+    oil: dict | None,
+) -> list[tuple[str, str, str]]:
+    """Výpadky zdrojů. (severity, titulek, text) — error / warning."""
+    alerts: list[tuple[str, str, str]] = []
+    robot = _load_robot_payload()
+    stale = _robot_stale_bdays()
+
+    if stale is None:
+        alerts.append((
+            "error",
+            "Data robota chybí",
+            "robot_data.json / robot_history.csv se nenašly. "
+            "Čína (CCMN), ropa a část FX grafů nepojedou. "
+            "Zkontroluj GitHub Action data_robot.yml.",
+        ))
+    elif stale > _ROBOT_STALE_BDAYS:
+        last_str = _robot_last_run()
+        last_fmt = pd.Timestamp(last_str).strftime("%d.%m.%Y %H:%M") if last_str else "?"
+        alerts.append((
+            "error",
+            "Data robota jsou stará",
+            f"{stale} obchodních dní od posledního běhu ({last_fmt}). "
+            "Action pravděpodobně padá — CCMN a Yahoo v aplikaci nejsou živé scrape.",
+        ))
+
+    if robot:
+        health = robot.get("_health") if isinstance(robot.get("_health"), dict) else {}
+        ccmn = robot.get("ccmn") or {}
+        if not ccmn.get("copper") or health.get("ccmn_copper") is False:
+            alerts.append((
+                "error",
+                "CCMN měď nedostupná",
+                "Robot nenačetl 1#铜 z ccmn.cn — spread Čína vs LME u mědi je N/A. "
+                "HTML webu se mohlo změnit.",
+            ))
+        if not ccmn.get("aluminum") or health.get("ccmn_aluminum") is False:
+            alerts.append((
+                "error",
+                "CCMN hliník nedostupný",
+                "Robot nenačetl A00铝 z ccmn.cn.",
+            ))
+        yf_spot = robot.get("yf_spot") or {}
+        if not yf_spot.get("BZ=F") or health.get("brent") is False:
+            alerts.append((
+                "warning",
+                "Brent (Yahoo) výpadek",
+                "BZ=F v robot_data.json chybí — proxy plastů i karta ropy budou N/A.",
+            ))
+        if not yf_spot.get("EURUSD=X") or health.get("eurusd") is False:
+            alerts.append((
+                "warning",
+                "EUR/USD výpadek",
+                "Bez EURUSD=X nejde přepočítat kovy do EUR.",
+            ))
+
+    if not wm_data or "copper" not in (wm_data or {}) or "aluminum" not in (wm_data or {}):
+        missing = []
+        if not wm_data or "copper" not in wm_data:
+            missing.append("měď")
+        if not wm_data or "aluminum" not in wm_data:
+            missing.append("hliník")
+        alerts.append((
+            "error",
+            "Westmetall LME výpadek",
+            f"Živý scrape westmetall.com nevrátil: {', '.join(missing)}. "
+            "Ceny LME v kartách budou N/A — to není záloha z robota.",
+        ))
+
+    if not cnb:
+        alerts.append((
+            "error",
+            "ČNB kurzovní lístek nedostupný",
+            "Bez ČNB nejde spočítat landed cost ani přepočet CCMN (CNY→USD).",
+        ))
+    else:
+        if "CNY" not in cnb or "USD" not in cnb:
+            alerts.append((
+                "error",
+                "ČNB: chybí CNY nebo USD",
+                "Spread Čína vs LME nelze spočítat.",
+            ))
+        cnb_d = _parse_cnb_date(str(cnb.get("_date", "")))
+        expected = _expected_cnb_date()
+        if cnb_d and cnb_d < expected:
+            alerts.append((
+                "warning",
+                "ČNB lístek není dnešní",
+                f"Načteno {cnb_d.strftime('%d.%m.%Y')}, očekáváno {expected.strftime('%d.%m.%Y')}.",
+            ))
+
+    if oil is None or "brent" not in (oil or {}):
+        if not any(a[1].startswith("Brent") for a in alerts):
+            alerts.append((
+                "warning",
+                "Brent nedostupný",
+                "Yahoo/robot nevrátil BZ=F.",
+            ))
+
+    return alerts
+
+
+def _collect_move_alerts(
+    cu_7d: float | None,
+    al_7d: float | None,
+    cu_spread_pct: float | None,
+    brent_day_pct: float | None,
+    eur_7d: float | None,
+) -> list[tuple[str, str, str]]:
+    """Pohyby trhu nad prahem — jen veřejné indexy."""
+    alerts: list[tuple[str, str, str]] = []
+
+    def metal_move(name: str, pct: float | None) -> None:
+        if pct is None:
+            return
+        if abs(pct) >= _ALERT_METAL_7D_PCT:
+            smer = "nahoru" if pct > 0 else "dolů"
+            alerts.append((
+                "warning",
+                f"{name} 7D {smer} {pct:+.1f} %",
+                f"Práh ±{_ALERT_METAL_7D_PCT:.0f} % za 7 dní (LME Cash, Westmetall).",
+            ))
+
+    metal_move("Měď", cu_7d)
+    metal_move("Hliník", al_7d)
+
+    if cu_spread_pct is not None:
+        if cu_spread_pct <= _ALERT_CHINA_CHEAP_PCT:
+            alerts.append((
+                "warning",
+                f"Čína levnější než LME ({cu_spread_pct:+.1f} %)",
+                "CCMN spot měď vs LME Cash. Spread je tržní, ne vaše nákupní cena.",
+            ))
+        elif cu_spread_pct >= _ALERT_CHINA_RICH_PCT:
+            alerts.append((
+                "warning",
+                f"Čína dražší než LME ({cu_spread_pct:+.1f} %)",
+                "CCMN spot měď vs LME Cash.",
+            ))
+
+    if brent_day_pct is not None and abs(brent_day_pct) >= _ALERT_BRENT_DAY_PCT:
+        alerts.append((
+            "warning",
+            f"Brent denní pohyb {brent_day_pct:+.1f} %",
+            f"Práh ±{_ALERT_BRENT_DAY_PCT:.0f} % (BZ=F). Proxy plastů se hýbe se zpožděním.",
+        ))
+
+    if eur_7d is not None and abs(eur_7d) >= _ALERT_EURCZK_7D_PCT:
+        alerts.append((
+            "warning",
+            f"EUR/CZK 7D {eur_7d:+.1f} %",
+            f"Práh ±{_ALERT_EURCZK_7D_PCT:.1f} % (Yahoo EURCZK=X).",
+        ))
+
+    rsi_cu = _metal_rsi_value("copper")
+    if rsi_cu is not None:
+        if rsi_cu >= 70:
+            alerts.append((
+                "warning",
+                f"Měď RSI {rsi_cu:.0f} — překoupeno",
+                "Westmetall, RSI 14. Orientační signál, ne pokyn k nákupu.",
+            ))
+        elif rsi_cu <= 30:
+            alerts.append((
+                "warning",
+                f"Měď RSI {rsi_cu:.0f} — přeprodáno",
+                "Westmetall, RSI 14. Orientační signál, ne pokyn k nákupu.",
+            ))
+    return alerts
+
+
+def _briefing_tile(label: str, value: str, sub: str, state: str) -> str:
+    return (
+        f'<div class="briefing-tile {state}">'
+        f'<div class="bl">{label}</div>'
+        f'<div class="bv">{value}</div>'
+        f'<div class="bs">{sub}</div>'
+        f"</div>"
+    )
+
+
+def _alert_banner(kind: str, title: str, body: str) -> str:
+    cls = {"error": "error-box", "warning": "warning-box", "ok": "success-box"}[kind]
+    return (
+        f'<div class="{cls}" style="margin:6px 0;text-align:left;">'
+        f"<strong>{title}</strong> — {body}</div>"
+    )
+
+
+def render_morning_briefing() -> None:
+    """Ranní strip + alerty výpadků a pohybů trhu (žádná interní data)."""
+    wm_data = fetch_westmetall()
+    cnb = fetch_cnb_rates()
+    oil = fetch_oil_data()
+    ccy = get_display_currency()
+
+    cu_usd, _, _ = resolve_metal_price("copper", wm_data)
+    al_usd, _, _ = resolve_metal_price("aluminum", wm_data)
+    cu_disp = usd_to_display(cu_usd, ccy)
+    al_disp = usd_to_display(al_usd, ccy)
+    cu_7d = _wm_trend_pct("copper", 7)
+    al_7d = _wm_trend_pct("aluminum", 7)
+    china_usd, _, _ = get_ccmn_china_usd("copper")
+    cu_spread = _ccmn_vs_lme_spread_pct(china_usd, cu_usd) if china_usd and cu_usd else None
+    brent = (oil or {}).get("brent") or {}
+    brent_px = brent.get("price")
+    brent_day = brent.get("delta_pct")
+    eur_info = (cnb or {}).get("EUR")
+    usd_info = (cnb or {}).get("USD")
+    eur_7d = _close_trend_pct(_yf_history("EURCZK=X"), 7)
+
+    def _tile_state(ok: bool, warn: bool = False) -> str:
+        if not ok:
+            return "bad"
+        if warn:
+            return "warn"
+        return "ok"
+
+    cu_sub = "7D N/A" if cu_7d is None else f"7D {cu_7d:+.1f} %"
+    al_sub = "7D N/A" if al_7d is None else f"7D {al_7d:+.1f} %"
+    if cu_spread is None:
+        spread_val, spread_sub, spread_ok = "N/A", "CCMN vs LME", False
+    else:
+        spread_val = f"{cu_spread:+.1f} %"
+        spread_sub = "CCMN měď vs LME"
+        spread_ok = True
+    eur_sub = f"ČNB {(cnb or {}).get('_date', '')}".strip()
+    if eur_7d is not None:
+        eur_sub = f"7D {eur_7d:+.1f} % · {eur_sub}"
+    brent_sub = "Yahoo BZ=F"
+    if brent_day is not None:
+        brent_sub = f"den {brent_day:+.1f} % · {brent_sub}"
+
+    stale = _robot_stale_bdays()
+    health = _collect_health_alerts(wm_data, cnb, oil)
+    moves = _collect_move_alerts(cu_7d, al_7d, cu_spread, brent_day, eur_7d)
+    has_error = any(k == "error" for k, _, _ in health)
+
+    tiles = [
+        _briefing_tile(
+            f"Měď LME · {ccy}",
+            format_num(cu_disp, 0) if cu_disp is not None else "N/A",
+            cu_sub,
+            _tile_state(cu_disp is not None, cu_7d is not None and abs(cu_7d) >= _ALERT_METAL_7D_PCT),
+        ),
+        _briefing_tile(
+            f"Hliník LME · {ccy}",
+            format_num(al_disp, 0) if al_disp is not None else "N/A",
+            al_sub,
+            _tile_state(al_disp is not None, al_7d is not None and abs(al_7d) >= _ALERT_METAL_7D_PCT),
+        ),
+        _briefing_tile(
+            "Čína vs LME",
+            spread_val,
+            spread_sub,
+            _tile_state(
+                spread_ok,
+                spread_ok and (
+                    cu_spread <= _ALERT_CHINA_CHEAP_PCT or cu_spread >= _ALERT_CHINA_RICH_PCT
+                ),
+            ),
+        ),
+        _briefing_tile(
+            "EUR/CZK",
+            f"{eur_info['rate']:.4f}" if eur_info else "N/A",
+            eur_sub or "ČNB",
+            _tile_state(bool(eur_info), eur_7d is not None and abs(eur_7d) >= _ALERT_EURCZK_7D_PCT),
+        ),
+        _briefing_tile(
+            "USD/CZK",
+            f"{usd_info['rate']:.4f}" if usd_info else "N/A",
+            f"ČNB {(cnb or {}).get('_date', '')}".strip() or "ČNB",
+            _tile_state(bool(usd_info)),
+        ),
+        _briefing_tile(
+            "Brent",
+            f"${brent_px:.2f}" if brent_px is not None else "N/A",
+            brent_sub,
+            _tile_state(
+                brent_px is not None,
+                brent_day is not None and abs(brent_day) >= _ALERT_BRENT_DAY_PCT,
+            ),
+        ),
+    ]
+
+    status_bits = []
+    if has_error:
+        status_bits.append("zdroj v chybě")
+    elif health:
+        status_bits.append("zdroj varování")
+    else:
+        status_bits.append("zdroje OK")
+    if moves:
+        status_bits.append(f"{len(moves)} pohyb trhu")
+    if stale is not None and stale <= _ROBOT_STALE_BDAYS:
+        last_str = _robot_last_run()
+        if last_str:
+            status_bits.append(f"robot {pd.Timestamp(last_str).strftime('%d.%m. %H:%M')}")
+
+    st.markdown(
+        "<div style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
+        "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;margin:8px 0 6px 0;'>"
+        f"Ranní briefing · {' · '.join(status_bits)}</div>"
+        f'<div class="briefing-grid">{"".join(tiles)}</div>',
+        unsafe_allow_html=True,
+    )
+
+    for kind, title, body in health:
+        st.markdown(_alert_banner(kind, title, body), unsafe_allow_html=True)
+    for kind, title, body in moves:
+        st.markdown(_alert_banner(kind, title, body), unsafe_allow_html=True)
+    if not health and not moves:
         st.markdown(
-            f'<div class="warning-box">🤖 <strong>Data robota jsou stará '
-            f"{stale_bdays} obchodních dní</strong> (poslední běh: "
-            f"{last.strftime('%d.%m.%Y %H:%M')}). GitHub Action "
-            f"<code>data_robot.yml</code> pravděpodobně selhává — čínské ceny (CCMN), "
-            f"korelace a FX/ropné grafy nemusí být aktuální.</div>",
+            _alert_banner(
+                "ok",
+                "Zdroje v pořádku",
+                "Westmetall, ČNB i robot odpovídají. Žádný pohyb nad prahem "
+                f"(Cu/Al 7D ±{_ALERT_METAL_7D_PCT:.0f} %, Čína vs LME "
+                f"{_ALERT_CHINA_CHEAP_PCT:.0f}…+{_ALERT_CHINA_RICH_PCT:.0f} %).",
+            ),
             unsafe_allow_html=True,
         )
+    st.caption(
+        "Jen veřejné trhy (LME, CCMN, ČNB, Yahoo). Interní nákupy a zásilky sem nepatří."
+    )
 
 
 def render_header() -> None:
@@ -6424,8 +6838,7 @@ def main() -> None:
 
     is_supplier = st.session_state.get("user_role") == "supplier"
 
-    if not is_supplier:
-        render_robot_watchdog()
+    render_morning_briefing()
 
     tabs_list = [
         "🔩 Kovy & Trh",

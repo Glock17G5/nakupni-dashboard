@@ -121,7 +121,7 @@ get_usd_per_cny() = rate_CNY_CZK / rate_USD_CZK   (z ČNB, viz sekce 2)
 - **Spread:** `_render_ccmn_spreads()` — CCMN (Čína) vs LME, badge `ccmn.cn (Spot)`.
 - **RSI:** počítá se z historie Westmetall a zobrazuje jako chip přímo na kartě kovu (`_rsi_chip()`).
 - **Predikce + backtest:** `_render_price_forecast_section()` — ensemble 3 modelů + MAPE z walk-forward backtestu.
-- **Hlídač dat:** `render_robot_watchdog()` — varování při zastaralém `robot_data.json`.
+- **Ranní briefing + alerty:** `render_morning_briefing()` — Cu/Al, spread CCMN vs LME, EUR/CZK, USD/CZK, Brent; červené výpadky zdrojů, žluté pohyby nad prahem.
 
 ---
 
@@ -439,15 +439,34 @@ Pokud je méně než `_FORECAST_BACKTEST_MIN` úspěšných originů (málo hist
 
 ---
 
-## 7. Hlídač stáří dat robota
+## 7. Ranní briefing a hlídač zdrojů
 
-**Funkce:** `render_robot_watchdog()` (volá se z `main()` po globálních ovládáních, jen pro interní roli).
+**Funkce:** `render_morning_briefing()` — volá se z `main()` pod globálními ovládáními (všechny role).  
+**Žádná interní data** — jen LME, CCMN, ČNB, Yahoo.
 
-- Čte `_ts` z `robot_data.json` (záloha: max datum z `robot_history.csv`).
-- Počítá **obchodní dny** od posledního běhu (`pd.bdate_range`) — víkendy se nepočítají.
-- Práh: `_ROBOT_STALE_BDAYS = 2`.
-- Staré / chybějící data → `warning-box` / `error-box` s odkazem na GitHub Action `data_robot.yml`.
-- Aktuální data → banner se **nezobrazí**.
+### 7.1 Strip
+
+Šest dlaždic: měď LME, hliník LME, Čína vs LME (měď), EUR/CZK, USD/CZK, Brent. Červený okraj = N/A / výpadek, žlutý = pohyb nad prahem.
+
+### 7.2 Alerty výpadků (červené / žluté)
+
+| Zdroj | Kdy |
+|-------|-----|
+| Robot chybí / starý | `robot_data.json` není, nebo `>` `_ROBOT_STALE_BDAYS` (2) obchodní dny |
+| CCMN měď / hliník | `ccmn.copper` / `aluminum` v JSON je prázdné, nebo `_health.ccmn_*` = false |
+| Westmetall LME | živý scrape v `app.py` nevrátil Cu nebo Al |
+| ČNB | lístek nejde stáhnout, chybí CNY/USD, nebo datum starší než očekávané (před 15:00 CET ještě předchozí pracovní den) |
+| Brent / EURUSD | chybí `BZ=F` / `EURUSD=X` v `yf_spot` |
+
+Když je vše v pořádku a žádný pohyb nad prahem → zelený banner „Zdroje v pořádku“.
+
+### 7.3 Alerty pohybů trhu
+
+Konstanty v `app.py`: Cu/Al 7D ±3 %, CCMN vs LME ≤ −2 % nebo ≥ +5 %, Brent den ±3 %, EUR/CZK 7D ±1,5 %, RSI mědi ≥ 70 / ≤ 30.
+
+### 7.4 GitHub Action
+
+`data_robot.py` zapíše `_health` do `robot_data.json` a skončí kódem 1, pokud CCMN, Brent, EURUSD nebo Yahoo historie selže. Workflow soubor **nejprve commituje** (i částečná data), **pak job failne** — GitHub pošle mail na selhání workflow. Dashboard mezitím ukáže červený alert.
 
 ---
 
@@ -589,4 +608,4 @@ flowchart TB
 - Yahoo a veřejné OSRM/Nominatim mohou rate-limitovat nebo být dočasně nedostupné.
 - Proxy plasty a transitní dny Čína→ČR jsou **modely**, ne tržní feed — ale vždy vycházejí z reálných vstupů nebo uživatelských parametrů, nikoli z náhodných mock čísel.
 
-*Dokumentace odpovídá stavu `app.py` + `helukabel_tables.py` včetně záložky Nástroje & tipy (Fill factor, kapacita bubnu, tabulky HELUKABEL s rozkladačem H/NYY), hlídače stáří dat robota, ensemble predikce s backtestem a SVG sparklinů na FX kartách.*
+*Dokumentace odpovídá stavu `app.py` + `helukabel_tables.py` včetně záložky Nástroje & tipy, ranního briefingu a alertů zdrojů, ensemble predikce s backtestem a SVG sparklinů na FX kartách.*
