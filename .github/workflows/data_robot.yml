@@ -14,9 +14,18 @@ jobs:
         with:
           python-version: '3.10'
       - run: pip install requests beautifulsoup4 lxml yfinance pandas
-      - run: python data_robot.py
+      - name: Fetch market data
+        id: robot
+        continue-on-error: true
+        run: python data_robot.py
       - run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add robot_data.json robot_history.csv ccmn_history.csv
-          git diff --quiet && git diff --staged --quiet || (git commit -m "🤖 Automatická aktualizace tržních dat" && git push)
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Automatická aktualizace tržních dat" && git push)
+      - name: Alert — source missing
+        if: steps.robot.outcome == 'failure'
+        run: |
+          echo "Datový robot nahlásil výpadek zdroje (CCMN / Yahoo)."
+          echo "Dashboard v appce ukáže červený alert. Zkontroluj log tohoto jobu."
+          exit 1
