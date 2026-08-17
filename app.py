@@ -4924,7 +4924,7 @@ _LINK4FUTURE_TTL = 900
 _GPS_TRACKERS_PATH = Path(__file__).resolve().parent / "gps_trackers.json"
 _GPS_SESSION_KEY = "gps_trackers"
 _GPS_HYDRATED_KEY = "gps_trackers_hydrated"
-_GPS_LS_KEY = "pbcable_gps_trackers"
+_GPS_LS_KEY = "pbcable_gps_trackers_v2"
 _LIVE_TRAIL_COLORS = ("#2563eb", "#dc2626", "#059669", "#d97706", "#7c3aed", "#db2777")
 
 
@@ -5222,8 +5222,8 @@ def render_container_tracking() -> None:
         badge_html(True, "Link4Future"),
     )
     st.caption(
-        "Přidejte zásilku (jméno, popis, odkaz GPS). Zůstane tu, dokud ji sami nesmažete. "
-        "Všechny aktivní kontejnery jsou v jedné mapě. "
+        "Přidejte zásilku (jméno kontejneru, číslo vydané objednávky, odkaz GPS). "
+        "Zůstane tu, dokud ji sami nesmažete. Všechny aktivní kontejnery jsou v jedné mapě. "
         f"Poloha se obnovuje max. jednou za {_LINK4FUTURE_TTL // 60} min. "
         "Většina bodů je LBS (buňka), ne satelit."
     )
@@ -5233,7 +5233,10 @@ def render_container_tracking() -> None:
         with c_name:
             new_name = st.text_input("Jméno kontejneru", placeholder="FORU3343195")
         with c_desc:
-            new_desc = st.text_input("Popis", placeholder="např. XLPE květen 2026")
+            new_desc = st.text_input(
+                "Číslo vydané objednávky",
+                placeholder="např. 26VO00238",
+            )
         with c_url:
             new_url = st.text_input(
                 "Odkaz GPS / IMEI",
@@ -7333,6 +7336,7 @@ def main() -> None:
 
     if not is_supplier:
         tabs_list.insert(3, "🚢 Nákup a landed costs")
+        tabs_list.insert(4, "📍 Kontejnery na cestě")
 
     tabs = st.tabs(tabs_list)
 
@@ -7348,10 +7352,11 @@ def main() -> None:
     if not is_supplier:
         with tabs[3]:
             render_landed_cost_pricing()
-            render_container_tracking()
         with tabs[4]:
-            render_domestic_logistics()
+            render_container_tracking()
         with tabs[5]:
+            render_domestic_logistics()
+        with tabs[6]:
             render_tools_and_tips()
     else:
         with tabs[3]:
