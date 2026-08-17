@@ -3,7 +3,7 @@
 # Verze: 2.0.0
 # Popis: Inteligentní nákupní dashboard pro kabelářský průmysl.
 #        Sleduje ceny LME kovů, čínský spot (CCMN), FX kurzy, ceny ropy (BZ=F + SMA)
-#        a kalkulačku transitního času Čína→ČR. Data jsou stahována živě
+#        a landed cost. Data jsou stahována živě
 #        ze zdarma dostupných zdrojů bez placených API klíčů.
 # Stack: Streamlit · Pandas · Plotly · BeautifulSoup4 · lxml · requests · yfinance
 # ==============================================================================
@@ -4382,15 +4382,8 @@ def render_oil_plastics() -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  SEKCE 4: LOGISTIKA
+#  SEKCE 4: NÁKUP A LANDED COSTS
 # ──────────────────────────────────────────────────────────────────────────────
-
-# Transitní časy Čína → ČR (dny)
-TRANSIT_DAYS: dict[str, int] = {
-    "Železniční doprava": 20,
-    "Námořní doprava":    40,
-    "Letecká doprava":      5,
-}
 
 _LANDED_ROUTES = (
     "🇨🇳 Čína",
@@ -4924,62 +4917,6 @@ def render_landed_cost_pricing() -> None:
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
 
-# Ilustrační železniční koridor Čína → ČR (schéma, ne GPS stopa konkrétního vlaku).
-# Východní Čína → Xi'an → Khorgos (1435→1520) → KZ/RU/BY → Brest → Małaszewicze
-# (1520→1435 + EU clo) → Česká Třebová (METRANS / Lichkov) → Ostrava → kamion Metylovice.
-_RAIL_CORRIDOR: list[dict] = [
-    {"name": "Ningbo (východní Čína)", "lat": 29.868, "lon": 121.544},
-    {"name": "Xi'an", "lat": 34.341, "lon": 108.940},
-    {"name": "Lanzhou", "lat": 36.061, "lon": 103.834},
-    {"name": "Urumqi", "lat": 43.825, "lon": 87.617},
-    {
-        "name": "Khorgos / Altynkol",
-        "lat": 44.214,
-        "lon": 80.414,
-        "pin": True,
-        "note": "Překládka 1435 → 1520 mm",
-    },
-    {"name": "Astana", "lat": 51.169, "lon": 71.449},
-    {"name": "Jekatěrinburg", "lat": 56.838, "lon": 60.597},
-    {"name": "Smolensk", "lat": 54.782, "lon": 32.045},
-    {"name": "Minsk", "lat": 53.900, "lon": 27.567},
-    {"name": "Brest", "lat": 52.097, "lon": 23.687},
-    {
-        "name": "Małaszewicze",
-        "lat": 52.049,
-        "lon": 23.361,
-        "pin": True,
-        "note": "Překládka 1520 → 1435 mm · EU clo",
-    },
-    {"name": "Varšava", "lat": 52.230, "lon": 21.011},
-    {"name": "Wrocław", "lat": 51.107, "lon": 17.038},
-    {"name": "Lichkov", "lat": 50.098, "lon": 16.666},
-    {
-        "name": "Česká Třebová",
-        "lat": 49.902,
-        "lon": 16.447,
-        "pin": True,
-        "note": "METRANS · vstup do ČR",
-    },
-    {
-        "name": "Ostrava",
-        "lat": 49.835,
-        "lon": 18.282,
-        "pin": True,
-        "note": "Železniční uzel · konec vlaku",
-    },
-]
-_TRUCK_LEG: list[dict] = [
-    {"name": "Ostrava", "lat": 49.835, "lon": 18.282},
-    {
-        "name": "Sklad Metylovice 325",
-        "lat": 49.606,
-        "lon": 18.329,
-        "pin": True,
-        "note": "pbcable · kamion z Ostravy",
-    },
-]
-
 # Link4Future — stejné API, mění se jen IMEI (?devNo= / containerNo=).
 # Seznam zásilek spravuje UI (Přidat GPS / Smazat), ne kód.
 _LINK4FUTURE_API = "https://iot.link4future.com/prod-api/unLoginTrackContainer"
@@ -5210,58 +5147,6 @@ def _new_osm_map(lats: list[float], lons: list[float], height: int = 520) -> go.
     return fig
 
 
-def _render_china_rail_corridor_map() -> None:
-    """Ilustrační mapa typické trasy vlak → kamion."""
-    st.markdown("##### Ilustrační koridor Čína → Metylovice")
-    st.caption(
-        "Modrá = vlak, červená = kamion Ostrava → sklad. Typická trasa CR Express "
-        "přes Khorgos a Małaszewicze, dál METRANS (Wrocław – Lichkov – Česká Třebová) "
-        "do Ostravy. Nejde o GPS konkrétního vlaku. Když zásilka pojede přes Bohumín, "
-        "Ostrava je na trase dřív než Třebová."
-    )
-    rail_lats = [float(p["lat"]) for p in _RAIL_CORRIDOR]
-    rail_lons = [float(p["lon"]) for p in _RAIL_CORRIDOR]
-    truck_lats = [float(p["lat"]) for p in _TRUCK_LEG]
-    truck_lons = [float(p["lon"]) for p in _TRUCK_LEG]
-    fig = _new_osm_map(rail_lats + truck_lats, rail_lons + truck_lons)
-
-    fig.add_trace(go.Scattermap(
-        lat=rail_lats,
-        lon=rail_lons,
-        mode="lines",
-        line=dict(width=4, color="#2563eb"),
-        name="Vlak (ilustrace)",
-        hoverinfo="skip",
-    ))
-    fig.add_trace(go.Scattermap(
-        lat=truck_lats,
-        lon=truck_lons,
-        mode="lines",
-        line=dict(width=3, color="#dc2626"),
-        name="Kamion Ostrava → sklad",
-        hoverinfo="skip",
-    ))
-
-    pins = [p for p in _RAIL_CORRIDOR if p.get("pin")] + [
-        p for p in _TRUCK_LEG if p.get("pin")
-    ]
-    fig.add_trace(go.Scattermap(
-        lat=[float(p["lat"]) for p in pins],
-        lon=[float(p["lon"]) for p in pins],
-        mode="markers+text",
-        marker=dict(size=11, color="#f59e0b"),
-        text=[p["name"] for p in pins],
-        textposition="top right",
-        textfont=dict(size=11, color="#111827"),
-        name="Uzly",
-        hovertext=[
-            f"<b>{p['name']}</b><br>{p.get('note') or ''}" for p in pins
-        ],
-        hoverinfo="text",
-    ))
-    _show_plotly_map(fig)
-
-
 @st.cache_data(ttl=_LINK4FUTURE_TTL, show_spinner=False)
 def fetch_link4future_track(imei: str) -> dict | None:
     """Veřejné JSON API Link4Future (bez loginu) — historie bodů jednoho IMEI."""
@@ -5330,10 +5215,12 @@ def _fix_label(fix: str) -> str:
     return fix or "—"
 
 
-def _render_live_container_map() -> None:
-    """Živá mapa: formulář Přidat GPS, seznam se smazáním, všechny kontejnery v jedné mapě."""
-    trackers = _gps_trackers()
-    st.markdown("##### Živá poloha kontejnerů")
+def render_container_tracking() -> None:
+    """Kontejnery na cestě — živé GPS (Link4Future), admin."""
+    section_header(
+        "📍", "Kontejnery na cestě (GPS tracking)",
+        badge_html(True, "Link4Future"),
+    )
     st.caption(
         "Přidejte zásilku (jméno, popis, odkaz GPS). Zůstane tu, dokud ji sami nesmažete. "
         "Všechny aktivní kontejnery jsou v jedné mapě. "
@@ -5490,104 +5377,6 @@ def _render_live_container_map() -> None:
                 unsafe_allow_html=True,
             )
 
-
-def render_logistics() -> None:
-    """Sekce 4 – kalkulačka transitního času Čína → ČR s progress barem."""
-
-    section_header(
-        "🚚", "Logistika — Transitní Čas Čína → ČR",
-        badge_html(True, "Kalkulačka"),
-    )
-
-    st.markdown(
-        '<div class="info-box">'
-        'Odhad doručení surovin a komponent z Číny do ČR · '
-        '<strong>Vlak 20 dní</strong> · <strong>Loď 40 dní</strong> · <strong>Letadlo 5 dní</strong>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-
-    col_form, col_result = st.columns([1, 1])
-
-    with col_form:
-        transport = st.selectbox(
-            "Způsob dopravy",
-            list(TRANSIT_DAYS.keys()),
-            index=0,
-            help="Železniční doprava je prioritní varianta pro většinu nákladů.",
-        )
-        ship_date = st.date_input(
-            "Datum odeslání",
-            value=now_prague().date(),
-            help="Den odjezdu nákladu z Číny",
-        )
-
-    transit_days = TRANSIT_DAYS[transport]
-    delivery_date = ship_date + timedelta(days=transit_days)
-    today = now_prague().date()
-
-    if today < ship_date:
-        elapsed = 0
-        progress = 0.0
-        phase = "Čeká na odeslání"
-        phase_color = "#f59e0b"
-    elif today >= delivery_date:
-        elapsed = transit_days
-        progress = 1.0
-        phase = "Doručeno (nebo po termínu)"
-        phase_color = "#22c55e"
-    else:
-        elapsed = (today - ship_date).days
-        progress = min(1.0, elapsed / transit_days)
-        phase = f"Na cestě — den {elapsed + 1} z {transit_days}"
-        phase_color = "#3b82f6"
-
-    days_left = max(0, (delivery_date - today).days)
-
-    with col_result:
-        st.markdown(f"""
-        <div class="metric-card card-logistics" style="margin-top:28px;">
-            <div class="card-label">Očekávané doručení</div>
-            <div class="card-value" style="font-size:1.6rem;color:#a0c8e8;">
-                {delivery_date.strftime("%d.%m.%Y")}
-            </div>
-            <div class="card-unit">{transport} · {transit_days} dní transit</div>
-            <div style="margin-top:10px;font-family:'IBM Plex Mono',monospace;
-                        font-size:0.72rem;color:{phase_color};">{phase}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown(
-        f"<div style='font-family:IBM Plex Mono,monospace;font-size:0.72rem;"
-        f"color:#E9EDF3;margin-bottom:6px;'>"
-        f"Průběh cesty · odesláno {ship_date.strftime('%d.%m.%Y')} → "
-        f"doručení {delivery_date.strftime('%d.%m.%Y')} · dnes {today.strftime('%d.%m.%Y')}"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
-    st.progress(progress, text=f"{int(progress * 100)} % dokončeno trasy")
-
-    c1, c2, c3, c4 = st.columns(4)
-    milestones = [
-        (c1, "Odesláno",       ship_date.strftime("%d.%m.%Y"), "#f59e0b"),
-        (c2, "Dnes",           today.strftime("%d.%m.%Y"),      "#3b82f6"),
-        (c3, "Zbývá",          f"{days_left} dní" if days_left else "—", "#8b5cf6"),
-        (c4, "Doručení (ETA)", delivery_date.strftime("%d.%m.%Y"), "#22c55e"),
-    ]
-    for col, label, val, clr in milestones:
-        with col:
-            st.markdown(f"""
-            <div class="spread-card">
-                <div class="spread-label">{label}</div>
-                <div class="spread-value" style="color:{clr};font-size:1.1rem;">{val}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-    _render_china_rail_corridor_map()
-    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-    _render_live_container_map()
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
 
@@ -7502,8 +7291,7 @@ def render_footer() -> None:
         <div>⚡ Kabelářský Nákupní Dashboard &nbsp;·&nbsp; v2.0.0 &nbsp;·&nbsp; Python + Streamlit</div>
         <div>
             Zdroje: westmetall.com (LME Cash) &nbsp;·&nbsp; ČNB &nbsp;·&nbsp;
-            Yahoo Finance (grafy, ropa BZ=F) &nbsp;·&nbsp; Transitní model Čína→ČR
-            &nbsp;·&nbsp; Link4Future (GPS kontejnerů)
+            Yahoo Finance (grafy, ropa BZ=F) &nbsp;·&nbsp; Link4Future (GPS kontejnerů)
         </div>
         <div>
             Generováno: {now.strftime("%d.%m.%Y %H:%M:%S")} &nbsp;·&nbsp;
@@ -7544,7 +7332,7 @@ def main() -> None:
     ]
 
     if not is_supplier:
-        tabs_list.insert(3, "🚢 Nákup & Logistika")
+        tabs_list.insert(3, "🚢 Nákup a landed costs")
 
     tabs = st.tabs(tabs_list)
 
@@ -7560,7 +7348,7 @@ def main() -> None:
     if not is_supplier:
         with tabs[3]:
             render_landed_cost_pricing()
-            render_logistics()
+            render_container_tracking()
         with tabs[4]:
             render_domestic_logistics()
         with tabs[5]:
