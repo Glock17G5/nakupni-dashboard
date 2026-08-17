@@ -88,31 +88,13 @@ def _load_app_key() -> str | None:
         return None
 
 
-def _load_supplier_key() -> str | None:
-    """Načte SUPPLIER_KEY ze Streamlit secrets (přístup dodavatele)."""
-    try:
-        key = st.secrets["SUPPLIER_KEY"]
-        if key is None:
-            return None
-        key_str = str(key).strip()
-        return key_str if key_str else None
-    except Exception:
-        return None
-
-
 def _authenticate_user(access_key: str) -> bool:
-    """Ověří klíč a nastaví roli v session_state. Vrací True při úspěchu."""
+    """Ověří APP_KEY a nastaví relaci. Vrací True při úspěchu."""
     app_key = _load_app_key()
-    supplier_key = _load_supplier_key()
     key = access_key.strip()
-
     if app_key and key == app_key:
         st.session_state[_SESSION_AUTH] = True
         st.session_state[_SESSION_ROLE] = "admin"
-        return True
-    if supplier_key and key == supplier_key:
-        st.session_state[_SESSION_AUTH] = True
-        st.session_state[_SESSION_ROLE] = "supplier"
         return True
     return False
 
@@ -4949,11 +4931,13 @@ def _normalize_gps_tracker(item) -> dict | None:
     container = str(item.get("container") or item.get("label") or item.get("name") or "").strip()
     description = str(item.get("description") or item.get("popis") or "").strip()
     added = str(item.get("added") or "").strip()
+    first_signal = str(item.get("first_signal") or "").strip()
     return {
         "imei": imei,
         "container": container or imei,
         "description": description,
         "added": added,
+        "first_signal": first_signal,
     }
 
 
@@ -5029,7 +5013,7 @@ def _gps_trackers() -> list[dict]:
     return list(rows) if isinstance(rows, list) else []
 
 
-def _save_gps_trackers(items: list[dict]) -> None:
+def _save_gps_trackers(items: list[dict], *, pause: bool = True) -> None:
     """Uloží seznam: relace + soubor + prohlížeč (dokud uživatel nesmaže)."""
     items = _normalize_gps_list(items)
     st.session_state[_GPS_SESSION_KEY] = items
@@ -5043,7 +5027,8 @@ def _save_gps_trackers(items: list[dict]) -> None:
     if ls is not None:
         try:
             ls.setItem(_GPS_LS_KEY, text)
-            time.sleep(0.4)
+            if pause:
+                time.sleep(0.4)
         except Exception:
             pass
 
@@ -5070,6 +5055,7 @@ def _add_gps_tracker(container: str, description: str, url_or_imei: str) -> str 
         "container": name,
         "description": (description or "").strip(),
         "added": now,
+        "first_signal": "",
     })
     _save_gps_trackers(rows)
     return None
@@ -5077,6 +5063,82 @@ def _add_gps_tracker(container: str, description: str, url_or_imei: str) -> str 
 
 def _delete_gps_tracker(imei: str) -> None:
     _save_gps_trackers([row for row in _gps_trackers() if row.get("imei") != imei])
+
+
+def _link4future_share_url(imei: str) -> str:
+    return f"https://iot.link4future.com/unLoginHistoryTrack?devNo={imei}"
+
+
+def _format_gps_dt(raw: str | None, *, with_time: bool = False) -> str:
+    """'2026-07-17 09:59:56' → 17.07.2026 nebo 17.07.2026 09:59."""
+    if not raw:
+        return "—"
+    s = str(raw).strip()
+    dt = None
+    for fmt, n in (("%Y-%m-%d %H:%M:%S", 19), ("%Y-%m-%d %H:%M", 16), ("%Y-%m-%d", 10)):
+        try:
+            dt = datetime.strptime(s[:n], fmt)
+            break
+        except ValueError:
+            continue
+    if dt is None:
+        return s
+    if with_time and (dt.hour or dt.minute or dt.second):
+        return dt.strftime("%d.%m.%Y %H:%M")
+    return dt.strftime("%d.%m.%Y")
+
+
+def _update_gps_tracker(
+    old_imei: str,
+    container: str,
+    description: str,
+    url_or_imei: str,
+) -> str | None:
+    """Upraví jméno, objednávku nebo GPS odkaz. Vrací chybu, nebo None."""
+    new_imei = _parse_link4future_imei(url_or_imei)
+    if not new_imei:
+        return "Vložte odkaz z Link4Future (nebo číslo ?devNo=)."
+    name = (container or "").strip()
+    if not name:
+        return "Vyplňte jméno kontejneru."
+    rows = _gps_trackers()
+    if new_imei != old_imei and any(r.get("imei") == new_imei for r in rows):
+        return "Tento GPS odkaz už má jiný kontejner v seznamu."
+    found = False
+    for row in rows:
+        if row.get("imei") != old_imei:
+            continue
+        if new_imei != old_imei:
+            row["first_signal"] = ""
+        row["imei"] = new_imei
+        row["container"] = name
+        row["description"] = (description or "").strip()
+        found = True
+        break
+    if not found:
+        return "Kontejner v seznamu už není."
+    _save_gps_trackers(rows)
+    if new_imei != old_imei:
+        fetch_link4future_track.clear()
+    return None
+
+
+def _remember_first_signals(first_by_imei: dict[str, str]) -> None:
+    """První GPS signál = vložení do kontejneru / expedice. Uloží se jednou, starší vyhraje."""
+    if not first_by_imei:
+        return
+    rows = _gps_trackers()
+    changed = False
+    for row in rows:
+        first_t = (first_by_imei.get(row["imei"]) or "").strip()
+        if not first_t:
+            continue
+        old = (row.get("first_signal") or "").strip()
+        if not old or first_t < old:
+            row["first_signal"] = first_t
+            changed = True
+    if changed:
+        _save_gps_trackers(rows, pause=False)
 
 
 def _mapbox_fit(lats: list[float], lons: list[float]) -> tuple[float, float, float]:
@@ -5192,6 +5254,7 @@ def fetch_link4future_track(imei: str) -> dict | None:
     if not points:
         return None
     points.sort(key=lambda p: p["t"])
+    first = points[0]
     last = points[-1]
     lbs_n = sum(1 for p in points if "LBS" in str(p["fix"]).upper())
     sat_n = sum(1 for p in points if str(p["fix"]).upper().startswith("SAT"))
@@ -5199,6 +5262,7 @@ def fetch_link4future_track(imei: str) -> dict | None:
         "imei": imei,
         "label": last.get("ref") or imei,
         "points": points,
+        "first": first,
         "last": last,
         "lbs_n": lbs_n,
         "sat_n": sat_n,
@@ -5223,7 +5287,9 @@ def render_container_tracking() -> None:
     )
     st.caption(
         "Přidejte zásilku (jméno kontejneru, číslo vydané objednávky, odkaz GPS). "
-        "Zůstane tu, dokud ji sami nesmažete. Všechny aktivní kontejnery jsou v jedné mapě. "
+        "Údaje lze později upravit. Zůstane tu, dokud kontejner sami nesmažete. "
+        "Expedice = první GPS signál (vložení trackeru do kontejneru). "
+        "Všechny aktivní kontejnery jsou v jedné mapě. "
         f"Poloha se obnovuje max. jednou za {_LINK4FUTURE_TTL // 60} min. "
         "Většina bodů je LBS (buňka), ne satelit."
     )
@@ -5253,22 +5319,35 @@ def render_container_tracking() -> None:
             st.rerun()
 
     trackers = _gps_trackers()
+    tracks: list[dict] = []
+    failed: list[str] = []
+    first_by_imei: dict[str, str] = {}
     if trackers:
-        st.markdown("**Aktivní zásilky**")
-        for row in trackers:
-            col_a, col_b, col_c, col_d = st.columns([1.4, 2.2, 1.0, 0.8])
-            with col_a:
-                st.markdown(f"**{row['container']}**")
-            with col_b:
-                st.caption(row["description"] or "—")
-            with col_c:
-                st.caption(row["added"] or "")
-            with col_d:
-                if st.button("Smazat", key=f"del_gps_{row['imei']}", use_container_width=True):
-                    _delete_gps_tracker(row["imei"])
-                    st.rerun()
-    else:
-        st.info("Seznam je prázdný. Přidejte první kontejner formulářem výše.")
+        with st.spinner("Stahuji polohu z Link4Future…"):
+            for t in trackers:
+                got = fetch_link4future_track(t["imei"])
+                if got is None:
+                    failed.append(t["container"])
+                    continue
+                first_t = str((got.get("first") or {}).get("t") or "")
+                if first_t:
+                    first_by_imei[t["imei"]] = first_t
+                label = t["container"]
+                if t.get("description"):
+                    label = f"{t['container']} · {t['description']}"
+                tracks.append({
+                    **got,
+                    "label": label,
+                    "container": t["container"],
+                    "description": t.get("description") or "",
+                    "first_signal": t.get("first_signal") or first_t,
+                })
+        if first_by_imei:
+            _remember_first_signals(first_by_imei)
+            trackers = _gps_trackers()
+
+    if failed:
+        st.warning("Nepodařilo se načíst: " + ", ".join(failed))
 
     col_btn, _ = st.columns([1, 4])
     with col_btn:
@@ -5276,30 +5355,76 @@ def render_container_tracking() -> None:
             fetch_link4future_track.clear()
             st.rerun()
 
-    if not trackers:
-        return
+    if trackers:
+        st.markdown("**Aktivní zásilky**")
+        editing = st.session_state.get("gps_edit_imei")
+        for row in trackers:
+            imei = row["imei"]
+            first_t = row.get("first_signal") or first_by_imei.get(imei) or ""
+            col_a, col_b, col_c, col_d, col_e = st.columns([1.4, 1.4, 1.3, 0.75, 0.75])
+            with col_a:
+                st.markdown(f"**{row['container']}**")
+            with col_b:
+                st.caption(row["description"] or "—")
+            with col_c:
+                st.caption("Expedice " + _format_gps_dt(first_t))
+            with col_d:
+                if st.button("Upravit", key=f"edit_gps_{imei}", use_container_width=True):
+                    st.session_state["gps_edit_imei"] = imei
+                    st.session_state[f"gps_e_name_{imei}"] = row["container"]
+                    st.session_state[f"gps_e_desc_{imei}"] = row.get("description") or ""
+                    st.session_state[f"gps_e_url_{imei}"] = _link4future_share_url(imei)
+                    st.rerun()
+            with col_e:
+                if st.button("Smazat", key=f"del_gps_{imei}", use_container_width=True):
+                    if st.session_state.get("gps_edit_imei") == imei:
+                        st.session_state["gps_edit_imei"] = None
+                    _delete_gps_tracker(imei)
+                    st.rerun()
 
-    tracks: list[dict] = []
-    failed: list[str] = []
-    with st.spinner("Stahuji polohu z Link4Future…"):
-        for t in trackers:
-            got = fetch_link4future_track(t["imei"])
-            if got is None:
-                failed.append(t["container"])
-                continue
-            label = t["container"]
-            if t.get("description"):
-                label = f"{t['container']} · {t['description']}"
-            tracks.append({**got, "label": label, "container": t["container"],
-                           "description": t.get("description") or ""})
+            if editing == imei:
+                with st.form(f"edit_gps_form_{imei}"):
+                    e1, e2, e3 = st.columns([1.1, 1.4, 1.8])
+                    with e1:
+                        edit_name = st.text_input(
+                            "Jméno kontejneru",
+                            key=f"gps_e_name_{imei}",
+                        )
+                    with e2:
+                        edit_desc = st.text_input(
+                            "Číslo vydané objednávky",
+                            key=f"gps_e_desc_{imei}",
+                        )
+                    with e3:
+                        edit_url = st.text_input(
+                            "Odkaz GPS / IMEI",
+                            key=f"gps_e_url_{imei}",
+                        )
+                    save_col, cancel_col, _sp = st.columns([1, 1, 3])
+                    with save_col:
+                        saved = st.form_submit_button("Uložit", type="primary")
+                    with cancel_col:
+                        cancelled = st.form_submit_button("Zrušit")
+                if cancelled:
+                    st.session_state["gps_edit_imei"] = None
+                    st.rerun()
+                if saved:
+                    err = _update_gps_tracker(imei, edit_name, edit_desc, edit_url)
+                    if err:
+                        st.error(err)
+                    else:
+                        st.session_state["gps_edit_imei"] = None
+                        st.success("Údaje uloženy.")
+                        st.rerun()
+    else:
+        st.info("Seznam je prázdný. Přidejte první kontejner formulářem výše.")
 
-    if failed:
-        st.warning("Nepodařilo se načíst: " + ", ".join(failed))
     if not tracks:
-        st.markdown(
-            '<div class="error-box">Živá poloha teď není dostupná (API Link4Future neodpovědělo).</div>',
-            unsafe_allow_html=True,
-        )
+        if trackers:
+            st.markdown(
+                '<div class="error-box">Živá poloha teď není dostupná (API Link4Future neodpovědělo).</div>',
+                unsafe_allow_html=True,
+            )
         return
 
     all_lats = [p["lat"] for tr in tracks for p in tr["points"]]
@@ -5360,17 +5485,20 @@ def render_container_tracking() -> None:
         if len(loc) > 90:
             loc = loc[:87] + "…"
         extra = tr.get("description") or ""
+        exped = _format_gps_dt(tr.get("first_signal") or (tr.get("first") or {}).get("t"), with_time=True)
+        last_s = _format_gps_dt(last.get("t"), with_time=True)
         with cols[i % len(cols)]:
             st.markdown(
                 f"""
                 <div class="spread-card">
                     <div class="spread-label">{tr['container']}</div>
                     <div class="spread-value" style="color:#3b82f6;font-size:1.0rem;">
-                        {last['t'] or '—'}
+                        {last_s}
                     </div>
                     <div style="font-family:'IBM Plex Mono',monospace;font-size:0.68rem;
                                 color:#B8C2D0;margin-top:6px;line-height:1.35;">
                         {extra + '<br>' if extra else ''}
+                        Expedice (1. signál): {exped}<br>
                         {_fix_label(last.get('fix', ''))} · baterie {bat_s}<br>
                         {tr['n']} bodů · LBS {tr['lbs_n']} / sat {tr['sat_n']}<br>
                         {loc}
@@ -7322,21 +7450,17 @@ def main() -> None:
     render_header()
     render_global_controls()
 
-    is_supplier = st.session_state.get("user_role") == "supplier"
-
     render_morning_briefing()
 
     tabs_list = [
         "🔩 Kovy & Trh",
         "💱 Měnové kurzy",
         "🛢️ Plasty & Ropa",
+        "🚢 Nákup a landed costs",
+        "📍 Kontejnery na cestě",
         "🚛 Logistika ČR & SK",
         "🧰 Nástroje & tipy",
     ]
-
-    if not is_supplier:
-        tabs_list.insert(3, "🚢 Nákup a landed costs")
-        tabs_list.insert(4, "📍 Kontejnery na cestě")
 
     tabs = st.tabs(tabs_list)
 
@@ -7349,20 +7473,17 @@ def main() -> None:
     with tabs[2]:
         render_oil_plastics()
 
-    if not is_supplier:
-        with tabs[3]:
-            render_landed_cost_pricing()
-        with tabs[4]:
-            render_container_tracking()
-        with tabs[5]:
-            render_domestic_logistics()
-        with tabs[6]:
-            render_tools_and_tips()
-    else:
-        with tabs[3]:
-            render_domestic_logistics()
-        with tabs[4]:
-            render_tools_and_tips()
+    with tabs[3]:
+        render_landed_cost_pricing()
+
+    with tabs[4]:
+        render_container_tracking()
+
+    with tabs[5]:
+        render_domestic_logistics()
+
+    with tabs[6]:
+        render_tools_and_tips()
 
     render_footer()
 

@@ -33,7 +33,7 @@ Co **není** považováno za „falešná data“:
 | Plánování nakládky | `render_cargo_visualization()` | CSV TP KBB 3 |
 | Souhrnný přehled | `render_summary_table()` | Agregace živých fetchů |
 
-Přístup: `APP_KEY` / `SUPPLIER_KEY` ze `.streamlit/secrets.toml`.
+Přístup: `APP_KEY` ze `.streamlit/secrets.toml` (stejný klíč v Streamlit Cloud Secrets).
 
 ---
 
@@ -474,7 +474,7 @@ Konstanty v `app.py`: Cu/Al 7D ±3 %, CCMN vs LME ≤ −2 % nebo ≥ +5 %, Bren
 
 ## 8. Nástroje & tipy
 
-**Záložka:** `🧰 Nástroje & tipy` · funkce `render_tools_and_tips()` (dostupná admin i supplier).
+**Záložka:** `🧰 Nástroje & tipy` · funkce `render_tools_and_tips()`.
 
 Hub praktických kalkulaček bez externích API. Výběr nástroje přes `st.selectbox` — seznam se bude rozšiřovat.
 
@@ -597,7 +597,7 @@ flowchart TB
 | `app.py` | Celá aplikace |
 | `helukabel_tables.py` | Katalog HELUKABEL: výpisky, skeny, rozkladač kódů |
 | `assets/helukabel/` | Skeny katalogu (JPG; aliasy PNG → JPG) |
-| `.streamlit/secrets.toml` | `APP_KEY`, `SUPPLIER_KEY` |
+| `.streamlit/secrets.toml` | `APP_KEY` |
 | `TPKBB3_dřevěné bubny_2017.xlsx - List1.csv` | Katalog bubnů (povinný pro plánování nakládky) |
 | `requirements.txt` | Python závislosti |
 
