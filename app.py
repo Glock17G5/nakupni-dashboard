@@ -35,7 +35,15 @@ import plotly.graph_objects as go
 # ── Streamlit ─────────────────────────────────────────────────────────────────
 import streamlit as st
 
-from i18n import init_lang, render_lang_switcher, t
+
+def t(text: str, **kwargs) -> str:
+    """UI text (čeština). Zachováno kvůli stávajícím voláním t()."""
+    if kwargs:
+        try:
+            return text.format(**kwargs)
+        except (KeyError, IndexError, ValueError):
+            return text
+    return text
 
 try:
     from helukabel_tables import (
@@ -151,7 +159,6 @@ def require_app_authentication() -> None:
 
     _left, _center, _right = st.columns([1, 1.2, 1])
     with _center:
-        render_lang_switcher()
         st.markdown(f"### {t('🔒 Přístup k dashboardu')}")
         st.caption(
             t("Přihlaste se tajným odkazem (`?key=…`) nebo zadejte přístupové heslo.")
@@ -174,7 +181,6 @@ def require_app_authentication() -> None:
     st.stop()
 
 
-init_lang()
 require_app_authentication()
 
 # ==============================================================================
@@ -3218,13 +3224,11 @@ def render_header() -> None:
     """, unsafe_allow_html=True)
 
     # Refresh tlačítko
-    c1, c_lang, c2 = st.columns([1.15, 0.7, 5.15])
+    c1, c2 = st.columns([1, 6])
     with c1:
         if st.button(t("🔄  Obnovit data"), use_container_width=True):
             st.cache_data.clear()
             st.rerun()
-    with c_lang:
-        render_lang_switcher()
     with c2:
         st.markdown(
             '<div style="padding:8px 0;font-family:\'IBM Plex Mono\',monospace;'

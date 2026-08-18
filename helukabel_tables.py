@@ -11,12 +11,6 @@ import re
 import pandas as pd
 import streamlit as st
 
-try:
-    from i18n import t
-except ImportError:
-    def t(text: str, **kwargs) -> str:  # type: ignore[misc]
-        return text.format(**kwargs) if kwargs else text
-
 _ASSETS = Path(__file__).resolve().parent / "assets" / "helukabel"
 
 
@@ -1993,8 +1987,7 @@ def explain_h_code(raw: str) -> list[str]:
 def render_helukabel_catalog() -> None:
     """Technické tabulky ze skenů HELUKABEL — referenční hub."""
     n_scans = len(list_catalog_scans())
-    st.markdown(f"### {t('📗 Technické tabulky HELUKABEL')}")
-    st.caption(t("Tabulky a skeny katalogu zůstávají v originále (DE/CZ)."))
+    st.markdown("### 📗 Technické tabulky HELUKABEL")
     st.markdown(
         '<div class="info-box" style="margin-bottom:12px;">'
         f"Digitální výpisky + prohlížeč skenů "
@@ -2005,16 +1998,16 @@ def render_helukabel_catalog() -> None:
     )
 
     q = st.text_input(
-        t("Hledat v katalogu"),
+        "Hledat v katalogu",
         placeholder="např. ohyb, NYY, H07RN-F, proud, AWG, požár, VDE, buben…",
         key="helu_q",
     )
     hits = search_catalog(q)
     if q.strip() and not hits:
-        st.caption(t("Nic nenalezeno — zkus kratší slovo (ohyb, proud, NYY, PE…)."))
+        st.caption("Nic nenalezeno — zkus kratší slovo (ohyb, proud, NYY, PE…).")
     elif hits:
         labels = [f"{h['kind']}: {h['title']}" for h in hits]
-        chosen = st.selectbox(t("Nalezené položky"), labels, key="helu_hit_sel")
+        chosen = st.selectbox("Nalezené položky", labels, key="helu_hit_sel")
         hit = hits[labels.index(chosen)]
         if st.button("Otevřít sekci", key="helu_go"):
             st.session_state["helu_topic"] = _radio_label(hit["key"], n_scans)
