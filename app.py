@@ -35,6 +35,8 @@ import plotly.graph_objects as go
 # ── Streamlit ─────────────────────────────────────────────────────────────────
 import streamlit as st
 
+from i18n import init_lang, render_lang_switcher, t
+
 try:
     from helukabel_tables import (
         ktg_min_drums_for_bend,
@@ -133,10 +135,10 @@ def require_app_authentication() -> None:
     """
     app_key = _load_app_key()
     if not app_key:
-        st.error(
+        st.error(t(
             "Chybí nebo je neplatné nastavení **APP_KEY** v Streamlit secrets "
             "(soubor `.streamlit/secrets.toml` lokálně nebo Secrets ve Streamlit Cloud)."
-        )
+        ))
         st.stop()
 
     if st.session_state.get(_SESSION_AUTH):
@@ -149,28 +151,30 @@ def require_app_authentication() -> None:
 
     _left, _center, _right = st.columns([1, 1.2, 1])
     with _center:
-        st.markdown("### 🔒 Přístup k dashboardu")
+        render_lang_switcher()
+        st.markdown(f"### {t('🔒 Přístup k dashboardu')}")
         st.caption(
-            "Přihlaste se tajným odkazem (`?key=…`) nebo zadejte přístupové heslo."
+            t("Přihlaste se tajným odkazem (`?key=…`) nebo zadejte přístupové heslo.")
         )
         manual_key = st.text_input(
-            "Heslo / přístupový klíč",
+            t("Heslo / přístupový klíč"),
             type="password",
             key="app_manual_key",
-            placeholder="Zadejte APP_KEY",
+            placeholder=t("Zadejte APP_KEY"),
         )
-        if st.button("Přihlásit se", type="primary", use_container_width=True):
+        if st.button(t("Přihlásit se"), type="primary", use_container_width=True):
             if _authenticate_user(manual_key):
                 st.query_params["key"] = manual_key.strip()
                 st.rerun()
             else:
-                st.error("Neplatné heslo. Přístup odepřen.")
+                st.error(t("Neplatné heslo. Přístup odepřen."))
         if url_key and not _authenticate_user(url_key):
-            st.warning("Parametr `key` v adrese URL není platný.")
+            st.warning(t("Parametr `key` v adrese URL není platný."))
 
     st.stop()
 
 
+init_lang()
 require_app_authentication()
 
 # ==============================================================================
@@ -1885,20 +1889,22 @@ def build_daily_export_df() -> pd.DataFrame:
 def render_data_export() -> None:
     """Postranní panel — stažení denního CSV snapshotu (bez zápisu na server)."""
     with st.sidebar:
-        st.markdown("### 💾 Export dat pro analýzu")
+        st.markdown(f"### {t('💾 Export dat pro analýzu')}")
         st.caption(
-            "Aktuální ceny kovů, kurzy ČNB, EUR/USD a RSI v jednom řádku. "
-            "Soubor se generuje při každém stažení — na serveru se neukládá."
+            t(
+                "Aktuální ceny kovů, kurzy ČNB, EUR/USD a RSI v jednom řádku. "
+                "Soubor se generuje při každém stažení — na serveru se neukládá."
+            )
         )
         try:
             export_df = build_daily_export_df()
             if export_df.empty:
-                st.warning("Data pro export nejsou k dispozici.")
+                st.warning(t("Data pro export nejsou k dispozici."))
                 return
             csv_bytes = export_df.to_csv(index=False).encode("utf-8-sig")
             file_name = f"pbcable_ceny_{now_prague().strftime('%Y-%m-%d')}.csv"
             st.download_button(
-                label="⬇️ Stáhnout CSV",
+                label=t("⬇️ Stáhnout CSV"),
                 data=csv_bytes,
                 file_name=file_name,
                 mime="text/csv",
@@ -3075,7 +3081,7 @@ def render_morning_briefing() -> None:
         spread_val, spread_sub, spread_ok = "N/A", "CCMN vs LME", False
     else:
         spread_val = f"{cu_spread:+.1f} %"
-        spread_sub = "CCMN měď vs LME"
+        spread_sub = t("CCMN měď vs LME")
         spread_ok = True
     eur_sub = f"ČNB {(cnb or {}).get('_date', '')}".strip()
     if eur_7d is not None:
@@ -3091,19 +3097,19 @@ def render_morning_briefing() -> None:
 
     tiles = [
         _briefing_tile(
-            f"Měď LME · {ccy}",
+            f"{t('Měď LME')} · {ccy}",
             format_num(cu_disp, 0) if cu_disp is not None else "N/A",
             cu_sub,
             _tile_state(cu_disp is not None, cu_7d is not None and abs(cu_7d) >= _ALERT_METAL_7D_PCT),
         ),
         _briefing_tile(
-            f"Hliník LME · {ccy}",
+            f"{t('Hliník LME')} · {ccy}",
             format_num(al_disp, 0) if al_disp is not None else "N/A",
             al_sub,
             _tile_state(al_disp is not None, al_7d is not None and abs(al_7d) >= _ALERT_METAL_7D_PCT),
         ),
         _briefing_tile(
-            "Čína vs LME",
+            t("Čína vs LME"),
             spread_val,
             spread_sub,
             _tile_state(
@@ -3138,13 +3144,13 @@ def render_morning_briefing() -> None:
 
     status_bits = []
     if has_error:
-        status_bits.append("zdroj v chybě")
+        status_bits.append(t("zdroj v chybě"))
     elif health:
-        status_bits.append("zdroj varování")
+        status_bits.append(t("zdroj varování"))
     else:
-        status_bits.append("zdroje OK")
+        status_bits.append(t("zdroje OK"))
     if moves:
-        status_bits.append(f"{len(moves)} pohyb trhu")
+        status_bits.append(f"{len(moves)} {t('pohyb trhu')}")
     if stale is not None and stale <= _ROBOT_STALE_BDAYS:
         last_str = _robot_last_run()
         if last_str:
@@ -3153,7 +3159,7 @@ def render_morning_briefing() -> None:
     st.markdown(
         "<div style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
         "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;margin:8px 0 6px 0;'>"
-        f"Ranní briefing · {' · '.join(status_bits)}</div>"
+        f"{t('Ranní briefing')} · {' · '.join(status_bits)}</div>"
         f'<div class="briefing-grid">{"".join(tiles)}</div>',
         unsafe_allow_html=True,
     )
@@ -3166,7 +3172,7 @@ def render_morning_briefing() -> None:
         st.markdown(
             _alert_banner(
                 "ok",
-                "Zdroje v pořádku",
+                t("Zdroje v pořádku"),
                 "Westmetall, ČNB i robot odpovídají. Žádný pohyb nad prahem "
                 f"(Cu/Al 7D ±{_ALERT_METAL_7D_PCT:.0f} %, Čína vs LME "
                 f"{_ALERT_CHINA_CHEAP_PCT:.0f}…+{_ALERT_CHINA_RICH_PCT:.0f} %).",
@@ -3174,7 +3180,7 @@ def render_morning_briefing() -> None:
             unsafe_allow_html=True,
         )
     st.caption(
-        "Jen veřejné trhy (LME, CCMN, ČNB, Yahoo). Interní nákupy a zásilky sem nepatří."
+        t("Jen veřejné trhy (LME, CCMN, ČNB, Yahoo). Interní nákupy a zásilky sem nepatří.")
     )
 
 
@@ -3193,7 +3199,7 @@ def render_header() -> None:
                 {logo_html}
                 <div>
                     <div class="dash-title">
-                        <span>⚡</span> Kabelářský dashboard
+                        <span>⚡</span> {t("Kabelářský dashboard")}
                     </div>
                     <div class="dash-subtitle">
                         Cable Industry Procurement Intelligence Platform
@@ -3202,7 +3208,7 @@ def render_header() -> None:
             </div>
             <div class="dash-meta">
                 <div class="dash-timestamp">
-                    <strong>Poslední aktualizace</strong> (CET)<br>
+                    <strong>{t("Poslední aktualizace")}</strong> (CET)<br>
                     {now.strftime("%d.%m.%Y %H:%M:%S")}<br>
                     Cache TTL: <strong>1 hod</strong>
                 </div>
@@ -3212,17 +3218,19 @@ def render_header() -> None:
     """, unsafe_allow_html=True)
 
     # Refresh tlačítko
-    c1, c2 = st.columns([1, 6])
+    c1, c_lang, c2 = st.columns([1.15, 0.7, 5.15])
     with c1:
-        if st.button("🔄  Obnovit data", use_container_width=True):
+        if st.button(t("🔄  Obnovit data"), use_container_width=True):
             st.cache_data.clear()
             st.rerun()
+    with c_lang:
+        render_lang_switcher()
     with c2:
         st.markdown(
             '<div style="padding:8px 0;font-family:\'IBM Plex Mono\',monospace;'
             'font-size:0.7rem;color:#8D99AB;">'
-            'Data se automaticky obnovují každou hodinu · '
-            'Všechny ceny jsou orientační · Žádné placené API</div>',
+            f'{t("Data se automaticky obnovují každou hodinu · "
+            "Všechny ceny jsou orientační · Žádné placené API")}</div>',
             unsafe_allow_html=True,
         )
 
@@ -3238,15 +3246,17 @@ def render_global_controls() -> tuple[str, str]:
     eurusd = get_eurusd_rate()
     if st.session_state.display_currency == "EUR" and not eurusd:
         st.warning(
-            "Přepočet na EUR není k dispozici — chybí živý kurz EUR/USD z Yahoo Finance. "
-            "Ceny v EUR se zobrazí jako N/A."
+            t(
+                "Přepočet na EUR není k dispozici — chybí živý kurz EUR/USD z Yahoo Finance. "
+                "Ceny v EUR se zobrazí jako N/A."
+            )
         )
 
     st.markdown('<div class="currency-bar">', unsafe_allow_html=True)
     c_cur, c_per, c_info = st.columns([1.6, 2.4, 2.8])
     with c_cur:
         st.markdown(
-            '<div class="currency-bar-label">Zobrazovací měna</div>',
+            f'<div class="currency-bar-label">{t("Zobrazovací měna")}</div>',
             unsafe_allow_html=True,
         )
         choice = st.segmented_control(
@@ -3260,7 +3270,7 @@ def render_global_controls() -> tuple[str, str]:
             st.session_state.display_currency = choice
     with c_per:
         st.markdown(
-            '<div class="currency-bar-label">Období grafů</div>',
+            f'<div class="currency-bar-label">{t("Období grafů")}</div>',
             unsafe_allow_html=True,
         )
         period_labels = list(CHART_PERIODS.keys())
@@ -3278,12 +3288,12 @@ def render_global_controls() -> tuple[str, str]:
         rate_txt = (
             f"EUR/USD (Yahoo): <strong style='color:#0D6EFD;'>{eurusd:.4f}</strong>"
             if eurusd
-            else "EUR/USD: <strong style='color:#ef4444;'>nedostupný</strong>"
+            else f"EUR/USD: <strong style='color:#ef4444;'>{t('nedostupný')}</strong>"
         )
         st.markdown(
             f'<div class="currency-bar-hint">{rate_txt}<br>'
-            f'LME Cash, zásoby &amp; historie měď/hliník: <strong>Westmetall</strong> · '
-            f'Kurzy CZK: <strong>ČNB</strong> · ostatní grafy: <strong>Yahoo</strong></div>',
+            f'{t("LME Cash, zásoby &amp; historie měď/hliník: <strong>Westmetall</strong> · "
+            "Kurzy CZK: <strong>ČNB</strong> · ostatní grafy: <strong>Yahoo</strong>")}</div>',
             unsafe_allow_html=True,
         )
     st.markdown("</div>", unsafe_allow_html=True)
@@ -3837,20 +3847,20 @@ def render_metals() -> None:
     has_ccmn = fetch_ccmn_spot("copper") is not None
 
     section_header(
-        "🔩", "Metaly — LME & Čína (CCMN)",
+        "🔩", t("Metaly — LME & Čína (CCMN)"),
         badge_html(has_cu and has_al, "westmetall.com LME Cash"),
         badge_html(has_ccmn, "ccmn.cn spot"),
     )
 
     if not wm_data:
-        st.warning("Westmetall: LME data se nepodařilo stáhnout — ceny mědi a hliníku nejsou k dispozici.")
+        st.warning(t("Westmetall: LME data se nepodařilo stáhnout — ceny mědi a hliníku nejsou k dispozici."))
 
     col_cu, col_al = st.columns(2)
     cu_cfg, al_cfg = _LME_METAL_CARDS
     with col_cu:
-        _render_lme_metal_card(cu_cfg[0], cu_cfg[1], cu_cfg[2], cu_cfg[3], wm_data)
+        _render_lme_metal_card(cu_cfg[0], t(cu_cfg[1]), cu_cfg[2], cu_cfg[3], wm_data)
     with col_al:
-        _render_lme_metal_card(al_cfg[0], al_cfg[1], al_cfg[2], al_cfg[3], wm_data)
+        _render_lme_metal_card(al_cfg[0], t(al_cfg[1]), al_cfg[2], al_cfg[3], wm_data)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -3858,12 +3868,12 @@ def render_metals() -> None:
     st.markdown(
         "<div style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
         "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
-        f"Historické grafy — Měď & Hliník (Westmetall, {period_lbl})</div>",
+        f"{t('Historické grafy — Měď & Hliník (Westmetall, {period})', period=period_lbl)}</div>",
         unsafe_allow_html=True,
     )
 
-    _render_wm_metal_history_chart("copper", "Měď (Cu)", "#f97316")
-    _render_wm_metal_history_chart("aluminum", "Hliník (Al)", "#A8B2C1")
+    _render_wm_metal_history_chart("copper", t("Měď (Cu)"), "#f97316")
+    _render_wm_metal_history_chart("aluminum", t("Hliník (Al)"), "#A8B2C1")
 
     # ── Historická korelace LME vs Čína (CCMN / COMEX proxy) ─────────────────
     st.markdown("<br>", unsafe_allow_html=True)
@@ -3970,27 +3980,30 @@ def render_fx() -> None:
     cnb_live = cnb is not None
 
     section_header(
-        "💱", "Měnové Kurzy — ČNB & Křížové",
+        "💱", t("Měnové Kurzy — ČNB & Křížové"),
         badge_html(cnb_live, "ČNB"),
         badge_html(True, "Yahoo grafy"),
     )
 
     if not cnb_live:
-        st.warning("ČNB: kurzovní lístek se nepodařilo načíst — karty CZK párů budou nedostupné.")
+        st.warning(t("ČNB: kurzovní lístek se nepodařilo načíst — karty CZK párů budou nedostupné."))
     elif "CNY" not in cnb:
         st.warning(
-            "ČNB: v denním kurzovním lístku chybí kód CNY — kurz CNY/CZK nelze zobrazit."
+            t("ČNB: v denním kurzovním lístku chybí kód CNY — kurz CNY/CZK nelze zobrazit.")
         )
 
     period = get_chart_period()
     period_lbl = get_chart_period_label()
 
-    cnb_date_note = f" ze dne {cnb.get('_date', 'N/A')}" if cnb else ""
+    cnb_date_note = (
+        (" " + t("ze dne {date}", date=cnb.get("_date", "N/A"))) if cnb else ""
+    )
     st.markdown(
         f'<div class="info-box">'
-        f'Karty CZK párů: oficiální kurzovní lístek <strong>ČNB</strong>{cnb_date_note} · '
-        f'Historické grafy ({period_lbl}), křížové kurzy a 30denní sparkliny: <strong>Yahoo Finance</strong> · '
-        f'CNY/CZK graf: CNYCZK=X nebo odvozeno USDCZK×CNYUSD'
+        f'{t("Karty CZK párů: oficiální kurzovní lístek <strong>ČNB</strong>")}'
+        f"{cnb_date_note} · "
+        f'{t("Historické grafy ({period}), křížové kurzy a 30denní sparkliny: <strong>Yahoo Finance</strong> · "
+        "CNY/CZK graf: CNYCZK=X nebo odvozeno USDCZK×CNYUSD", period=period_lbl)}'
         f'</div>',
         unsafe_allow_html=True,
     )
@@ -4007,13 +4020,13 @@ def render_fx() -> None:
             if info:
                 st.markdown(
                     metric_card(
-                        pair, f"{info['rate']:.4f}", subtitle,
+                        pair, f"{info['rate']:.4f}", t(subtitle),
                         card_class=cls, sparkline_html=spark,
                     ),
                     unsafe_allow_html=True,
                 )
             else:
-                st.markdown(error_card(pair, cls, "Data nedostupná · ČNB"), unsafe_allow_html=True)
+                st.markdown(error_card(pair, cls, t("Data nedostupná · ČNB")), unsafe_allow_html=True)
 
     with cols[3]:
         if eur_usd_spot and eur_usd_spot["price"]:
@@ -4145,10 +4158,10 @@ def render_oil_plastics() -> None:
     used_lag = brent_lag is not None
 
     if not live:
-        st.warning("Brent (BZ=F): Yahoo Finance nevrátilo živou cenu — data nedostupná.")
+        st.warning(t("Brent (BZ=F): Yahoo Finance nevrátilo živou cenu — data nedostupná."))
 
     section_header(
-        "🛢️", "Ropa & Plasty — Proxy Model",
+        "🛢️", t("Ropa & Plasty — Proxy Model"),
         badge_html(live, "Yahoo Finance"),
         badge_html(False, "", model=True) if plastics else badge_html(False),
     )
@@ -4606,7 +4619,7 @@ def _apply_sales_pricing(results: pd.DataFrame, margin_pct: float) -> pd.DataFra
 
 def render_landed_cost_pricing() -> None:
     """Logistika a cenotvorba — faktura (více řádků), landed cost, prodejní ceny."""
-    st.header("🚢 Logistika a Prodejní ceny")
+    st.header(t("🚢 Logistika a Prodejní ceny"))
 
     cnb = fetch_cnb_rates()
     eur_czk = _get_eur_czk_rate(cnb)
@@ -4614,31 +4627,33 @@ def render_landed_cost_pricing() -> None:
 
     st.markdown(
         f'<div class="info-box">'
-        f'Faktura s více řádky · proporční doprava a deklarace · clo dle HS / Aplikované clo (%) · '
-        f'kurz <strong>ČNB EUR/CZK</strong>{f" ({cnb_date})" if cnb else ""} · '
-        f'Turecko (A.TR) vynutí clo <strong>0 %</strong> na všech řádcích'
+        f'{t("Faktura s více řádky · proporční doprava a deklarace · clo dle HS / Aplikované clo (%) · "
+        "kurz <strong>ČNB EUR/CZK</strong>")}'
+        f'{f" ({cnb_date})" if cnb else ""} · '
+        f'{t("Turecko (A.TR) vynutí clo <strong>0 %</strong> na všech řádcích")}'
         f'</div>',
         unsafe_allow_html=True,
     )
 
     if not eur_czk or eur_czk <= 0:
-        st.error("Kurz EUR/CZK z ČNB není k dispozici — landed cost nelze spočítat.")
+        st.error(t("Kurz EUR/CZK z ČNB není k dispozici — landed cost nelze spočítat."))
         return
 
     c_route, c_trans, c_custom, c_fx = st.columns([2, 1, 1, 1])
     with c_route:
-        route_label = st.radio(
-            "Trasa",
-            options=list(_LANDED_ROUTES),
-            key="landed_route",
+        route_i = st.radio(
+            t("Trasa"),
+            options=list(range(len(_LANDED_ROUTES))),
+            format_func=lambda i: t(_LANDED_ROUTES[i]),
+            key="landed_route_i",
             horizontal=True,
         )
-        force_zero_duty = route_label == _ROUTE_TURKEY
+        force_zero_duty = _LANDED_ROUTES[int(route_i)] == _ROUTE_TURKEY
         if force_zero_duty:
-            st.caption("🇹🇷 Turecko: u všech řádků se použije clo **0 %** (A.TR).")
+            st.caption(t("🇹🇷 Turecko: u všech řádků se použije clo **0 %** (A.TR)."))
     with c_trans:
         transport_eur = st.number_input(
-            "Cena dopravy (EUR)",
+            t("Cena dopravy (EUR)"),
             min_value=0.0,
             value=12_000.0,
             step=100.0,
@@ -4647,7 +4662,7 @@ def render_landed_cost_pricing() -> None:
         )
     with c_custom:
         customs_czk = st.number_input(
-            "Poplatek za celní deklaraci a JSD (CZK)",
+            t("Poplatek za celní deklaraci a JSD (CZK)"),
             min_value=0.0,
             value=1_000.0,
             step=100.0,
@@ -4657,11 +4672,11 @@ def render_landed_cost_pricing() -> None:
     with c_fx:
         st.metric("EUR/CZK (ČNB)", f"{eur_czk:.4f}")
 
-    st.markdown("#### Import dat z Pohody")
-    is_atr_turkey = st.checkbox("🇹🇷 Aplikovat nulové clo (Zboží z Turecka s certifikátem A.TR)", value=False)
+    st.markdown(f"#### {t('Import dat z Pohody')}")
+    is_atr_turkey = st.checkbox(t("🇹🇷 Aplikovat nulové clo (Zboží z Turecka s certifikátem A.TR)"), value=False)
 
     uploaded_file = st.file_uploader(
-        "Nahrát exportní soubor (CSV nebo Excel z Pohody)",
+        t("Nahrát exportní soubor (CSV nebo Excel z Pohody)"),
         type=["csv", "xlsx", "xls"],
         key="landed_file_uploader"
     )
@@ -5054,7 +5069,7 @@ def _add_gps_tracker(container: str, description: str, url_or_imei: str) -> str 
     """Přidá zásilku. Vrací chybovou hlášku, nebo None při úspěchu."""
     imei = _parse_link4future_imei(url_or_imei)
     if not imei:
-        return "Vložte odkaz z Link4Future (nebo číslo ?devNo=)."
+        return t("Vložte odkaz z Link4Future (nebo číslo ?devNo=).")
     name = (container or "").strip()
     if not name:
         got = fetch_link4future_track(imei)
@@ -5114,13 +5129,13 @@ def _update_gps_tracker(
     """Upraví jméno, objednávku nebo GPS odkaz. Vrací chybu, nebo None."""
     new_imei = _parse_link4future_imei(url_or_imei)
     if not new_imei:
-        return "Vložte odkaz z Link4Future (nebo číslo ?devNo=)."
+        return t("Vložte odkaz z Link4Future (nebo číslo ?devNo=).")
     name = (container or "").strip()
     if not name:
-        return "Vyplňte jméno kontejneru."
+        return t("Vyplňte jméno kontejneru.")
     rows = _gps_trackers()
     if new_imei != old_imei and any(r.get("imei") == new_imei for r in rows):
-        return "Tento GPS odkaz už má jiný kontejner v seznamu."
+        return t("Tento GPS odkaz už má jiný kontejner v seznamu.")
     found = False
     for row in rows:
         if row.get("imei") != old_imei:
@@ -5133,7 +5148,7 @@ def _update_gps_tracker(
         found = True
         break
     if not found:
-        return "Kontejner v seznamu už není."
+        return t("Kontejner v seznamu už není.")
     _save_gps_trackers(rows)
     if new_imei != old_imei:
         fetch_link4future_track.clear()
@@ -5290,49 +5305,54 @@ def fetch_link4future_track(imei: str) -> dict | None:
 def _fix_label(fix: str) -> str:
     u = (fix or "").upper()
     if "LBS" in u:
-        return "LBS (buňka)"
+        return t("LBS (buňka)")
     if u.startswith("SAT"):
-        return "GPS (satelit)"
+        return t("GPS (satelit)")
     return fix or "—"
 
 
 def render_container_tracking() -> None:
     """Kontejnery na cestě — živé GPS (Link4Future), admin."""
     section_header(
-        "📍", "Kontejnery na cestě (GPS tracking)",
+        "📍", t("Kontejnery na cestě (GPS tracking)"),
         badge_html(True, "Link4Future"),
     )
     st.caption(
-        "Přidejte zásilku (jméno kontejneru, číslo vydané objednávky, odkaz GPS). "
-        "Údaje lze později upravit. Zůstane tu, dokud kontejner sami nesmažete. "
-        "Expedice = první GPS signál (vložení trackeru do kontejneru). "
-        "Všechny aktivní kontejnery jsou v jedné mapě. "
-        f"Poloha se obnovuje max. jednou za {_LINK4FUTURE_TTL // 60} min. "
-        "Většina bodů je LBS (buňka), ne satelit."
+        t(
+            "Přidejte zásilku (jméno kontejneru, číslo vydané objednávky, odkaz GPS). "
+            "Údaje lze později upravit. Zůstane tu, dokud kontejner sami nesmažete. "
+            "Expedice = první GPS signál (vložení trackeru do kontejneru). "
+            "Všechny aktivní kontejnery jsou v jedné mapě. "
+        )
+        + t(
+            "Poloha se obnovuje max. jednou za {mins} min. "
+            "Většina bodů je LBS (buňka), ne satelit.",
+            mins=_LINK4FUTURE_TTL // 60,
+        )
     )
 
     with st.form("add_gps_tracker", clear_on_submit=True):
         c_name, c_desc, c_url = st.columns([1.1, 1.4, 1.8])
         with c_name:
-            new_name = st.text_input("Jméno kontejneru", placeholder="FORU3343195")
+            new_name = st.text_input(t("Jméno kontejneru"), placeholder="FORU3343195")
         with c_desc:
             new_desc = st.text_input(
-                "Číslo vydané objednávky",
-                placeholder="např. 26VO00238",
+                t("Číslo vydané objednávky"),
+                placeholder=t("např. 26VO00238"),
             )
         with c_url:
             new_url = st.text_input(
-                "Odkaz GPS / IMEI",
+                t("Odkaz GPS / IMEI"),
                 placeholder="https://iot.link4future.com/unLoginHistoryTrack?devNo=…",
-                help="Stejný veřejný odkaz jako doteď — mění se jen koncovka ?devNo=",
+                help=t("Stejný veřejný odkaz jako doteď — mění se jen koncovka ?devNo="),
             )
-        added = st.form_submit_button("Přidat GPS", type="primary")
+        added = st.form_submit_button(t("Přidat GPS"), type="primary")
     if added:
         err = _add_gps_tracker(new_name, new_desc, new_url)
         if err:
             st.error(err)
         else:
-            st.success("Kontejner je v seznamu.")
+            st.success(t("Kontejner je v seznamu."))
             st.rerun()
 
     trackers = _gps_trackers()
@@ -5340,7 +5360,7 @@ def render_container_tracking() -> None:
     failed: list[str] = []
     first_by_imei: dict[str, str] = {}
     if trackers:
-        with st.spinner("Stahuji polohu z Link4Future…"):
+        with st.spinner(t("Stahuji polohu z Link4Future…")):
             for t in trackers:
                 got = fetch_link4future_track(t["imei"])
                 if got is None:
@@ -5364,16 +5384,16 @@ def render_container_tracking() -> None:
             trackers = _gps_trackers()
 
     if failed:
-        st.warning("Nepodařilo se načíst: " + ", ".join(failed))
+        st.warning(t("Nepodařilo se načíst: ") + ", ".join(failed))
 
     col_btn, _ = st.columns([1, 4])
     with col_btn:
-        if st.button("Obnovit GPS", use_container_width=True):
+        if st.button(t("Obnovit GPS"), use_container_width=True):
             fetch_link4future_track.clear()
             st.rerun()
 
     if trackers:
-        st.markdown("**Aktivní zásilky**")
+        st.markdown(f"**{t('Aktivní zásilky')}**")
         editing = st.session_state.get("gps_edit_imei")
         for row in trackers:
             imei = row["imei"]
@@ -5384,16 +5404,16 @@ def render_container_tracking() -> None:
             with col_b:
                 st.caption(row["description"] or "—")
             with col_c:
-                st.caption("Expedice " + _format_gps_dt(first_t))
+                st.caption(t("Expedice ") + _format_gps_dt(first_t))
             with col_d:
-                if st.button("Upravit", key=f"edit_gps_{imei}", use_container_width=True):
+                if st.button(t("Upravit"), key=f"edit_gps_{imei}", use_container_width=True):
                     st.session_state["gps_edit_imei"] = imei
                     st.session_state[f"gps_e_name_{imei}"] = row["container"]
                     st.session_state[f"gps_e_desc_{imei}"] = row.get("description") or ""
                     st.session_state[f"gps_e_url_{imei}"] = _link4future_share_url(imei)
                     st.rerun()
             with col_e:
-                if st.button("Smazat", key=f"del_gps_{imei}", use_container_width=True):
+                if st.button(t("Smazat"), key=f"del_gps_{imei}", use_container_width=True):
                     if st.session_state.get("gps_edit_imei") == imei:
                         st.session_state["gps_edit_imei"] = None
                     _delete_gps_tracker(imei)
@@ -5404,24 +5424,24 @@ def render_container_tracking() -> None:
                     e1, e2, e3 = st.columns([1.1, 1.4, 1.8])
                     with e1:
                         edit_name = st.text_input(
-                            "Jméno kontejneru",
+                            t("Jméno kontejneru"),
                             key=f"gps_e_name_{imei}",
                         )
                     with e2:
                         edit_desc = st.text_input(
-                            "Číslo vydané objednávky",
+                            t("Číslo vydané objednávky"),
                             key=f"gps_e_desc_{imei}",
                         )
                     with e3:
                         edit_url = st.text_input(
-                            "Odkaz GPS / IMEI",
+                            t("Odkaz GPS / IMEI"),
                             key=f"gps_e_url_{imei}",
                         )
                     save_col, cancel_col, _sp = st.columns([1, 1, 3])
                     with save_col:
-                        saved = st.form_submit_button("Uložit", type="primary")
+                        saved = st.form_submit_button(t("Uložit"), type="primary")
                     with cancel_col:
-                        cancelled = st.form_submit_button("Zrušit")
+                        cancelled = st.form_submit_button(t("Zrušit"))
                 if cancelled:
                     st.session_state["gps_edit_imei"] = None
                     st.rerun()
@@ -5431,15 +5451,15 @@ def render_container_tracking() -> None:
                         st.error(err)
                     else:
                         st.session_state["gps_edit_imei"] = None
-                        st.success("Údaje uloženy.")
+                        st.success(t("Údaje uloženy."))
                         st.rerun()
     else:
-        st.info("Seznam je prázdný. Přidejte první kontejner formulářem výše.")
+        st.info(t("Seznam je prázdný. Přidejte první kontejner formulářem výše."))
 
     if not tracks:
         if trackers:
             st.markdown(
-                '<div class="error-box">Živá poloha teď není dostupná (API Link4Future neodpovědělo).</div>',
+                f'<div class="error-box">{t("Živá poloha teď není dostupná (API Link4Future neodpovědělo).")}</div>',
                 unsafe_allow_html=True,
             )
         return
@@ -5515,9 +5535,9 @@ def render_container_tracking() -> None:
                     <div style="font-family:'IBM Plex Mono',monospace;font-size:0.68rem;
                                 color:#B8C2D0;margin-top:6px;line-height:1.35;">
                         {extra + '<br>' if extra else ''}
-                        Expedice (1. signál): {exped}<br>
-                        {_fix_label(last.get('fix', ''))} · baterie {bat_s}<br>
-                        {tr['n']} bodů · LBS {tr['lbs_n']} / sat {tr['sat_n']}<br>
+                        {t("Expedice (1. signál): ")}{exped}<br>
+                        {_fix_label(last.get('fix', ''))} · {t("baterie")} {bat_s}<br>
+                        {tr['n']} {t("bodů")} · LBS {tr['lbs_n']} / sat {tr['sat_n']}<br>
                         {loc}
                     </div>
                 </div>
@@ -6286,15 +6306,17 @@ def _format_domestic_transport_request(
 
 def render_domestic_logistics() -> None:
     """Kalkulačka přepravy ČR & SK — start a cíl z Nominatim, trasa přes OSRM."""
-    section_header("🚛", "Logistika ČR & SK — Kalkulačka přepravy")
+    section_header("🚛", t("Logistika ČR & SK — Kalkulačka přepravy"))
 
     st.markdown(
         '<div class="info-box">'
-        'Vyhledejte <strong>start</strong> a <strong>cíl</strong> v <strong>ČR nebo na Slovensku</strong> '
-        '(Košice, Senec, Bratislava, …) · silniční trasa OSRM včetně přeshraniční · '
-        'záloha vzdálenosti: vzdušná × 1,3 · cena v CZK i EUR (ČNB) · '
-        'poptávka pro dopravce ke stažení'
-        '</div>',
+        + t(
+            "Vyhledejte <strong>start</strong> a <strong>cíl</strong> v <strong>ČR nebo na Slovensku</strong> "
+            "(Košice, Senec, Bratislava, …) · silniční trasa OSRM včetně přeshraniční · "
+            "záloha vzdálenosti: vzdušná × 1,3 · cena v CZK i EUR (ČNB) · "
+            "poptávka pro dopravce ke stažení"
+        )
+        + "</div>",
         unsafe_allow_html=True,
     )
 
@@ -6302,14 +6324,14 @@ def render_domestic_logistics() -> None:
 
     with col_form:
         start_loc = _render_location_search(
-            "Odkud (Start)",
+            t("Odkud (Start)"),
             "domestic_start_query",
             "domestic_start_select",
             default_query="Metylovice",
         )
         st.markdown("<br>", unsafe_allow_html=True)
         dest_loc = _render_location_search(
-            "Kam (Cíl)",
+            t("Kam (Cíl)"),
             "domestic_dest_query",
             "domestic_dest_select",
         )
@@ -6687,7 +6709,7 @@ def render_fill_factor_calculator() -> None:
     """
     Fill factor: průměr vodiče → u každého schématu průřezu hned MIN / GOLD / MAX [mm²].
     """
-    section_header("📐", "Fill factor — průřez vodiče z průměru")
+    section_header("📐", t("Fill factor — průřez vodiče z průměru"))
     st.markdown(
         '<div class="info-box" style="margin-bottom:8px;">'
         "Zadej <strong>vnější průměr vodiče (mm)</strong> — pod každým schématem "
@@ -6888,7 +6910,7 @@ def render_drum_capacity_calculator() -> None:
     """
     Kapacita bubnu + plán návinu po vrstvách + doporučení min. KTG dle ohybu.
     """
-    section_header("🛢️", "Kapacita bubnu — co se vejde na buben")
+    section_header("🛢️", t("Kapacita bubnu — co se vejde na buben"))
     st.markdown(
         '<div class="info-box" style="margin-bottom:10px;">'
         "Návin se počítá <strong>po vrstvách (řadách)</strong> — každá další řada má větší obvod. "
@@ -7392,37 +7414,44 @@ def render_drum_capacity_calculator() -> None:
 
 def render_tools_and_tips() -> None:
     """Hub praktických kalkulaček a tipů pro sklad, nákup i provoz."""
-    section_header("🧰", "Nástroje & tipy")
+    section_header("🧰", t("Nástroje & tipy"))
     st.markdown(
         '<div class="info-box" style="margin-bottom:14px;">'
-        "Praktické kalkulačky a tipy pro <strong>sklad</strong>, <strong>nákup</strong> "
-        "i běžný provoz. Postupně sem přidáme další nástroje — vyber si aktuální funkci níže."
-        "</div>",
+        + t(
+            "Praktické kalkulačky a tipy pro <strong>sklad</strong>, <strong>nákup</strong> "
+            "i běžný provoz. Postupně sem přidáme další nástroje — vyber si aktuální funkci níže."
+        )
+        + "</div>",
         unsafe_allow_html=True,
     )
 
-    tool = st.selectbox(
-        "Nástroj",
-        options=[
-            "Fill factor — průřez vodiče z průměru",
-            "Kapacita bubnu — co se vejde na buben",
-            "Technické tabulky HELUKABEL (katalog)",
-        ],
-        key="tools_hub_select",
-        help="Seznam se bude rozšiřovat o další kalkulačky a tipy.",
+    _tool_ids = ("fill", "drum", "helu")
+    _tool_labels = {
+        "fill": t("Fill factor — průřez vodiče z průměru"),
+        "drum": t("Kapacita bubnu — co se vejde na buben"),
+        "helu": t("Technické tabulky HELUKABEL (katalog)"),
+    }
+    tool_id = st.selectbox(
+        t("Nástroj"),
+        options=_tool_ids,
+        format_func=lambda i: _tool_labels[i],
+        key="tools_hub_select_id",
+        help=t("Seznam se bude rozšiřovat o další kalkulačky a tipy."),
     )
     st.markdown("<br>", unsafe_allow_html=True)
 
-    if tool.startswith("Fill factor"):
+    if tool_id == "fill":
         render_fill_factor_calculator()
-    elif tool.startswith("Kapacita bubnu"):
+    elif tool_id == "drum":
         render_drum_capacity_calculator()
-    elif tool.startswith("Technické tabulky"):
+    elif tool_id == "helu":
         if render_helukabel_catalog is None:
             st.error(
-                "Modul `helukabel_tables.py` není nasazený. "
-                "Nahraj ho do kořene repozitáře na GitHub (vedle `app.py`) "
-                "a ideálně i složku `assets/helukabel/` se skeny."
+                t(
+                    "Modul `helukabel_tables.py` není nasazený. "
+                    "Nahraj ho do kořene repozitáře na GitHub (vedle `app.py`) "
+                    "a ideálně i složku `assets/helukabel/` se skeny."
+                )
             )
         else:
             render_helukabel_catalog()
@@ -7436,19 +7465,19 @@ def render_footer() -> None:
     now = now_prague()
     st.markdown(f"""
     <div class="dash-footer">
-        <div>⚡ Kabelářský Nákupní Dashboard &nbsp;·&nbsp; v2.0.0 &nbsp;·&nbsp; Python + Streamlit</div>
+        <div>⚡ {t("Kabelářský Nákupní Dashboard")} &nbsp;·&nbsp; v2.0.0 &nbsp;·&nbsp; Python + Streamlit</div>
         <div>
-            Zdroje: westmetall.com (LME Cash) &nbsp;·&nbsp; ČNB &nbsp;·&nbsp;
-            Yahoo Finance (grafy, ropa BZ=F) &nbsp;·&nbsp; Link4Future (GPS kontejnerů)
+            {t("Zdroje: westmetall.com (LME Cash) &nbsp;·&nbsp; ČNB &nbsp;·&nbsp; "
+            "Yahoo Finance (grafy, ropa BZ=F) &nbsp;·&nbsp; Link4Future (GPS kontejnerů)")}
         </div>
         <div>
-            Generováno: {now.strftime("%d.%m.%Y %H:%M:%S")} &nbsp;·&nbsp;
+            {t("Generováno:")} {now.strftime("%d.%m.%Y %H:%M:%S")} &nbsp;·&nbsp;
             Cache TTL: 3600 s &nbsp;·&nbsp;
-            Bez placených API klíčů &nbsp;·&nbsp; Bez SQL databází
+            {t("Bez placených API klíčů")} &nbsp;·&nbsp; {t("Bez SQL databází")}
         </div>
         <div style="margin-top:6px;">
-            ⚠️ Veškeré ceny a výpočty jsou orientační. Neslouží jako investiční poradenství.
-            Data jsou stahována z veřejně dostupných zdrojů a mohou se zpozdit nebo být nepřesná.
+            {t("⚠️ Veškeré ceny a výpočty jsou orientační. Neslouží jako investiční poradenství. "
+            "Data jsou stahována z veřejně dostupných zdrojů a mohou se zpozdit nebo být nepřesná.")}
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -7472,15 +7501,15 @@ def main() -> None:
     is_supplier = st.session_state.get(_SESSION_ROLE) == "supplier"
 
     tabs_list = [
-        "🔩 Kovy & Trh",
-        "💱 Měnové kurzy",
-        "🛢️ Plasty & Ropa",
-        "🚛 Logistika ČR & SK",
-        "🧰 Nástroje & tipy",
+        t("🔩 Kovy & Trh"),
+        t("💱 Měnové kurzy"),
+        t("🛢️ Plasty & Ropa"),
+        t("🚛 Logistika ČR & SK"),
+        t("🧰 Nástroje & tipy"),
     ]
     if not is_supplier:
-        tabs_list.insert(3, "🚢 Nákup a landed costs")
-        tabs_list.insert(4, "📍 Kontejnery na cestě")
+        tabs_list.insert(3, t("🚢 Nákup a landed costs"))
+        tabs_list.insert(4, t("📍 Kontejnery na cestě"))
 
     tabs = st.tabs(tabs_list)
 
