@@ -5365,23 +5365,23 @@ def render_container_tracking() -> None:
     first_by_imei: dict[str, str] = {}
     if trackers:
         with st.spinner(t("Stahuji polohu z Link4Future…")):
-            for t in trackers:
-                got = fetch_link4future_track(t["imei"])
+            for trk in trackers:
+                got = fetch_link4future_track(trk["imei"])
                 if got is None:
-                    failed.append(t["container"])
+                    failed.append(trk["container"])
                     continue
                 first_t = str((got.get("first") or {}).get("t") or "")
                 if first_t:
-                    first_by_imei[t["imei"]] = first_t
-                label = t["container"]
-                if t.get("description"):
-                    label = f"{t['container']} · {t['description']}"
+                    first_by_imei[trk["imei"]] = first_t
+                label = trk["container"]
+                if trk.get("description"):
+                    label = f"{trk['container']} · {trk['description']}"
                 tracks.append({
                     **got,
                     "label": label,
-                    "container": t["container"],
-                    "description": t.get("description") or "",
-                    "first_signal": t.get("first_signal") or first_t,
+                    "container": trk["container"],
+                    "description": trk.get("description") or "",
+                    "first_signal": trk.get("first_signal") or first_t,
                 })
         if first_by_imei:
             _remember_first_signals(first_by_imei)
