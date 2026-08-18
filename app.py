@@ -88,13 +88,30 @@ def _load_app_key() -> str | None:
         return None
 
 
+def _load_supplier_key() -> str | None:
+    """Načte SUPPLIER_KEY ze Streamlit secrets (přístup dodavatele)."""
+    try:
+        key = st.secrets["SUPPLIER_KEY"]
+        if key is None:
+            return None
+        key_str = str(key).strip()
+        return key_str if key_str else None
+    except Exception:
+        return None
+
+
 def _authenticate_user(access_key: str) -> bool:
-    """Ověří APP_KEY a nastaví relaci. Vrací True při úspěchu."""
+    """Ověří APP_KEY / SUPPLIER_KEY a nastaví relaci. Vrací True při úspěchu."""
     app_key = _load_app_key()
+    supplier_key = _load_supplier_key()
     key = access_key.strip()
     if app_key and key == app_key:
         st.session_state[_SESSION_AUTH] = True
         st.session_state[_SESSION_ROLE] = "admin"
+        return True
+    if supplier_key and key == supplier_key:
+        st.session_state[_SESSION_AUTH] = True
+        st.session_state[_SESSION_ROLE] = "supplier"
         return True
     return False
 
@@ -7452,15 +7469,18 @@ def main() -> None:
 
     render_morning_briefing()
 
+    is_supplier = st.session_state.get(_SESSION_ROLE) == "supplier"
+
     tabs_list = [
         "🔩 Kovy & Trh",
         "💱 Měnové kurzy",
         "🛢️ Plasty & Ropa",
-        "🚢 Nákup a landed costs",
-        "📍 Kontejnery na cestě",
         "🚛 Logistika ČR & SK",
         "🧰 Nástroje & tipy",
     ]
+    if not is_supplier:
+        tabs_list.insert(3, "🚢 Nákup a landed costs")
+        tabs_list.insert(4, "📍 Kontejnery na cestě")
 
     tabs = st.tabs(tabs_list)
 
@@ -7473,17 +7493,20 @@ def main() -> None:
     with tabs[2]:
         render_oil_plastics()
 
-    with tabs[3]:
-        render_landed_cost_pricing()
-
-    with tabs[4]:
-        render_container_tracking()
-
-    with tabs[5]:
-        render_domestic_logistics()
-
-    with tabs[6]:
-        render_tools_and_tips()
+    if not is_supplier:
+        with tabs[3]:
+            render_landed_cost_pricing()
+        with tabs[4]:
+            render_container_tracking()
+        with tabs[5]:
+            render_domestic_logistics()
+        with tabs[6]:
+            render_tools_and_tips()
+    else:
+        with tabs[3]:
+            render_domestic_logistics()
+        with tabs[4]:
+            render_tools_and_tips()
 
     render_footer()
 

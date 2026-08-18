@@ -33,7 +33,7 @@ Co **není** považováno za „falešná data“:
 | Plánování nakládky | `render_cargo_visualization()` | CSV TP KBB 3 |
 | Souhrnný přehled | `render_summary_table()` | Agregace živých fetchů |
 
-Přístup: `APP_KEY` ze `.streamlit/secrets.toml` (stejný klíč v Streamlit Cloud Secrets).
+Přístup: `APP_KEY` (admin) / `SUPPLIER_KEY` (dodavatel) ze `.streamlit/secrets.toml` a Streamlit Cloud Secrets. Dodavatel nevidí záložky Nákup a landed costs a Kontejnery na cestě.
 
 ---
 
@@ -597,7 +597,7 @@ flowchart TB
 | `app.py` | Celá aplikace |
 | `helukabel_tables.py` | Katalog HELUKABEL: výpisky, skeny, rozkladač kódů |
 | `assets/helukabel/` | Skeny katalogu (JPG; aliasy PNG → JPG) |
-| `.streamlit/secrets.toml` | `APP_KEY` |
+| `.streamlit/secrets.toml` | `APP_KEY`, `SUPPLIER_KEY` |
 | `TPKBB3_dřevěné bubny_2017.xlsx - List1.csv` | Katalog bubnů (povinný pro plánování nakládky) |
 | `requirements.txt` | Python závislosti |
 
