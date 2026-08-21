@@ -5204,7 +5204,7 @@ def _gps_trackers() -> list[dict]:
 
 
 def _save_gps_trackers(items: list[dict], *, pause: bool = True) -> None:
-    """Uloží seznam: relace + soubor + prohlížeč (dokud uživatel nesmaže)."""
+    """Uloží seznam: relace + soubor + prohlížeč."""
     items = _normalize_gps_list(items)
     st.session_state[_GPS_SESSION_KEY] = items
     st.session_state[_GPS_HYDRATED_KEY] = True
@@ -5965,8 +5965,8 @@ def _render_gps_archive(arrived_rows: list[dict]) -> None:
             margin=dict(l=8, r=8, t=8, b=8),
             height=280,
             hoverlabel=_HOVER_LABEL,
-            yaxis=dict(title=t("Dny na cestě"), **_TICK_AXIS),
-            xaxis=dict(title="", **_TICK_AXIS, showgrid=False),
+            yaxis={**_TICK_AXIS, "title": t("Dny na cestě")},
+            xaxis={**_TICK_AXIS, "title": "", "showgrid": False},
             showlegend=False,
         )
         _show_plotly(fig)
