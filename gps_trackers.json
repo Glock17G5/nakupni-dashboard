@@ -4,20 +4,26 @@
     "imei": "862606278001977",
     "container": "FORU3343195",
     "description": "26VO00238",
-    "added": "2026-08-14"
+    "added": "2026-08-14",
+    "first_signal": "2026-07-17 09:59:56",
+    "arrived": ""
   },
   {
     "provider": "link4future",
     "imei": "862606278001978",
     "container": "FORU3343240",
     "description": "26VO00238",
-    "added": "2026-08-17"
+    "added": "2026-08-17",
+    "first_signal": "2026-07-23 09:53:32",
+    "arrived": ""
   },
   {
     "provider": "jagich",
     "imei": "HNKU6426761",
     "container": "HNKU6426761",
     "description": "26VO00279",
-    "added": "2026-08-21"
+    "added": "2026-08-21",
+    "first_signal": "2026-08-15 16:43:49",
+    "arrived": ""
   }
 ]
