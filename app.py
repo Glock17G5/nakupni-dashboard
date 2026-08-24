@@ -4947,6 +4947,11 @@ _GPS_SESSION_KEY = "gps_trackers"
 _GPS_HYDRATED_KEY = "gps_trackers_hydrated"
 _GPS_LS_KEY = "pbcable_gps_trackers_v3"
 _GPS_LS_KEY_LEGACY = "pbcable_gps_trackers_v2"
+_GPS_GH_REPO_DEFAULT = "Glock17G5/nakupni-dashboard"
+_GPS_GH_BRANCH = "main"
+_GPS_GH_FILE = "gps_trackers.json"
+_GPS_GH_SHA_KEY = "gps_github_sha"
+_GPS_SYNC_ERR_KEY = "gps_sync_error"
 _LIVE_TRAIL_COLORS = ("#2563eb", "#dc2626", "#059669", "#d97706", "#7c3aed", "#db2777")
 _ISO_CONTAINER_RE = re.compile(r"^[A-Z]{4}\d{6,7}$")
 _JAGICH_PORT_CS = {
@@ -5163,38 +5168,152 @@ def _parse_gps_ls_value(raw) -> list[dict] | None:
     return None
 
 
+def _gps_secret_str(*names: str) -> str | None:
+    for name in names:
+        try:
+            val = st.secrets[name]
+        except Exception:
+            continue
+        if val is None:
+            continue
+        text = str(val).strip()
+        if text:
+            return text
+    try:
+        nested = st.secrets["github"]
+        token = nested["token"] if nested is not None else None
+        text = str(token or "").strip()
+        if text:
+            return text
+    except Exception:
+        pass
+    return None
+
+
+def _gps_github_token() -> str | None:
+    return _gps_secret_str("GPS_GITHUB_TOKEN", "GITHUB_TOKEN")
+
+
+def _gps_github_repo() -> str:
+    return _gps_secret_str("GPS_GITHUB_REPO") or _GPS_GH_REPO_DEFAULT
+
+
+def _gps_github_headers(*, with_auth: bool) -> dict[str, str]:
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "pbcable-dashboard",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    token = _gps_github_token()
+    if with_auth and token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _fetch_gps_trackers_github() -> list[dict] | None:
+    """Aktuální seznam z GitHubu (sdílený napříč telefony i PC). None = nepodařilo se."""
+    repo = _gps_github_repo()
+    token = _gps_github_token()
+    try:
+        if token:
+            url = (
+                f"https://api.github.com/repos/{repo}/contents/{_GPS_GH_FILE}"
+                f"?ref={_GPS_GH_BRANCH}"
+            )
+            r = requests.get(url, headers=_gps_github_headers(with_auth=True), timeout=25)
+            r.raise_for_status()
+            payload = r.json()
+            sha = str(payload.get("sha") or "")
+            if sha:
+                st.session_state[_GPS_GH_SHA_KEY] = sha
+            raw = base64.b64decode(
+                str(payload.get("content") or "").replace("\n", "")
+            ).decode("utf-8")
+            parsed = json.loads(raw)
+        else:
+            url = (
+                f"https://raw.githubusercontent.com/{repo}/{_GPS_GH_BRANCH}/"
+                f"{_GPS_GH_FILE}?t={int(time.time())}"
+            )
+            r = requests.get(
+                url,
+                headers={"User-Agent": "pbcable-dashboard", "Cache-Control": "no-cache"},
+                timeout=25,
+            )
+            r.raise_for_status()
+            parsed = r.json()
+    except Exception:
+        return None
+    if not isinstance(parsed, list):
+        return None
+    return _normalize_gps_list(parsed)
+
+
+def _push_gps_trackers_github(text: str) -> str | None:
+    """Zapíše seznam na GitHub. None = ok, jinak kód chyby."""
+    token = _gps_github_token()
+    if not token:
+        return "missing_token"
+    repo = _gps_github_repo()
+    url = f"https://api.github.com/repos/{repo}/contents/{_GPS_GH_FILE}"
+    headers = _gps_github_headers(with_auth=True)
+    sha = str(st.session_state.get(_GPS_GH_SHA_KEY) or "")
+    if not sha:
+        try:
+            got = requests.get(
+                f"{url}?ref={_GPS_GH_BRANCH}",
+                headers=headers,
+                timeout=25,
+            )
+            if got.status_code == 200:
+                sha = str((got.json() or {}).get("sha") or "")
+        except Exception:
+            sha = ""
+    payload = text if text.endswith("\n") else text + "\n"
+    body = {
+        "message": "Aktualizace GPS kontejnerů",
+        "content": base64.b64encode(payload.encode("utf-8")).decode("ascii"),
+        "branch": _GPS_GH_BRANCH,
+    }
+    if sha:
+        body["sha"] = sha
+    try:
+        r = requests.put(url, headers=headers, json=body, timeout=25)
+        if r.status_code == 409:
+            got = requests.get(f"{url}?ref={_GPS_GH_BRANCH}", headers=headers, timeout=25)
+            if got.status_code == 200:
+                body["sha"] = str((got.json() or {}).get("sha") or "")
+                r = requests.put(url, headers=headers, json=body, timeout=25)
+        r.raise_for_status()
+        new_sha = str((r.json() or {}).get("content", {}).get("sha") or "")
+        if new_sha:
+            st.session_state[_GPS_GH_SHA_KEY] = new_sha
+    except Exception:
+        return "push_failed"
+    return None
+
+
 def _hydrate_gps_trackers() -> None:
-    """Načte seznam z prohlížeče, jinak ze souboru. Jednou za relaci."""
+    """Načte sdílený seznam z GitHubu, jinak soubor / prohlížeč. Jednou za relaci."""
     if st.session_state.get(_GPS_HYDRATED_KEY):
         return
-    items = None
-    from_legacy = False
-    ls = _gps_local_storage()
-    if ls is not None:
-        try:
-            items = _parse_gps_ls_value(ls.getItem(_GPS_LS_KEY))
-        except Exception:
-            items = None
-        if items is None:
-            try:
-                items = _parse_gps_ls_value(ls.getItem(_GPS_LS_KEY_LEGACY))
-                from_legacy = items is not None
-            except Exception:
-                items = None
-    file_items = _read_gps_trackers_file()
+    items = _fetch_gps_trackers_github()
     if items is None:
-        items = file_items
-    elif from_legacy:
-        seen = {_gps_row_key(row) for row in items}
-        for row in file_items:
-            key = _gps_row_key(row)
-            if key not in seen:
-                items.append(row)
-                seen.add(key)
-    st.session_state[_GPS_SESSION_KEY] = items
+        items = _read_gps_trackers_file()
+        if not items:
+            ls = _gps_local_storage()
+            if ls is not None:
+                try:
+                    items = _parse_gps_ls_value(ls.getItem(_GPS_LS_KEY))
+                except Exception:
+                    items = None
+                if items is None:
+                    try:
+                        items = _parse_gps_ls_value(ls.getItem(_GPS_LS_KEY_LEGACY))
+                    except Exception:
+                        items = None
+    st.session_state[_GPS_SESSION_KEY] = items or []
     st.session_state[_GPS_HYDRATED_KEY] = True
-    if from_legacy:
-        _save_gps_trackers(items, pause=False)
 
 
 def _gps_trackers() -> list[dict]:
@@ -5204,11 +5323,12 @@ def _gps_trackers() -> list[dict]:
 
 
 def _save_gps_trackers(items: list[dict], *, pause: bool = True) -> None:
-    """Uloží seznam: relace + soubor + prohlížeč."""
+    """Uloží seznam: GitHub (sdílené) + relace + prohlížeč."""
     items = _normalize_gps_list(items)
     st.session_state[_GPS_SESSION_KEY] = items
     st.session_state[_GPS_HYDRATED_KEY] = True
     text = json.dumps(items, ensure_ascii=False, indent=2)
+    st.session_state[_GPS_SYNC_ERR_KEY] = _push_gps_trackers_github(text)
     try:
         _GPS_TRACKERS_PATH.write_text(text + "\n", encoding="utf-8")
     except Exception:
@@ -5257,6 +5377,39 @@ def _add_gps_tracker(container: str, description: str, url_or_imei: str) -> str 
 
 def _delete_gps_tracker(key: str) -> None:
     _save_gps_trackers([row for row in _gps_trackers() if _gps_row_key(row) != key])
+
+
+def _gps_close_row_dialogs() -> None:
+    st.session_state["gps_edit_key"] = None
+    st.session_state["gps_arrive_key"] = None
+    st.session_state["gps_delete_key"] = None
+
+
+def _render_gps_delete_form(row_key: str, container: str) -> None:
+    """Smazání jen po zadání APP_KEY."""
+    with st.form(f"del_gps_form_{row_key}"):
+        st.warning(t("Smazat {name}? Zmizí z mapy i z archivu.").format(name=container))
+        pw = st.text_input(
+            t("Heslo k dashboardu"),
+            type="password",
+            key=f"gps_del_pw_{row_key}",
+        )
+        ok_col, cancel_col, _sp = st.columns([1, 1, 3])
+        with ok_col:
+            confirmed = st.form_submit_button(t("Opravdu smazat"), type="primary")
+        with cancel_col:
+            cancelled = st.form_submit_button(t("Zrušit"))
+    if cancelled:
+        st.session_state["gps_delete_key"] = None
+        st.rerun()
+    if confirmed:
+        app_key = _load_app_key() or ""
+        if pw.strip() != app_key:
+            st.error(t("Špatné heslo, kontejner nebyl smazán."))
+            return
+        st.session_state["gps_delete_key"] = None
+        _delete_gps_tracker(row_key)
+        st.rerun()
 
 
 def _mark_gps_arrived(key: str, arrived) -> str | None:
@@ -5609,12 +5762,25 @@ def render_container_tracking() -> None:
             "Až kontejner dorazí, zadejte datum příjezdu — zmizí z mapy, ale zůstane v archivu "
             "s dobou cesty (expedice → příjezd). "
             "Expedice = první GPS signál. "
+            "Seznam je společný pro telefon i počítač (ukládá se na GitHub). "
+            "Smazání vyžaduje heslo k dashboardu. "
         )
         + t(
             "Živá poloha se obnovuje max. jednou za {mins} min.",
             mins=_LINK4FUTURE_TTL // 60,
         )
     )
+    sync_err = st.session_state.get(_GPS_SYNC_ERR_KEY)
+    if not _gps_github_token():
+        st.warning(
+            t(
+                "Aby se „Dorazilo“ propsalo i na telefon, přidejte do Streamlit Cloud Secrets "
+                "token **GITHUB_TOKEN** (právo zapisovat do souboru gps_trackers.json v tomto repu). "
+                "Bez něj se změny ukládají jen v tomto prohlížeči."
+            )
+        )
+    elif sync_err == "push_failed":
+        st.warning(t("Seznam se teď nepodařilo uložit na GitHub. Zkuste Obnovit GPS, nebo zkontrolujte token."))
 
     with st.form("add_gps_tracker", clear_on_submit=True):
         c_name, c_desc, c_url = st.columns([1.1, 1.4, 1.8])
@@ -5690,6 +5856,7 @@ def render_container_tracking() -> None:
         st.markdown(f"**{t('Na cestě')}**")
         editing = st.session_state.get("gps_edit_key")
         arriving = st.session_state.get("gps_arrive_key")
+        deleting = st.session_state.get("gps_delete_key")
         for row in active_rows:
             row_key = _gps_row_key(row)
             provider = row.get("provider") or "link4future"
@@ -5717,10 +5884,12 @@ def render_container_tracking() -> None:
                     st.rerun()
             with col_f:
                 if st.button(t("Smazat"), key=f"del_gps_{row_key}", use_container_width=True):
-                    st.session_state["gps_edit_key"] = None
-                    st.session_state["gps_arrive_key"] = None
-                    _delete_gps_tracker(row_key)
+                    _gps_close_row_dialogs()
+                    st.session_state["gps_delete_key"] = row_key
                     st.rerun()
+
+            if deleting == row_key:
+                _render_gps_delete_form(row_key, row["container"])
 
             if arriving == row_key:
                 with st.form(f"arrive_gps_form_{row_key}"):
@@ -5985,8 +6154,11 @@ def _render_gps_archive(arrived_rows: list[dict]) -> None:
                 st.rerun()
         with col_c:
             if st.button(t("Smazat"), key=f"del_arr_gps_{row_key}", use_container_width=True):
-                _delete_gps_tracker(row_key)
+                _gps_close_row_dialogs()
+                st.session_state["gps_delete_key"] = row_key
                 st.rerun()
+        if st.session_state.get("gps_delete_key") == row_key:
+            _render_gps_delete_form(row_key, rec["Kontejner"])
 
 
 # ── Logistika ČR & SK (přeprava kamionem) ─────────────────────────────────────
