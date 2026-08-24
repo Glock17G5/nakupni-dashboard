@@ -5762,7 +5762,6 @@ def render_container_tracking() -> None:
             "Až kontejner dorazí, zadejte datum příjezdu — zmizí z mapy, ale zůstane v archivu "
             "s dobou cesty (expedice → příjezd). "
             "Expedice = první GPS signál. "
-            "Seznam je společný pro telefon i počítač (ukládá se na GitHub). "
             "Smazání vyžaduje heslo k dashboardu. "
         )
         + t(
@@ -5770,17 +5769,6 @@ def render_container_tracking() -> None:
             mins=_LINK4FUTURE_TTL // 60,
         )
     )
-    sync_err = st.session_state.get(_GPS_SYNC_ERR_KEY)
-    if not _gps_github_token():
-        st.warning(
-            t(
-                "Aby se „Dorazilo“ propsalo i na telefon, přidejte do Streamlit Cloud Secrets "
-                "token **GITHUB_TOKEN** (právo zapisovat do souboru gps_trackers.json v tomto repu). "
-                "Bez něj se změny ukládají jen v tomto prohlížeči."
-            )
-        )
-    elif sync_err == "push_failed":
-        st.warning(t("Seznam se teď nepodařilo uložit na GitHub. Zkuste Obnovit GPS, nebo zkontrolujte token."))
 
     with st.form("add_gps_tracker", clear_on_submit=True):
         c_name, c_desc, c_url = st.columns([1.1, 1.4, 1.8])
