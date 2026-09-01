@@ -1262,6 +1262,11 @@ def _render_lme_metal_card(
 
     chips = _metal_trend_chips(metal_key) + _rsi_chip(metal_key)
     extra = stock_extra or "Westmetall LME Cash"
+    info = (wm_data or {}).get(metal_key) if isinstance(wm_data, dict) else None
+    if isinstance(info, dict) and info.get("stale") and info.get("asof_cs"):
+        lme_src = f"Londýn · Cash {info['asof_cs']} (poslední settlement)"
+    else:
+        lme_src = "Londýn · Westmetall Cash"
     st.markdown(
         f"""
     <div class="metric-card {card_class}">
@@ -1269,7 +1274,7 @@ def _render_lme_metal_card(
         <div class="metal-price-grid">
             <div class="metal-price-col metal-price-col-lme">
                 <div class="metal-price-region">LME</div>
-                <div class="metal-price-src">Londýn · Westmetall Cash</div>
+                <div class="metal-price-src">{lme_src}</div>
                 <div class="card-value">{format_num(price_disp, 0)}</div>
                 <div class="card-unit card-unit-emphasis">{unit}</div>
             </div>
@@ -1432,6 +1437,41 @@ def fetch_westmetall_history(url: str) -> pd.DataFrame | None:
         return None
 
 
+def _westmetall_last_settlement(metal_key: str) -> dict | None:
+    """Poslední platný LME Cash z Westmetall tabulky (když denní stránka má jen pomlčky)."""
+    url = WM_HISTORY_URLS.get(metal_key)
+    spec = _WESTMETALL_LME_FIELDS.get(metal_key)
+    if not url or not spec:
+        return None
+    df = fetch_westmetall_history(url)
+    if df is None or df.empty:
+        return None
+    last = df.iloc[-1]
+    try:
+        price = float(last["Close"])
+        dt = pd.to_datetime(last["Date"])
+    except (TypeError, ValueError, KeyError):
+        return None
+    field, _, (lo, hi) = spec
+    if not (lo <= price <= hi):
+        return None
+    row: dict = {
+        "price": round(price, 2),
+        "unit": "USD/t",
+        "field": field,
+        "asof": dt.strftime("%Y-%m-%d"),
+        "asof_cs": dt.strftime("%d.%m.%Y"),
+        "stale": True,
+    }
+    stock = last.get("Stock")
+    try:
+        if stock is not None and pd.notna(stock):
+            row["stock_tons"] = int(round(float(stock)))
+    except (TypeError, ValueError):
+        pass
+    return row
+
+
 def filter_history_by_period(df: pd.DataFrame | None, date_col: str = "Date") -> pd.DataFrame | None:
     """Ořízne historii podle globálního přepínače období (1W–1Y) — bez nového stahování."""
     if df is None or df.empty:
@@ -1454,13 +1494,14 @@ def fetch_westmetall() -> dict | None:
     """
     Scrapuje LME Cash (Settlement Kasse) z westmetall.com/en/markdaten.php.
     Parsuje podle field=LME_*_cash v odkazech — vyhne se LME Stocks (tuny ve skladu).
+    Když denní tabulka nemá čísla (svátek LME), doplní poslední Cash z historie.
     """
+    result: dict = {}
     url = "https://www.westmetall.com/en/markdaten.php"
     try:
         resp = requests.get(url, headers=_WM_HTTP_HEADERS, timeout=18)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "lxml")
-        result: dict = {}
         in_official_prices = False
         in_lme_stocks = False
 
@@ -1520,14 +1561,33 @@ def fetch_westmetall() -> dict | None:
                             }
                             break
 
-        if result:
-            result["_source"] = "westmetall.com"
-            result["_ts"] = now_prague().strftime("%Y-%m-%d %H:%M")
-            return result
+    except Exception:
+        result = {}
+
+    stale_dates: list[str] = []
+    for metal in _WESTMETALL_LME_FIELDS:
+        info = result.get(metal)
+        if isinstance(info, dict) and info.get("price") is not None:
+            continue
+        hist = _westmetall_last_settlement(metal)
+        if not hist:
+            continue
+        result[metal] = hist
+        if hist.get("asof_cs"):
+            stale_dates.append(str(hist["asof_cs"]))
+        stock_key = f"{metal}_stock"
+        if stock_key not in result and hist.get("stock_tons"):
+            result[stock_key] = {"tons": hist["stock_tons"], "unit": "t"}
+
+    if "copper" not in result and "aluminum" not in result:
         return None
 
-    except Exception:
-        return None
+    result["_source"] = "westmetall.com"
+    result["_ts"] = now_prague().strftime("%Y-%m-%d %H:%M")
+    if stale_dates:
+        result["_stale"] = True
+        result["_settlement_cs"] = stale_dates[0]
+    return result
 
 
 @st.cache_data(ttl=CACHE_TTL)
@@ -2919,17 +2979,24 @@ def _collect_health_alerts(
                 "Bez EURUSD=X nejde přepočítat kovy do EUR.",
             ))
 
-    if not wm_data or "copper" not in (wm_data or {}) or "aluminum" not in (wm_data or {}):
-        missing = []
-        if not wm_data or "copper" not in wm_data:
-            missing.append("měď")
-        if not wm_data or "aluminum" not in wm_data:
-            missing.append("hliník")
+    live_cu = wm_data and isinstance(wm_data.get("copper"), dict) and not wm_data["copper"].get("stale")
+    live_al = wm_data and isinstance(wm_data.get("aluminum"), dict) and not wm_data["aluminum"].get("stale")
+    has_cu = bool(wm_data and "copper" in wm_data)
+    has_al = bool(wm_data and "aluminum" in wm_data)
+    if not has_cu and not has_al:
         alerts.append((
             "error",
             "Westmetall LME výpadek",
-            f"Živý scrape westmetall.com nevrátil: {', '.join(missing)}. "
+            "Živý scrape westmetall.com nevrátil měď ani hliník a nejde vzít ani poslední settlement. "
             "Ceny LME v kartách budou N/A — to není záloha z robota.",
+        ))
+    elif wm_data.get("_stale") or not live_cu or not live_al:
+        asof = str((wm_data or {}).get("_settlement_cs") or "").strip() or "poslední známý den"
+        alerts.append((
+            "warning",
+            "LME dnes bez settlementu",
+            f"Westmetall i LME teď nemají dnešní Cash (svátek / ještě nevyšlo). "
+            f"Karty ukazují poslední oficiální settlement {asof} — pořád Westmetall, ne robot.",
         ))
 
     if not cnb:
@@ -5210,16 +5277,36 @@ def _gps_github_headers(*, with_auth: bool) -> dict[str, str]:
     return headers
 
 
+def _gps_github_contents_url() -> str:
+    repo = _gps_github_repo()
+    return f"https://api.github.com/repos/{repo}/contents/{_GPS_GH_FILE}"
+
+
+def _gps_github_read_sha() -> tuple[str, int]:
+    """Vrátí (sha, HTTP kód). 0 = síťová chyba."""
+    try:
+        r = requests.get(
+            f"{_gps_github_contents_url()}?ref={_GPS_GH_BRANCH}",
+            headers=_gps_github_headers(with_auth=True),
+            timeout=25,
+        )
+    except Exception:
+        return "", 0
+    if r.status_code != 200:
+        return "", r.status_code
+    sha = str((r.json() or {}).get("sha") or "")
+    if sha:
+        st.session_state[_GPS_GH_SHA_KEY] = sha
+    return sha, 200
+
+
 def _fetch_gps_trackers_github() -> list[dict] | None:
     """Aktuální seznam z GitHubu (sdílený napříč telefony i PC). None = nepodařilo se."""
     repo = _gps_github_repo()
     token = _gps_github_token()
     try:
         if token:
-            url = (
-                f"https://api.github.com/repos/{repo}/contents/{_GPS_GH_FILE}"
-                f"?ref={_GPS_GH_BRANCH}"
-            )
+            url = f"{_gps_github_contents_url()}?ref={_GPS_GH_BRANCH}"
             r = requests.get(url, headers=_gps_github_headers(with_auth=True), timeout=25)
             r.raise_for_status()
             payload = r.json()
@@ -5254,21 +5341,11 @@ def _push_gps_trackers_github(text: str) -> str | None:
     token = _gps_github_token()
     if not token:
         return "missing_token"
-    repo = _gps_github_repo()
-    url = f"https://api.github.com/repos/{repo}/contents/{_GPS_GH_FILE}"
-    headers = _gps_github_headers(with_auth=True)
-    sha = str(st.session_state.get(_GPS_GH_SHA_KEY) or "")
-    if not sha:
-        try:
-            got = requests.get(
-                f"{url}?ref={_GPS_GH_BRANCH}",
-                headers=headers,
-                timeout=25,
-            )
-            if got.status_code == 200:
-                sha = str((got.json() or {}).get("sha") or "")
-        except Exception:
-            sha = ""
+    sha, get_status = _gps_github_read_sha()
+    if get_status in (401, 403):
+        return "forbidden"
+    if get_status == 404:
+        return "not_found"
     payload = text if text.endswith("\n") else text + "\n"
     body = {
         "message": "Aktualizace GPS kontejnerů",
@@ -5278,12 +5355,26 @@ def _push_gps_trackers_github(text: str) -> str | None:
     if sha:
         body["sha"] = sha
     try:
-        r = requests.put(url, headers=headers, json=body, timeout=25)
-        if r.status_code == 409:
-            got = requests.get(f"{url}?ref={_GPS_GH_BRANCH}", headers=headers, timeout=25)
-            if got.status_code == 200:
-                body["sha"] = str((got.json() or {}).get("sha") or "")
-                r = requests.put(url, headers=headers, json=body, timeout=25)
+        r = requests.put(
+            _gps_github_contents_url(),
+            headers=_gps_github_headers(with_auth=True),
+            json=body,
+            timeout=25,
+        )
+        if r.status_code in (409, 422):
+            sha, _ = _gps_github_read_sha()
+            if sha:
+                body["sha"] = sha
+            r = requests.put(
+                _gps_github_contents_url(),
+                headers=_gps_github_headers(with_auth=True),
+                json=body,
+                timeout=25,
+            )
+        if r.status_code in (401, 403):
+            return "forbidden"
+        if r.status_code == 404:
+            return "not_found"
         r.raise_for_status()
         new_sha = str((r.json() or {}).get("content", {}).get("sha") or "")
         if new_sha:
@@ -5291,6 +5382,24 @@ def _push_gps_trackers_github(text: str) -> str | None:
     except Exception:
         return "push_failed"
     return None
+
+
+def _gps_sync_error_text(code: str | None) -> str | None:
+    if not code:
+        return None
+    if code == "missing_token":
+        return t(
+            "Na GitHub se to neuložilo: v Streamlit Cloud chybí secret GITHUB_TOKEN "
+            "(Settings → Secrets u appky, ne v nastavení GitHubu). Po uložení dejte Reboot."
+        )
+    if code == "forbidden":
+        return t(
+            "GitHub token nemá právo zápisu. U tokenu pbcable-gps nastavte repository "
+            "nakupni-dashboard a oprávnění Contents: Read and write, token vložte do Streamlit Secrets, Reboot."
+        )
+    if code == "not_found":
+        return t("GitHub nenašel repo Glock17G5/nakupni-dashboard nebo soubor gps_trackers.json.")
+    return t("Zápis na GitHub selhal. Zkontrolujte GITHUB_TOKEN ve Streamlit Secrets a dejte Reboot.")
 
 
 def _hydrate_gps_trackers() -> None:
@@ -5322,13 +5431,14 @@ def _gps_trackers() -> list[dict]:
     return list(rows) if isinstance(rows, list) else []
 
 
-def _save_gps_trackers(items: list[dict], *, pause: bool = True) -> None:
-    """Uloží seznam: GitHub (sdílené) + relace + prohlížeč."""
+def _save_gps_trackers(items: list[dict], *, pause: bool = True) -> str | None:
+    """Uloží seznam: GitHub (sdílené) + relace + prohlížeč. Vrací kód chyby GitHubu."""
     items = _normalize_gps_list(items)
     st.session_state[_GPS_SESSION_KEY] = items
     st.session_state[_GPS_HYDRATED_KEY] = True
     text = json.dumps(items, ensure_ascii=False, indent=2)
-    st.session_state[_GPS_SYNC_ERR_KEY] = _push_gps_trackers_github(text)
+    err = _push_gps_trackers_github(text)
+    st.session_state[_GPS_SYNC_ERR_KEY] = err
     try:
         _GPS_TRACKERS_PATH.write_text(text + "\n", encoding="utf-8")
     except Exception:
@@ -5341,9 +5451,7 @@ def _save_gps_trackers(items: list[dict], *, pause: bool = True) -> None:
                 time.sleep(0.4)
         except Exception:
             pass
-
-
-def _add_gps_tracker(container: str, description: str, url_or_imei: str) -> str | None:
+    return err
     """Přidá zásilku. Vrací chybovou hlášku, nebo None při úspěchu."""
     parsed = _parse_gps_input(url_or_imei)
     if not parsed:
@@ -5427,7 +5535,9 @@ def _mark_gps_arrived(key: str, arrived) -> str | None:
         break
     if not found:
         return t("Kontejner v seznamu už není.")
-    _save_gps_trackers(rows)
+    err = _save_gps_trackers(rows)
+    if err:
+        return _gps_sync_error_text(err)
     return None
 
 
