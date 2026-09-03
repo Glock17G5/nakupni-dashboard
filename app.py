@@ -10,6 +10,7 @@
 
 # ── Standardní knihovny ────────────────────────────────────────────────────────
 import base64
+import html
 import json
 import math
 import re
@@ -695,6 +696,11 @@ footer { visibility: hidden; }
         grid-template-columns: 1fr;
         gap: 0;
     }
+    .metal-price-src {
+        white-space: normal;
+        line-height: 1.35;
+        font-size: 0.62rem;
+    }
     .metal-price-col-ccmn {
         border-left: none;
         border-top: 1px solid #2C3442;
@@ -720,6 +726,44 @@ footer { visibility: hidden; }
     [data-testid="stTabs"] [data-baseweb="tab-list"]::-webkit-scrollbar { display: none; }
     .chart-wrap { padding: 10px 4px; border-radius: 12px; }
     .currency-bar { padding: 10px 12px; }
+    .gps-shipment { padding: 12px 14px; }
+    .gps-shipment-name { font-size: 1.08rem; }
+    .gps-track-grid { grid-template-columns: 1fr; }
+    .stButton > button { min-height: 44px; }
+}
+
+.gps-shipment {
+    background: linear-gradient(160deg, rgba(35, 42, 54, 0.95), rgba(27, 32, 41, 0.95));
+    border: 1px solid #2C3442;
+    border-left: 3px solid #4D9FFF;
+    border-radius: 14px;
+    padding: 10px 14px 12px;
+    margin: 2px 0 8px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25), 0 10px 22px -14px rgba(0, 0, 0, 0.4);
+}
+.gps-shipment.jagich { border-left-color: #34C98E; }
+.gps-shipment-name {
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 1.02rem;
+    color: #F2F5F9;
+    letter-spacing: 0.2px;
+}
+.gps-shipment-meta {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    color: #9AA6B8;
+    margin-top: 4px;
+    line-height: 1.45;
+}
+.gps-track-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin: 8px 0 4px;
+}
+@media (min-width: 1100px) {
+    .gps-track-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
 .info-box {
@@ -5012,6 +5056,8 @@ _JAGICH_API_URLS = (
 _GPS_TRACKERS_PATH = Path(__file__).resolve().parent / "gps_trackers.json"
 _GPS_SESSION_KEY = "gps_trackers"
 _GPS_HYDRATED_KEY = "gps_trackers_hydrated"
+_GPS_HYDRATE_AT_KEY = "gps_hydrated_at"
+_GPS_HYDRATE_TTL = 30
 _GPS_LS_KEY = "pbcable_gps_trackers_v3"
 _GPS_LS_KEY_LEGACY = "pbcable_gps_trackers_v2"
 _GPS_GH_REPO_DEFAULT = "Glock17G5/nakupni-dashboard"
@@ -5172,6 +5218,7 @@ def _normalize_gps_tracker(item) -> dict | None:
     added = str(item.get("added") or "").strip()
     first_signal = str(item.get("first_signal") or "").strip()
     arrived = _normalize_gps_arrived(item.get("arrived") or item.get("arrived_at") or "")
+    updated = str(item.get("updated") or "").strip()
     return {
         "provider": provider,
         "imei": device,
@@ -5180,7 +5227,89 @@ def _normalize_gps_tracker(item) -> dict | None:
         "added": added,
         "first_signal": first_signal,
         "arrived": arrived,
+        "updated": updated,
     }
+
+
+def _touch_gps_row(row: dict) -> None:
+    row["updated"] = now_prague().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _gps_provider_label(provider: str) -> str:
+    return "Jagich" if provider == "jagich" else "Link4Future"
+
+
+def _gps_row_ts(row: dict) -> datetime | None:
+    return _parse_gps_date((row or {}).get("updated"))
+
+
+def _gps_merge_row(base: dict, extra: dict) -> dict:
+    """Sloučí dva záznamy stejného trackeru. Novější `updated` vyhraje; příjezd ze starší kopie se nesmaže omylem."""
+    out = dict(base)
+    extra = extra or {}
+    fs = (extra.get("first_signal") or "").strip()
+    old = (out.get("first_signal") or "").strip()
+    if fs and (not old or fs < old):
+        out["first_signal"] = fs
+    if extra.get("added") and not out.get("added"):
+        out["added"] = extra["added"]
+    bu = _gps_row_ts(out)
+    eu = _gps_row_ts(extra)
+    extra_newer = bool(eu and (bu is None or eu > bu))
+    if extra_newer:
+        if extra.get("container"):
+            out["container"] = extra["container"]
+        if extra.get("description") is not None:
+            out["description"] = extra.get("description") or ""
+        out["arrived"] = _normalize_gps_arrived(extra.get("arrived"))
+        if extra.get("added"):
+            out["added"] = extra["added"]
+        out["updated"] = extra.get("updated") or out.get("updated") or ""
+        if extra.get("provider"):
+            out["provider"] = extra["provider"]
+        if extra.get("imei"):
+            out["imei"] = extra["imei"]
+    elif bu is None and eu is None:
+        if extra.get("description") and not out.get("description"):
+            out["description"] = extra["description"]
+        extra_name = str(extra.get("container") or "").strip()
+        if extra_name and extra_name != str(extra.get("imei") or ""):
+            if not out.get("container") or out["container"] == out.get("imei"):
+                out["container"] = extra_name
+        if _gps_is_arrived(extra) and not _gps_is_arrived(out):
+            out["arrived"] = extra["arrived"]
+    return out
+
+
+def _merge_gps_lists(*lists) -> list[dict]:
+    merged: dict[str, dict] = {}
+    for lst in lists:
+        for item in lst or []:
+            row = _normalize_gps_tracker(item) if isinstance(item, dict) else None
+            if row is None:
+                continue
+            key = _gps_row_key(row)
+            if not key or key.endswith(":"):
+                continue
+            if key not in merged:
+                merged[key] = dict(row)
+            else:
+                merged[key] = _gps_merge_row(merged[key], row)
+    return list(merged.values())
+
+
+def _gps_list_signature(items: list[dict]) -> str:
+    rows = []
+    for row in _normalize_gps_list(items):
+        rows.append((
+            _gps_row_key(row),
+            str(row.get("container") or ""),
+            str(row.get("description") or ""),
+            str(row.get("first_signal") or ""),
+            str(row.get("arrived") or ""),
+        ))
+    rows.sort()
+    return json.dumps(rows, ensure_ascii=False)
 
 
 def _normalize_gps_list(items) -> list[dict]:
@@ -5233,6 +5362,23 @@ def _parse_gps_ls_value(raw) -> list[dict] | None:
         if isinstance(parsed, list):
             return _normalize_gps_list(parsed)
     return None
+
+
+def _read_gps_trackers_ls() -> list[dict] | None:
+    ls = _gps_local_storage()
+    if ls is None:
+        return None
+    items = None
+    try:
+        items = _parse_gps_ls_value(ls.getItem(_GPS_LS_KEY))
+    except Exception:
+        items = None
+    if items is None:
+        try:
+            items = _parse_gps_ls_value(ls.getItem(_GPS_LS_KEY_LEGACY))
+        except Exception:
+            items = None
+    return items
 
 
 def _gps_secret_str(*names: str) -> str | None:
@@ -5402,27 +5548,43 @@ def _gps_sync_error_text(code: str | None) -> str | None:
     return t("Zápis na GitHub selhal. Zkontrolujte GITHUB_TOKEN ve Streamlit Secrets a dejte Reboot.")
 
 
-def _hydrate_gps_trackers() -> None:
-    """Načte sdílený seznam z GitHubu, jinak soubor / prohlížeč. Jednou za relaci."""
-    if st.session_state.get(_GPS_HYDRATED_KEY):
+def _hydrate_gps_trackers(*, force: bool = False) -> None:
+    """Spojí GitHub + soubor + prohlížeč. Dorazilo z PC se nenechá přepsat starší kopií."""
+    now = time.time()
+    last = float(st.session_state.get(_GPS_HYDRATE_AT_KEY) or 0)
+    if (
+        not force
+        and st.session_state.get(_GPS_HYDRATED_KEY)
+        and (now - last) < _GPS_HYDRATE_TTL
+    ):
         return
-    items = _fetch_gps_trackers_github()
-    if items is None:
-        items = _read_gps_trackers_file()
-        if not items:
-            ls = _gps_local_storage()
-            if ls is not None:
-                try:
-                    items = _parse_gps_ls_value(ls.getItem(_GPS_LS_KEY))
-                except Exception:
-                    items = None
-                if items is None:
-                    try:
-                        items = _parse_gps_ls_value(ls.getItem(_GPS_LS_KEY_LEGACY))
-                    except Exception:
-                        items = None
-    st.session_state[_GPS_SESSION_KEY] = items or []
+    gh = _fetch_gps_trackers_github()
+    file_rows = _read_gps_trackers_file()
+    ls_rows = _read_gps_trackers_ls()
+    session_rows = None
+    if st.session_state.get(_GPS_HYDRATED_KEY):
+        raw_session = st.session_state.get(_GPS_SESSION_KEY)
+        if isinstance(raw_session, list):
+            session_rows = raw_session
+    sources: list[list[dict]] = []
+    if gh is not None:
+        sources.append(gh)
+    if file_rows:
+        sources.append(file_rows)
+    if ls_rows:
+        sources.append(ls_rows)
+    if session_rows:
+        sources.append(session_rows)
+    items = _merge_gps_lists(*sources) if sources else []
+    st.session_state[_GPS_SESSION_KEY] = items
     st.session_state[_GPS_HYDRATED_KEY] = True
+    st.session_state[_GPS_HYDRATE_AT_KEY] = now
+    if (
+        gh is not None
+        and _gps_github_token()
+        and _gps_list_signature(items) != _gps_list_signature(gh)
+    ):
+        _save_gps_trackers(items, pause=False)
 
 
 def _gps_trackers() -> list[dict]:
@@ -5452,6 +5614,9 @@ def _save_gps_trackers(items: list[dict], *, pause: bool = True) -> str | None:
         except Exception:
             pass
     return err
+
+
+def _add_gps_tracker(container: str, description: str, url_or_imei: str) -> str | None:
     """Přidá zásilku. Vrací chybovou hlášku, nebo None při úspěchu."""
     parsed = _parse_gps_input(url_or_imei)
     if not parsed:
@@ -5468,8 +5633,9 @@ def _save_gps_trackers(items: list[dict], *, pause: bool = True) -> str | None:
         if _gps_row_key(row) == new_key:
             row["container"] = name
             row["description"] = (description or "").strip()
-            _save_gps_trackers(rows)
-            return None
+            _touch_gps_row(row)
+            err = _save_gps_trackers(rows)
+            return _gps_sync_error_text(err)
     rows.append({
         "provider": provider,
         "imei": device,
@@ -5478,13 +5644,15 @@ def _save_gps_trackers(items: list[dict], *, pause: bool = True) -> str | None:
         "added": now,
         "first_signal": "",
         "arrived": "",
+        "updated": now_prague().strftime("%Y-%m-%d %H:%M:%S"),
     })
-    _save_gps_trackers(rows)
-    return None
+    err = _save_gps_trackers(rows)
+    return _gps_sync_error_text(err)
 
 
-def _delete_gps_tracker(key: str) -> None:
-    _save_gps_trackers([row for row in _gps_trackers() if _gps_row_key(row) != key])
+def _delete_gps_tracker(key: str) -> str | None:
+    err = _save_gps_trackers([row for row in _gps_trackers() if _gps_row_key(row) != key])
+    return _gps_sync_error_text(err)
 
 
 def _gps_close_row_dialogs() -> None:
@@ -5516,7 +5684,10 @@ def _render_gps_delete_form(row_key: str, container: str) -> None:
             st.error(t("Špatné heslo, kontejner nebyl smazán."))
             return
         st.session_state["gps_delete_key"] = None
-        _delete_gps_tracker(row_key)
+        err = _delete_gps_tracker(row_key)
+        if err:
+            st.error(err)
+            return
         st.rerun()
 
 
@@ -5531,6 +5702,7 @@ def _mark_gps_arrived(key: str, arrived) -> str | None:
         if _gps_row_key(row) != key:
             continue
         row["arrived"] = arrived_s
+        _touch_gps_row(row)
         found = True
         break
     if not found:
@@ -5541,14 +5713,20 @@ def _mark_gps_arrived(key: str, arrived) -> str | None:
     return None
 
 
-def _reopen_gps_tracker(key: str) -> None:
+def _reopen_gps_tracker(key: str) -> str | None:
     """Vrátí doručenou zásilku zpět na mapu."""
     rows = _gps_trackers()
+    found = False
     for row in rows:
         if _gps_row_key(row) == key:
             row["arrived"] = ""
+            _touch_gps_row(row)
+            found = True
             break
-    _save_gps_trackers(rows)
+    if not found:
+        return t("Kontejner v seznamu už není.")
+    err = _save_gps_trackers(rows)
+    return _gps_sync_error_text(err)
 
 
 def _format_gps_dt(raw: str | None, *, with_time: bool = False) -> str:
@@ -5604,15 +5782,16 @@ def _update_gps_tracker(
         row["imei"] = device
         row["container"] = name
         row["description"] = (description or "").strip()
+        _touch_gps_row(row)
         found = True
         break
     if not found:
         return t("Kontejner v seznamu už není.")
-    _save_gps_trackers(rows)
+    err = _save_gps_trackers(rows)
     if new_key != old_key:
         fetch_link4future_track.clear()
         fetch_jagich_track.clear()
-    return None
+    return _gps_sync_error_text(err)
 
 
 def _remember_first_signals(first_by_key: dict[str, str]) -> None:
@@ -5628,6 +5807,7 @@ def _remember_first_signals(first_by_key: dict[str, str]) -> None:
         old = (row.get("first_signal") or "").strip()
         if not old or first_t < old:
             row["first_signal"] = first_t
+            _touch_gps_row(row)
             changed = True
     if changed:
         _save_gps_trackers(rows, pause=False)
@@ -5873,6 +6053,7 @@ def render_container_tracking() -> None:
             "s dobou cesty (expedice → příjezd). "
             "Expedice = první GPS signál. "
             "Smazání vyžaduje heslo k dashboardu. "
+            "Stav se sdílí mezi PC a telefonem — na druhém zařízení stiskněte Obnovit GPS. "
         )
         + t(
             "Živá poloha se obnovuje max. jednou za {mins} min.",
@@ -5901,8 +6082,19 @@ def render_container_tracking() -> None:
         if err:
             st.error(err)
         else:
-            st.success(t("Kontejner je v seznamu."))
+            st.success(t("Kontejner je v seznamu. Na jiném zařízení stiskněte Obnovit GPS."))
             st.rerun()
+
+    col_btn, col_hint = st.columns([1.1, 3.2])
+    with col_btn:
+        if st.button(t("Obnovit GPS"), use_container_width=True):
+            fetch_link4future_track.clear()
+            fetch_jagich_track.clear()
+            st.session_state[_GPS_HYDRATED_KEY] = False
+            st.session_state[_GPS_HYDRATE_AT_KEY] = 0
+            st.rerun()
+    with col_hint:
+        st.caption(t("Načte seznam z cloudu (Dorazilo z PC / telefonu) a znovu stáhne polohu."))
 
     all_rows = _gps_trackers()
     active_rows = [row for row in all_rows if not _gps_is_arrived(row)]
@@ -5943,13 +6135,6 @@ def render_container_tracking() -> None:
     if failed:
         st.warning(t("Nepodařilo se načíst: ") + ", ".join(failed))
 
-    col_btn, _ = st.columns([1, 4])
-    with col_btn:
-        if st.button(t("Obnovit GPS"), use_container_width=True):
-            fetch_link4future_track.clear()
-            fetch_jagich_track.clear()
-            st.rerun()
-
     if active_rows:
         st.markdown(f"**{t('Na cestě')}**")
         editing = st.session_state.get("gps_edit_key")
@@ -5959,14 +6144,21 @@ def render_container_tracking() -> None:
             row_key = _gps_row_key(row)
             provider = row.get("provider") or "link4future"
             first_t = row.get("first_signal") or first_by_key.get(row_key) or ""
-            source = "Jagich" if provider == "jagich" else "Link4Future"
-            col_a, col_b, col_c, col_d, col_e, col_f = st.columns([1.3, 1.2, 1.15, 0.85, 0.7, 0.7])
-            with col_a:
-                st.markdown(f"**{row['container']}**")
-            with col_b:
-                st.caption((row["description"] or "—") + f" · {source}")
-            with col_c:
-                st.caption(t("Expedice ") + _format_gps_dt(first_t))
+            source = _gps_provider_label(provider)
+            kind = "jagich" if provider == "jagich" else "link4"
+            st.markdown(
+                f"""
+                <div class="gps-shipment {kind}">
+                    <div class="gps-shipment-name">{html.escape(str(row['container']))}</div>
+                    <div class="gps-shipment-meta">
+                        {html.escape(str(row.get('description') or '—'))} · {html.escape(source)}<br>
+                        {html.escape(t('Expedice'))} {html.escape(_format_gps_dt(first_t))}
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            col_d, col_e, col_f = st.columns(3)
             with col_d:
                 if st.button(t("Dorazilo"), key=f"arrive_gps_{row_key}", use_container_width=True):
                     st.session_state["gps_arrive_key"] = row_key
@@ -6010,7 +6202,7 @@ def render_container_tracking() -> None:
                         st.error(err)
                     else:
                         st.session_state["gps_arrive_key"] = None
-                        st.success(t("Zásilka je v archivu doručených."))
+                        st.success(t("Zásilka je v archivu. Na telefonu / PC stiskněte Obnovit GPS."))
                         st.rerun()
 
             if editing == row_key:
@@ -6055,7 +6247,7 @@ def render_container_tracking() -> None:
     if tracks:
         all_lats = [p["lat"] for tr in tracks for p in tr["points"]]
         all_lons = [p["lon"] for tr in tracks for p in tr["points"]]
-        fig = _new_osm_map(all_lats, all_lons, height=540)
+        fig = _new_osm_map(all_lats, all_lons, height=420)
         for i, tr in enumerate(tracks):
             color = _LIVE_TRAIL_COLORS[i % len(_LIVE_TRAIL_COLORS)]
             pts = _downsample_track(tr["points"])
@@ -6106,8 +6298,8 @@ def render_container_tracking() -> None:
             ))
         _show_plotly_map(fig)
 
-        cols = st.columns(min(4, max(1, len(tracks))))
-        for i, tr in enumerate(tracks):
+        cards_html: list[str] = ['<div class="gps-track-grid">']
+        for tr in tracks:
             last = tr["last"]
             bat = last.get("bat")
             bat_s = f"{bat:.0f} %" if isinstance(bat, (int, float)) else "—"
@@ -6122,32 +6314,33 @@ def render_container_tracking() -> None:
             if provider == "jagich":
                 meta = (
                     f"{t('Jagich')} · {tr['n']} {t('bodů')}"
-                    + (f"<br>{route}" if route else "")
+                    + (f"<br>{html.escape(str(route))}" if route else "")
                 )
             else:
                 meta = (
-                    f"{_fix_label(last.get('fix', ''))} · {t('baterie')} {bat_s}<br>"
+                    f"{html.escape(_fix_label(last.get('fix', '')))} · {t('baterie')} {html.escape(bat_s)}<br>"
                     f"{tr['n']} {t('bodů')} · LBS {tr['lbs_n']} / sat {tr['sat_n']}"
                 )
-            with cols[i % len(cols)]:
-                st.markdown(
-                    f"""
-                    <div class="spread-card">
-                        <div class="spread-label">{tr['container']}</div>
-                        <div class="spread-value" style="color:#3b82f6;font-size:1.0rem;">
-                            {last_s}
-                        </div>
-                        <div style="font-family:'IBM Plex Mono',monospace;font-size:0.68rem;
-                                    color:#B8C2D0;margin-top:6px;line-height:1.35;">
-                            {extra + '<br>' if extra else ''}
-                            {t("Expedice (1. signál): ")}{exped}<br>
-                            {meta}<br>
-                            {loc}
-                        </div>
+            extra_html = f"{html.escape(str(extra))}<br>" if extra else ""
+            cards_html.append(
+                f"""
+                <div class="spread-card">
+                    <div class="spread-label">{html.escape(str(tr['container']))}</div>
+                    <div class="spread-value" style="color:#3b82f6;font-size:1.0rem;">
+                        {html.escape(last_s)}
                     </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+                    <div style="font-family:'IBM Plex Mono',monospace;font-size:0.68rem;
+                                color:#B8C2D0;margin-top:6px;line-height:1.35;">
+                        {extra_html}
+                        {html.escape(t("Expedice (1. signál): "))}{html.escape(exped)}<br>
+                        {meta}<br>
+                        {html.escape(loc)}
+                    </div>
+                </div>
+                """
+            )
+        cards_html.append("</div>")
+        st.markdown("".join(cards_html), unsafe_allow_html=True)
     elif active_rows:
         st.markdown(
             f'<div class="error-box">{t("Živá poloha teď není dostupná (GPS API neodpovědělo).")}</div>',
@@ -6189,6 +6382,11 @@ def _render_gps_archive(arrived_rows: list[dict]) -> None:
         })
 
     days_vals = [r["_days"] for r in table_rows if r["_days"] is not None]
+    by_src: dict[str, list[int]] = {}
+    for rec in table_rows:
+        if rec["_days"] is None:
+            continue
+        by_src.setdefault(rec["GPS"], []).append(int(rec["_days"]))
     if days_vals:
         avg_d = sum(days_vals) / len(days_vals)
         kpi = st.columns(3)
@@ -6211,20 +6409,46 @@ def _render_gps_archive(arrived_rows: list[dict]) -> None:
                 unsafe_allow_html=True,
             )
 
-        chart_df = pd.DataFrame(
-            {
-                "Kontejner": [r["Kontejner"] for r in table_rows if r["_days"] is not None],
-                "Dny": [r["_days"] for r in table_rows if r["_days"] is not None],
-            }
-        )
+        src_order = [name for name in ("Link4Future", "Jagich") if name in by_src]
+        if src_order:
+            st.caption(t("Průměr podle GPS dodavatele (expedice → příjezd)."))
+            src_cols = st.columns(len(src_order))
+            for i, name in enumerate(src_order):
+                vals = by_src[name]
+                avg_src = sum(vals) / len(vals)
+                color = "#34C98E" if name == "Jagich" else "#3b82f6"
+                with src_cols[i]:
+                    st.markdown(
+                        f'<div class="spread-card"><div class="spread-label">{html.escape(name)}</div>'
+                        f'<div class="spread-value" style="color:{color};">{_days_cs(round(avg_src))}</div>'
+                        f'<div class="spread-details">{len(vals)} kontejnerů · '
+                        f'{_days_cs(min(vals))} – {_days_cs(max(vals))}</div></div>',
+                        unsafe_allow_html=True,
+                    )
+
+        chart_rows = [r for r in table_rows if r["_days"] is not None]
+        colors = ["#34C98E" if r["GPS"] == "Jagich" else "#3b82f6" for r in chart_rows]
         fig = go.Figure(
             go.Bar(
-                x=chart_df["Kontejner"],
-                y=chart_df["Dny"],
-                marker_color="#3b82f6",
-                hovertemplate="<b>%{x}</b><br>%{y} dní<extra></extra>",
+                x=[r["Kontejner"] for r in chart_rows],
+                y=[r["_days"] for r in chart_rows],
+                marker_color=colors,
+                customdata=[r["GPS"] for r in chart_rows],
+                hovertemplate="<b>%{x}</b><br>%{customdata}<br>%{y} dní<extra></extra>",
             )
         )
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode="markers",
+            marker=dict(size=8, color="#3b82f6"),
+            name="Link4Future",
+            hoverinfo="skip",
+        ))
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode="markers",
+            marker=dict(size=8, color="#34C98E"),
+            name="Jagich",
+            hoverinfo="skip",
+        ))
         fig.update_layout(
             separators=_PLOT_SEPARATORS,
             paper_bgcolor=_PLOT_PAPER,
@@ -6234,7 +6458,15 @@ def _render_gps_archive(arrived_rows: list[dict]) -> None:
             hoverlabel=_HOVER_LABEL,
             yaxis={**_TICK_AXIS, "title": t("Dny na cestě")},
             xaxis={**_TICK_AXIS, "title": "", "showgrid": False},
-            showlegend=False,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                x=0,
+                bgcolor="rgba(0,0,0,0)",
+                font=dict(size=11, color="#C9D3E0"),
+            ),
+            showlegend=True,
         )
         _show_plotly(fig)
 
@@ -6243,13 +6475,26 @@ def _render_gps_archive(arrived_rows: list[dict]) -> None:
 
     for row, rec in zip(arrived_rows, table_rows):
         row_key = rec["_key"]
-        col_a, col_b, col_c = st.columns([3.2, 1, 1])
-        with col_a:
-            st.caption(f"{rec['Kontejner']} · {rec['Dorazilo']} · {rec['Doba']}")
+        st.markdown(
+            f"""
+            <div class="gps-shipment {'jagich' if rec['GPS'] == 'Jagich' else 'link4'}">
+                <div class="gps-shipment-name">{html.escape(str(rec['Kontejner']))}</div>
+                <div class="gps-shipment-meta">
+                    {html.escape(str(rec['Objednávka']))} · {html.escape(str(rec['GPS']))}<br>
+                    {html.escape(str(rec['Dorazilo']))} · {html.escape(str(rec['Doba']))}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        col_b, col_c = st.columns(2)
         with col_b:
             if st.button(t("Na cestě"), key=f"reopen_gps_{row_key}", use_container_width=True):
-                _reopen_gps_tracker(row_key)
-                st.rerun()
+                err = _reopen_gps_tracker(row_key)
+                if err:
+                    st.error(err)
+                else:
+                    st.rerun()
         with col_c:
             if st.button(t("Smazat"), key=f"del_arr_gps_{row_key}", use_container_width=True):
                 _gps_close_row_dialogs()
