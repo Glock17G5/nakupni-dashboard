@@ -48,14 +48,22 @@ def t(text: str, **kwargs) -> str:
 
 try:
     from helukabel_tables import (
+        decode_cable_designation,
         ktg_min_drums_for_bend,
         ktg_wood_drums,
+        lookup_ktg_drums,
+        open_helu_section,
         render_helukabel_catalog,
+        search_catalog,
     )
 except ImportError:  # chybí soubor na deployi (např. nepushnutý na GitHub)
     render_helukabel_catalog = None  # type: ignore[assignment]
     ktg_min_drums_for_bend = None  # type: ignore[assignment]
     ktg_wood_drums = None  # type: ignore[assignment]
+    decode_cable_designation = None  # type: ignore[assignment]
+    lookup_ktg_drums = None  # type: ignore[assignment]
+    open_helu_section = None  # type: ignore[assignment]
+    search_catalog = None  # type: ignore[assignment]
 
 TZ_PRAGUE = ZoneInfo("Europe/Prague")
 CACHE_TTL = 3600
@@ -730,6 +738,27 @@ footer { visibility: hidden; }
     .gps-shipment-name { font-size: 1.08rem; }
     .gps-track-grid { grid-template-columns: 1fr; }
     .stButton > button { min-height: 44px; }
+    .currency-bar-hint { display: none; }
+    .dash-header-content { flex-direction: column; align-items: flex-start; }
+    [data-testid="stTabs"] {
+        position: sticky;
+        top: 0;
+        z-index: 40;
+        padding: 4px 6px 10px !important;
+        margin-left: -0.4rem;
+        margin-right: -0.4rem;
+    }
+    [data-testid="stMetric"] { width: 100%; }
+    [data-testid="stDataFrame"],
+    [data-testid="stDataEditor"] {
+        overflow-x: auto;
+    }
+    [data-testid="stRadio"] > div { flex-wrap: wrap !important; }
+    input, textarea, select { font-size: 16px !important; }
+    div[data-testid="column"] {
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+    }
 }
 
 .gps-shipment {
@@ -4896,6 +4925,7 @@ def render_landed_cost_pricing() -> None:
         st.session_state.landed_parsed_file_id = uploaded_file.file_id
 
     st.markdown("#### Položky faktury")
+    st.caption(t("Na telefonu posuňte tabulku do strany. HS kód vyberte v sloupci nápovědy."))
     if "landed_invoice_data" not in st.session_state:
         st.session_state.landed_invoice_data = _DEFAULT_INVOICE_DF.copy()
 
@@ -7270,7 +7300,7 @@ def render_domestic_logistics() -> None:
             "Vyhledejte <strong>start</strong> a <strong>cíl</strong> v <strong>ČR nebo na Slovensku</strong> "
             "(Košice, Senec, Bratislava, …) · silniční trasa OSRM včetně přeshraniční · "
             "záloha vzdálenosti: vzdušná × 1,3 · cena v CZK i EUR (ČNB) · "
-            "poptávka pro dopravce ke stažení"
+            "poptávka pro dopravce ke stažení · na telefonu je formulář nad výsledkem"
         )
         + "</div>",
         unsafe_allow_html=True,
@@ -8368,18 +8398,82 @@ def render_drum_capacity_calculator() -> None:
     )
 
 
+def _render_helu_quick_find() -> None:
+    """Hledání kódu kabelu / bubnu hned nahoře v Nástrojích — bez listování katalogu."""
+    if search_catalog is None or decode_cable_designation is None:
+        return
+    q = st.text_input(
+        t("Rychlé hledání — kód kabelu, buben KTG, téma"),
+        placeholder="H07RN-F 3G1,5 · NYY-J · 101 · 800 · ohyb",
+        key="helu_quick_q",
+        help=t("Rozkladač a bubny hned tady. Klepnutím otevřete katalogovou sekci."),
+    )
+    q_stripped = (q or "").strip()
+    if len(q_stripped) < 2:
+        return
+    decoded = decode_cable_designation(q_stripped)
+    if decoded and len(decoded) >= 2:
+        st.success(" · ".join(m for _p, _c, m in decoded[:8]))
+        st.dataframe(
+            pd.DataFrame(decoded, columns=["Část", "Znak", "Význam"]),
+            use_container_width=True,
+            hide_index=True,
+        )
+        if open_helu_section is not None and st.button(
+            t("Otevřít rozkladač v katalogu"),
+            key="helu_quick_codes",
+            use_container_width=True,
+        ):
+            st.session_state["tools_hub_select_id"] = "helu"
+            open_helu_section("codes", cable=q_stripped)
+            st.rerun()
+    drums = lookup_ktg_drums(q_stripped) if lookup_ktg_drums is not None else []
+    if drums:
+        for drum in drums[:6]:
+            st.info(drum["title"])
+        first_code = str(drums[0].get("code") or "")
+        if open_helu_section is not None and st.button(
+            t("Otevřít rozměry bubnů"),
+            key="helu_quick_drum",
+            use_container_width=True,
+        ):
+            st.session_state["tools_hub_select_id"] = "helu"
+            open_helu_section("ktg", drum_code=first_code)
+            st.rerun()
+    hits = [h for h in search_catalog(q_stripped) if h.get("kind") not in ("Kód", "Buben")]
+    if hits:
+        st.caption(t("Další zásahy v katalogu"))
+        cols = st.columns(2)
+        for i, hit in enumerate(hits[:8]):
+            label = f"{hit['kind']}: {hit['title']}"
+            if len(label) > 64:
+                label = label[:61] + "…"
+            with cols[i % 2]:
+                if st.button(label, key=f"helu_quick_hit_{i}", use_container_width=True):
+                    st.session_state["tools_hub_select_id"] = "helu"
+                    if open_helu_section is not None:
+                        open_helu_section(
+                            hit["key"],
+                            scan_file=str(hit.get("file") or ""),
+                        )
+                    st.rerun()
+    elif not decoded and not drums:
+        st.caption(t("Nic nenalezeno. Zkuste NYY, H07, 101, 800 nebo slovo ohyb / proud."))
+
+
 def render_tools_and_tips() -> None:
     """Hub praktických kalkulaček a tipů pro sklad, nákup i provoz."""
     section_header("🧰", t("Nástroje & tipy"))
     st.markdown(
         '<div class="info-box" style="margin-bottom:14px;">'
         + t(
-            "Praktické kalkulačky a tipy pro <strong>sklad</strong>, <strong>nákup</strong> "
-            "i běžný provoz. Postupně sem přidáme další nástroje — vyber si aktuální funkci níže."
+            "Hned nahoře hledejte <strong>kód kabelu</strong> nebo <strong>buben KTG</strong>. "
+            "Pod tím jsou kalkulačky (fill factor, kapacita bubnu) a celý katalog HELUKABEL."
         )
         + "</div>",
         unsafe_allow_html=True,
     )
+    _render_helu_quick_find()
 
     _tool_ids = ("fill", "drum", "helu")
     _tool_labels = {

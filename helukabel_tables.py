@@ -1673,38 +1673,160 @@ _EXTRACT_INDEX: list[dict] = [
 ]
 
 
-def search_catalog(query: str) -> list[dict]:
-    """Vrátí zásahy ve výpiscích i ve skenech (název strany)."""
+def _helu_norm_query(query: str) -> str:
     q = (query or "").strip().lower()
+    q = q.replace("×", "x").replace("–", "-").replace("—", "-")
+    return re.sub(r"\s+", " ", q)
+
+
+def lookup_ktg_drums(query: str) -> list[dict]:
+    """Najde buben podle kódu KTG, čela (Fd) nebo zkratky HE."""
+    q = _helu_norm_query(query)
     if len(q) < 2:
         return []
+    q_compact = q.replace(" ", "")
+    want_named = "ktg" in q or "buben" in q or "drum" in q or q_compact.startswith("he")
     hits: list[dict] = []
+
+    def add(kind: str, code: str, fd: int, kd: int, max_kg, vel: str = "") -> None:
+        title = f"{kind} {code}"
+        if vel:
+            title += f" / {vel}"
+        title += f" · čelo {fd} mm · jádro {kd} mm"
+        if max_kg:
+            title += f" · nosnost {max_kg} kg"
+        hits.append({
+            "kind": "Buben",
+            "title": title,
+            "key": "ktg",
+            "file": "",
+            "code": str(code),
+        })
+
+    for code, vel, fd, kd, _bd, _i1, _i2, max_kg, _mass in _KTG_WOOD:
+        vel_key = vel.lower().split("/")[0]
+        keys = {
+            code.lower(),
+            (code.lstrip("0") or code).lower(),
+            str(fd),
+            vel.lower(),
+            vel_key,
+        }
+        if q_compact in keys and (not q_compact.isdigit() or len(q_compact) >= 3 or want_named):
+            add("Dřevo KTG", code, fd, kd, max_kg, vel)
+        elif want_named and vel_key == q_compact:
+            add("Dřevo KTG", code, fd, kd, max_kg, vel)
+        elif q_compact == str(fd):
+            add("Dřevo KTG", code, fd, kd, max_kg, vel)
+
+    for code, fd, kd, _i1, _i2, max_kg, _mass in _KTG_PLASTIC:
+        keys = {code.lower(), (code.lstrip("0") or code).lower(), str(fd)}
+        if q_compact in keys and (not q_compact.isdigit() or len(q_compact) >= 3 or want_named):
+            add("Plast KTG", code, fd, kd, max_kg)
+
+    for code, fd, kd, _i1, _i2, _bd, mass in _KTG_DISPOSABLE:
+        keys = {code.lower().replace(" ", ""), str(fd)}
+        if q_compact in keys or (q_compact.startswith("he") and q_compact in keys):
+            add("Nevratný", code, fd, kd, None)
+
+    # unique by title
+    seen: set[str] = set()
+    uniq = []
+    for h in hits:
+        if h["title"] not in seen:
+            seen.add(h["title"])
+            uniq.append(h)
+    return uniq[:12]
+
+
+def _query_looks_like_cable(query: str) -> bool:
+    q = (query or "").strip()
+    if len(q) < 3:
+        return False
+    if not re.search(r"[A-Za-zÁ-ž]{2,}", q):
+        return False
+    if not re.search(r"\d", q) and not re.match(r"(?i)^(N|H|NY|NA)", q.strip()):
+        return False
+    rows = decode_cable_designation(q)
+    return len(rows) >= 2
+
+
+def search_catalog(query: str) -> list[dict]:
+    """Zásahy: výpisky, skeny, bubny KTG a kód kabelu. Otevře příslušnou sekci."""
+    q = _helu_norm_query(query)
+    if len(q) < 2:
+        return []
+    q_compact = q.replace(" ", "")
+    hits: list[dict] = []
+
+    if _query_looks_like_cable(query) or _query_looks_like_cable(q_compact):
+        raw = (query or "").strip()
+        hits.append({
+            "kind": "Kód",
+            "title": f"Rozkladač: {raw}",
+            "key": "codes",
+            "file": "",
+            "cable": raw,
+        })
+
+    for drum in lookup_ktg_drums(query):
+        hits.append(drum)
+
     for item in _EXTRACT_INDEX:
         blob = f"{item['title']} {item['kw']}".lower()
-        if q in blob or all(part in blob for part in q.split()):
+        if q in blob or all(part in blob for part in q.split() if len(part) >= 2):
             hits.append({
                 "kind": "Výpisek",
                 "title": item["title"],
                 "key": item["key"],
                 "file": "",
             })
+
+    x_num = None
+    xm = re.fullmatch(r"x\s*(\d{1,3})", q) or re.fullmatch(r"(\d{1,3})", q)
+    if xm and "x" in q:
+        x_num = xm.group(1)
+    elif q.startswith("x") and q_compact[1:].isdigit():
+        x_num = q_compact[1:]
+
     for sc in _scan_catalog_index():
-        if q in sc["keywords"] or q in sc["file"].lower():
+        matched = q in sc["keywords"] or q in sc["file"].lower()
+        if x_num and str(sc["xpage"]) == x_num:
+            matched = True
+        if matched:
             hits.append({
                 "kind": "Sken",
                 "title": f"X {sc['xpage']} — {sc['title']}",
                 "key": "scans",
                 "file": sc["file"],
             })
-    # unique by title
+
     seen: set[str] = set()
     uniq = []
     for h in hits:
-        k = h["title"]
+        k = f"{h.get('kind')}:{h['title']}"
         if k not in seen:
             seen.add(k)
             uniq.append(h)
     return uniq[:40]
+
+
+def open_helu_section(
+    key: str,
+    *,
+    cable: str = "",
+    drum_code: str = "",
+    scan_file: str = "",
+) -> None:
+    """Přepne katalog na sekci (hledání z hubu i z pole nahoře)."""
+    n_scans = len(list_catalog_scans())
+    st.session_state["helu_topic"] = _radio_label(key, n_scans)
+    if cable:
+        st.session_state["helu_h_parse"] = cable
+    if drum_code:
+        st.session_state["helu_drum_highlight"] = drum_code
+    if scan_file:
+        st.session_state["helu_scan_q"] = scan_file
 
 
 _H_SHAPE = {
@@ -1990,39 +2112,58 @@ def render_helukabel_catalog() -> None:
     st.markdown("### 📗 Technické tabulky HELUKABEL")
     st.markdown(
         '<div class="info-box" style="margin-bottom:12px;">'
-        f"Digitální výpisky + prohlížeč skenů "
-        f"(<code>assets/helukabel/</code>, {n_scans} stránek). "
-        "Nahoře hledej — otevře se příslušná <strong>sekce</strong>."
+        "Napište <strong>kód kabelu</strong> (H07RN-F, NYY-J, NA2XS2Y), "
+        "<strong>kód bubnu</strong> (101, 800, HE 350) nebo téma (ohyb, proud, AWG). "
+        f"Skeny: <code>assets/helukabel/</code>, {n_scans} stránek."
         "</div>",
         unsafe_allow_html=True,
     )
 
     q = st.text_input(
-        "Hledat v katalogu",
-        placeholder="např. ohyb, NYY, H07RN-F, proud, AWG, požár, VDE, buben…",
+        "Hledat kód kabelu, buben KTG nebo téma",
+        placeholder="H07RN-F 3G1,5 · NYY-J · 101 · 800 · ohyb · X 109",
         key="helu_q",
     )
+    q_stripped = (q or "").strip()
     hits = search_catalog(q)
-    if q.strip() and not hits:
-        st.caption("Nic nenalezeno — zkus kratší slovo (ohyb, proud, NYY, PE…).")
+    decoded = decode_cable_designation(q_stripped) if len(q_stripped) >= 3 else []
+    if decoded and len(decoded) >= 2:
+        st.success(" · ".join(m for _p, _c, m in decoded[:8]))
+        st.dataframe(
+            pd.DataFrame(decoded, columns=["Část", "Znak", "Význam"]),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    if q_stripped and not hits and not decoded:
+        st.caption("Nic nenalezeno — zkuste kratší slovo (ohyb, proud, NYY) nebo kód bubnu (101, 800).")
     elif hits:
-        labels = [f"{h['kind']}: {h['title']}" for h in hits]
-        chosen = st.selectbox("Nalezené položky", labels, key="helu_hit_sel")
-        hit = hits[labels.index(chosen)]
-        if st.button("Otevřít sekci", key="helu_go"):
-            st.session_state["helu_topic"] = _radio_label(hit["key"], n_scans)
-            if hit.get("file"):
-                st.session_state["helu_scan_q"] = hit["file"]
-            st.rerun()
+        st.caption("Klepněte na výsledek — otevře se sekce.")
+        show = hits[:12]
+        cols = st.columns(2)
+        for i, hit in enumerate(show):
+            label = f"{hit['kind']}: {hit['title']}"
+            if len(label) > 72:
+                label = label[:69] + "…"
+            with cols[i % 2]:
+                if st.button(label, key=f"helu_hit_{i}", use_container_width=True):
+                    open_helu_section(
+                        hit["key"],
+                        cable=hit.get("cable") or (q_stripped if hit["key"] == "codes" else ""),
+                        drum_code=str(hit.get("code") or ""),
+                        scan_file=str(hit.get("file") or ""),
+                    )
+                    st.rerun()
+        if len(hits) > 12:
+            st.caption(f"Zobrazeno 12 z {len(hits)} zásahů — zpřesněte hledání.")
 
     options = [_radio_label(k, n_scans) for k, _ in _SECTION_KEYS]
     if "helu_topic" not in st.session_state or st.session_state["helu_topic"] not in options:
         st.session_state["helu_topic"] = options[0]
 
-    topic = st.radio(
-        "Sekce",
+    topic = st.selectbox(
+        "Sekce katalogu",
         options=options,
-        horizontal=True,
         key="helu_topic",
     )
     st.markdown("<br>", unsafe_allow_html=True)
@@ -2079,6 +2220,31 @@ def _render_all_scans() -> None:
 
 
 def _render_ktg_dims() -> None:
+    highlight = str(st.session_state.get("helu_drum_highlight") or "").strip()
+    if highlight:
+        wood = ktg_wood_by_code(highlight)
+        if wood:
+            st.success(
+                f"KTG {wood['kod']} / {wood['velikost']}: čelo Fd {wood['Fd']} mm · "
+                f"jádro Kd {wood['Kd']} mm · návin I₂ {wood['I2']} mm · "
+                f"nosnost {wood['max_kg']} kg · hmotnost {wood['mass']} kg."
+            )
+        else:
+            for row in _KTG_PLASTIC:
+                if row[0] == highlight:
+                    st.success(
+                        f"Plast {row[0]}: čelo {row[1]} mm · jádro {row[2]} mm · "
+                        f"nosnost {row[5]} kg."
+                    )
+                    break
+            else:
+                for row in _KTG_DISPOSABLE:
+                    if row[0] == highlight:
+                        st.success(
+                            f"{row[0]}: čelo {row[1]} mm · jádro {row[2]} mm · "
+                            f"hmotnost {row[6]} kg."
+                        )
+                        break
     st.markdown("##### Dřevěné bubny (standard)")
     st.dataframe(df_ktg_wood(), use_container_width=True, hide_index=True)
     st.markdown("##### Plastové bubny")
@@ -2489,16 +2655,13 @@ def _render_codes() -> None:
     ]
     if "helu_h_parse" not in st.session_state:
         st.session_state["helu_h_parse"] = examples[0]
-    cols = st.columns(5)
-    for i, ex in enumerate(examples[:5]):
-        if cols[i].button(ex, key=f"helu_ex_{i}"):
-            st.session_state["helu_h_parse"] = ex
-            st.rerun()
-    cols2 = st.columns(5)
-    for i, ex in enumerate(examples[5:]):
-        if cols2[i].button(ex, key=f"helu_ex_{i+5}"):
-            st.session_state["helu_h_parse"] = ex
-            st.rerun()
+    with st.expander("Příklady označení", expanded=False):
+        cols = st.columns(2)
+        for i, ex in enumerate(examples):
+            with cols[i % 2]:
+                if st.button(ex, key=f"helu_ex_{i}", use_container_width=True):
+                    st.session_state["helu_h_parse"] = ex
+                    st.rerun()
 
     raw = st.text_input(
         "Označení kabelu",
