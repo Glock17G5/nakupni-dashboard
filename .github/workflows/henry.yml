@@ -1,0 +1,38 @@
+name: Henry Telegram
+
+on:
+  schedule:
+    # Každých 30 min: inbox. Ranní souhrn posílá henry.py sám (Po–Pá, Praha < 10:00).
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+jobs:
+  henry:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Restore Telegram offset
+        uses: actions/cache@v4
+        with:
+          path: |
+            .henry_tg_offset
+            .henry_daily_sent
+          key: henry-tg-${{ github.run_id }}
+          restore-keys: |
+            henry-tg-
+      - run: pip install requests beautifulsoup4 lxml pandas
+      - name: Run Henry
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            python henry.py --daily --inbox
+          else
+            python henry.py --inbox
+          fi
