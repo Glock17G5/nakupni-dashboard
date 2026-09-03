@@ -1,23 +1,22 @@
 """
-Henry — denní souhrn na Telegram (ne do dashboardu).
+Henry — Telegram souhrn 2–3× denně (ne do dashboardu).
 
-Ráno pošle briefing: LME Cash měď/hliník, RSI, SMA 20/50, statistický výhled,
-titulky Kurzy.cz. Když napíšete „Ahoj Henry“ / „zprávy“ / /henry, odpoví stejně.
+Ráno (Po–Pá do 10:00 Praha) pošle krátký briefing. Na příkaz odpoví stejným
+stylem + hlasem. Čekání na odpověď ~10 minut (GitHub Actions).
 
-Spuštění:
-  python henry.py                 # inbox + ranní souhrn, když HENRY_DAILY=1
-  python henry.py --daily         # jen souhrn na TELEGRAM_CHAT_ID
-  python henry.py --inbox         # jen nepřečtené zprávy
+Příkazy: /henry, update, měď, hliník, zprávy, doprava, kurzy, /help
 """
 
 from __future__ import annotations
 
-import json
+import asyncio
 import os
 import re
 import sys
+import tempfile
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import datetime, timedelta
+from email.utils import parsedate_to_datetime
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -50,27 +49,70 @@ WM_MONTHS = {
 WEEKDAY_CS = (
     "pondělí", "úterý", "středa", "čtvrtek", "pátek", "sobota", "neděle",
 )
+WD_CS = {"po": 0, "út": 1, "ut": 1, "st": 2, "čt": 3, "ct": 3, "pá": 4, "pa": 4, "so": 5, "ne": 6}
+NEWS_DAYS = 7
+NEWS_LIMIT = 8
+LIST_QUERIES = ("měď", "hliník", "kontejner", "Turecko", "Čína", "clo")
+RSS_COLS = ("ptKomodity", "wzMeny", "wzMakro", "ptEkonomika", "ptPolitika")
+CAT_ORDER = {"metal": 0, "freight": 1, "geo": 2, "macro": 3}
+CAT_LABEL = {
+    "metal": "Kov",
+    "freight": "Doprava / trasy",
+    "geo": "Čína / Turecko / cla",
+    "macro": "Makro / FX / energie",
+}
+CAT_QUOTA = {"metal": 3, "freight": 2, "geo": 2, "macro": 2}
+CNB_URL = (
+    "https://www.cnb.cz/cs/financni-trhy/devizovy-trh/"
+    "kurzy-devizoveho-trhu/kurzy-devizoveho-trhu/denni_kurz.txt"
+)
+TTS_VOICE = os.environ.get("HENRY_VOICE", "cs-CZ-AntoninNeural")
 METAL_RE = re.compile(
     r"měď|mědi|měděn|\bcopper\b|hliník|hliníku|hliniku|aluminium|aluminum|"
     r"\blme\b|-medi-|_medi_|/medi-|nedostatek fyzick|\bbhp\b|zambi",
     re.I,
 )
-NOISE_RE = re.compile(
-    r"bitcoin|nvidia|robinhood|hlídačkovn|průměrn[áa] mzda|kakao|pšenice|"
-    r"nasdaq|marriott|airbnb|coinbase",
+FREIGHT_RE = re.compile(
+    r"námořn|kontejnerov|přeprav[ay].{0,24}(kontej|čín|china|tureck)|"
+    r"freight|\bteu\b|baltic|suez|hormuz|rudé moře|red sea|houthi|"
+    r"lodní doprav|přístav|fracht|maersk|cma cgm|logistik|"
+    r"shanghai.{0,12}(index|spot)|spot rate",
+    re.I,
+)
+GEO_RE = re.compile(
+    r"čín|cína|\bchina\b|tureck|\bturkey\b|yuan|\bcny\b|"
+    r"\bcla\b|\bclo\b|tarif|sankc|embarg|\bcbam\b|írán|\biran\b",
     re.I,
 )
 MACRO_RE = re.compile(
-    r"\bfed\b|sazb|čín|cína|\bchina\b|brent|\bropa\b|\bwti\b|geopolit",
+    r"\bfed\b|sazb|\bbrent\b|\bwti\b|\bropa\b|eurodolar|eur/usd|eur/czk|"
+    r"\becb\b|\bčnb\b|inflac|geopolit|dolar",
     re.I,
 )
-ASK_RE = re.compile(
-    r"ahoj|henry|/henry|/start|zpráv|zprav|briefing|souhrn|jaké jsou",
+NOISE_RE = re.compile(
+    r"bitcoin|nvidia|robinhood|hlídačkovn|průměrn[áa] mzda|kakao|pšenice|"
+    r"nasdaq|marriott|airbnb|coinbase|hypoték|teplárn|fotovolta|"
+    r"plešat|ozempic|cistern",
     re.I,
 )
+GOLD_RE = re.compile(r"\bzlato\b|\bgold\b", re.I)
 OFFSET_PATH = ".henry_tg_offset"
 DAILY_MARK = ".henry_daily_sent"
 TG_LIMIT = 3500
+HELP_TEXT = (
+    "Henry, 2–3× denně stačí. Napište příkaz, za cca 10 min odpovím textem i hlasem.\n"
+    "\n"
+    "/henry nebo update — krátký souhrn (ceny + zprávy za 7 dní)\n"
+    "měď\n"
+    "hliník\n"
+    "zprávy — kov, doprava, Čína/Turecko, makro\n"
+    "doprava — kontejnery, trasy, cla\n"
+    "kurzy — ČNB EUR, USD, CNY, TRY\n"
+    "/help"
+)
+
+_lme_cache: dict[str, pd.DataFrame | None] = {}
+_news_cache: list[dict] | None = None
 
 
 def _now() -> datetime:
@@ -132,6 +174,13 @@ def _parse_wm_date(text: str) -> datetime | None:
         except ValueError:
             continue
     return None
+
+
+def lme(metal: str) -> pd.DataFrame | None:
+    if metal not in _lme_cache:
+        print(f"Westmetall {metal}…")
+        _lme_cache[metal] = fetch_lme_history(metal)
+    return _lme_cache[metal]
 
 
 def fetch_lme_history(metal: str) -> pd.DataFrame | None:
@@ -243,15 +292,12 @@ def metal_block(name: str, df: pd.DataFrame | None) -> str:
     look = outlook(df)
     if look:
         pct, direction = look
-        ens = (
-            f"Statistický výhled ~21 dní: {direction} ({pct:+.1f} %). "
-            "Jen matematika z historie (trend + SMA50), ne předpověď LME."
-        )
+        ens = f"Výhled ~21 dní: {direction} ({pct:+.1f} %, statistika)."
     else:
         ens = "Výhled: málo historie."
     return (
         f"{name} LME Cash {_fmt(price, 0)} USD/t · {week}. {rsi_s}. "
-        f"Cena je {vs(s20, 'SMA20')} a {vs(s50, 'SMA50')}. {ens}"
+        f"{vs(s20, 'SMA20')}, {vs(s50, 'SMA50')}. {ens}"
     )
 
 
@@ -264,6 +310,35 @@ def _abs_url(href: str) -> str:
     if raw.startswith("/"):
         return "https://zpravy.kurzy.cz" + raw
     return raw
+
+
+def parse_news_dt(text: str) -> datetime | None:
+    text = (text or "").strip()
+    if not text:
+        return None
+    try:
+        dt = parsedate_to_datetime(text)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(TZ).replace(tzinfo=None)
+        return dt
+    except Exception:
+        pass
+    m = re.search(r"(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})", text)
+    if m:
+        try:
+            return datetime(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+        except ValueError:
+            return None
+    m = re.match(r"(po|út|ut|st|čt|ct|pá|pa|so|ne)\s+\d{1,2}:\d{2}", text, re.I)
+    if not m:
+        return None
+    key = m.group(1).lower()
+    want = WD_CS.get(key)
+    if want is None:
+        return None
+    today = _now().replace(hour=0, minute=0, second=0, microsecond=0)
+    delta = (today.weekday() - want) % 7
+    return today - timedelta(days=delta)
 
 
 def listing(query: str) -> list[dict]:
@@ -282,16 +357,18 @@ def listing(query: str) -> list[dict]:
             continue
         seen.add(href)
         datum = box.select_one(".datum")
+        when = datum.get_text(" ", strip=True) if datum else ""
         out.append({
             "title": title,
             "url": href,
-            "when": datum.get_text(" ", strip=True) if datum else "",
+            "when": when,
+            "dt": parse_news_dt(when),
         })
     return out
 
 
-def rss_commodities() -> list[dict]:
-    r = _get("https://www.kurzy.cz/zpravy/util/forext.dat?type=rss&col=ptKomodity&rows=40")
+def rss_col(col: str) -> list[dict]:
+    r = _get(f"https://www.kurzy.cz/zpravy/util/forext.dat?type=rss&col={col}&rows=40")
     if r is None:
         return []
     try:
@@ -302,83 +379,237 @@ def rss_commodities() -> list[dict]:
     for item in root.findall(".//item"):
         title = (item.findtext("title") or "").strip()
         link = _abs_url(item.findtext("link") or "")
+        pub = (item.findtext("pubDate") or "").strip()
         if title and link:
-            out.append({"title": title, "url": link, "when": ""})
+            out.append({
+                "title": title,
+                "url": link,
+                "when": pub,
+                "dt": parse_news_dt(pub),
+            })
     return out
 
 
-def pick_news(limit: int = 7) -> list[dict]:
-    pooled = [dict(x) for q in ("měď", "hliník") for x in listing(q)]
-    pooled.extend(dict(x) for x in rss_commodities())
-    metal, macro, seen = [], [], set()
-    for item in pooled:
-        url, title = item.get("url") or "", item.get("title") or ""
-        if not url or url in seen:
-            continue
-        seen.add(url)
-        blob = f"{title} {url}"
-        if NOISE_RE.search(title) and not METAL_RE.search(blob):
-            continue
-        if METAL_RE.search(blob):
-            metal.append(item)
-        elif MACRO_RE.search(title):
-            macro.append(item)
-    picked = metal[:limit]
-    if len(picked) < limit:
-        picked.extend(macro[: min(3, limit - len(picked))])
-    return picked
+def classify(title: str, url: str) -> str | None:
+    blob = f"{title} {url}"
+    metal = bool(METAL_RE.search(blob))
+    freight = bool(FREIGHT_RE.search(blob))
+    if GOLD_RE.search(title) and not metal and not freight:
+        return None
+    if NOISE_RE.search(title) and not metal and not freight:
+        return None
+    if metal:
+        return "metal"
+    if freight:
+        return "freight"
+    if GEO_RE.search(blob):
+        return "geo"
+    if MACRO_RE.search(title):
+        return "macro"
+    return None
+
+
+def pick_news(*, cats: tuple[str, ...] | None = None, limit: int = NEWS_LIMIT) -> list[dict]:
+    global _news_cache
+    if _news_cache is None:
+        print("Kurzy.cz zprávy za 7 dní…")
+        pooled: list[dict] = []
+        for q in LIST_QUERIES:
+            pooled.extend(listing(q))
+        for col in RSS_COLS:
+            pooled.extend(rss_col(col))
+        cutoff = _now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=NEWS_DAYS)
+        buckets: dict[str, list[dict]] = {k: [] for k in CAT_ORDER}
+        seen: set[str] = set()
+        for item in pooled:
+            url = item.get("url") or ""
+            title = item.get("title") or ""
+            dt = item.get("dt")
+            if not url or url in seen or dt is None or dt < cutoff:
+                continue
+            cat = classify(title, url)
+            if not cat:
+                continue
+            seen.add(url)
+            row = {
+                "title": title,
+                "url": url,
+                "dt": dt,
+                "cat": cat,
+                "when": dt.strftime("%d.%m."),
+            }
+            buckets[cat].append(row)
+        for cat in buckets:
+            buckets[cat].sort(key=lambda x: x["dt"], reverse=True)
+        picked: list[dict] = []
+        for cat, n in CAT_QUOTA.items():
+            picked.extend(buckets[cat][:n])
+        picked.sort(key=lambda x: (CAT_ORDER.get(x["cat"], 9), -x["dt"].timestamp()))
+        _news_cache = picked
+    items = list(_news_cache)
+    if cats:
+        items = [x for x in items if x.get("cat") in cats]
+        extra: list[dict] = []
+        if len(items) < limit:
+            # freight příkaz bere i geo (Čína/Turecko/cla)
+            if "freight" in cats:
+                extra = [x for x in (_news_cache or []) if x.get("cat") == "geo" and x not in items]
+        items = (items + extra)[:limit]
+    return items[:limit]
 
 
 def news_synthesis(items: list[dict]) -> str:
     if not items:
-        return "Kurzy.cz teď nemají použitelný titulek k mědi — posílám aspoň ceny."
+        return "Za posledních 7 dní nemám použitelný titulek k kovu, dopravě ani Číně/Turecku."
     blob = " ".join(i["title"].lower() for i in items)
     bits = []
     if re.search(r"nedostat|squeeze|zásob", blob):
         bits.append("fyzický kov / zásoby LME")
-    if "bhp" in blob:
-        bits.append("BHP")
-    if "zambi" in blob:
-        bits.append("Zambie")
-    if re.search(r"rekord|vyskoč", blob):
-        bits.append("skok ceny mědi")
+    if re.search(r"hormuz|suez|námoř|kontejner|fracht", blob):
+        bits.append("námořní trasy")
+    if re.search(r"tureck|turkey", blob):
+        bits.append("Turecko")
+    if re.search(r"clo|cla|tarif|sankc|cbam", blob):
+        bits.append("cla / sankce")
     if re.search(r"čín|cína|china", blob):
         bits.append("Čína")
     if re.search(r"fed|sazb", blob):
         bits.append("Fed / sazby")
-    if re.search(r"ropa|brent", blob):
+    if re.search(r"ropa|brent|wti|hormuz", blob):
         bits.append("ropa")
+    if "bhp" in blob:
+        bits.append("BHP")
     if bits:
-        return "Dnes se točí hlavně kolem: " + ", ".join(bits) + "."
-    return "Na Kurzy.cz je měď spíš v širších komoditních zprávách. Beru jen relevantní titulky."
+        return "Za poslední týden se točí hlavně kolem: " + ", ".join(bits) + "."
+    return "Beru jen titulky z posledních 7 dní, které hýbou kovem, dopravou nebo kurzy."
 
 
-def build_briefing() -> str:
-    now = _now()
-    print("Henry skládá briefing…")
-    cu = fetch_lme_history("copper")
-    al = fetch_lme_history("aluminum")
-    news = pick_news()
-    lines = [
-        f"Ahoj. Tady Henry, {WEEKDAY_CS[now.weekday()]} {now.strftime('%d. %m. %Y %H:%M')}.",
-        "",
-        metal_block("Měď", cu),
-        metal_block("Hliník", al),
-        "",
-        news_synthesis(news),
-    ]
-    if news:
-        lines.append("")
-        for i, item in enumerate(news, 1):
-            when = f" ({item['when']})" if item.get("when") else ""
-            lines.append(f"{i}. {item['title']}{when}")
-            lines.append(item["url"])
-        lines.append("")
-    lines.append(
-        "Zdroje: Westmetall LME Cash, Kurzy.cz (titulky). "
-        "Predikce je statistika, ne věštba. Interní nákupy sem nepatří."
-    )
+def format_news(items: list[dict]) -> str:
+    if not items:
+        return "Za posledních 7 dní nemám použitelný titulek."
+    lines = ["Zprávy za posledních 7 dní:"]
+    current = None
+    n = 0
+    for item in items:
+        cat = item.get("cat")
+        if cat != current:
+            current = cat
+            lines.append("")
+            lines.append(CAT_LABEL.get(cat or "", cat or ""))
+        n += 1
+        lines.append(f"{n}. {item['title']} ({item['when']})")
+        lines.append(item["url"])
     return "\n".join(lines)
+
+
+def greeting() -> str:
+    now = _now()
+    return f"Ahoj. Tady Henry, {WEEKDAY_CS[now.weekday()]} {now.strftime('%d. %m. %Y %H:%M')}."
+
+
+def fetch_cnb_text() -> str:
+    r = _get(CNB_URL, timeout=20)
+    if r is None:
+        return "ČNB teď neodpověděla."
+    lines = r.text.strip().splitlines()
+    date_str = lines[0].split("#")[0].strip() if lines else ""
+    want = ("EUR", "USD", "CNY", "TRY")
+    found: dict[str, str] = {}
+    for line in lines[2:]:
+        parts = line.strip().split("|")
+        if len(parts) != 5:
+            continue
+        code = parts[3].strip().upper()
+        if code not in want:
+            continue
+        try:
+            amount = int(parts[2])
+            rate = float(parts[4].replace(",", ".")) / amount
+        except ValueError:
+            continue
+        found[code] = f"{rate:.3f}".replace(".", ",")
+    if not found:
+        return "ČNB lístek se nepovedlo přečíst."
+    bits = [f"{c} {found[c]}" for c in want if c in found]
+    return f"ČNB {date_str}: " + " · ".join(bits) + " (Kč za 1 jednotku)."
+
+
+def spoken_news(items: list[dict]) -> str:
+    if not items:
+        return news_synthesis(items)
+    titles = ". ".join(i["title"] for i in items[:5])
+    return news_synthesis(items) + " Hlavní titulky: " + titles + "."
+
+
+def build_payload(kind: str) -> tuple[str, str]:
+    """Text do chatu + kratší text k hlasu."""
+    if kind == "help":
+        return HELP_TEXT, "Napište update, měď, hliník, zprávy, doprava, nebo kurzy."
+    if kind == "fx":
+        text = greeting() + "\n\n" + fetch_cnb_text()
+        return text, text
+    if kind == "copper":
+        block = metal_block("Měď", lme("copper"))
+        text = greeting() + "\n\n" + block
+        return text, text
+    if kind == "aluminum":
+        block = metal_block("Hliník", lme("aluminum"))
+        text = greeting() + "\n\n" + block
+        return text, text
+    if kind == "freight":
+        items = pick_news(cats=("freight", "geo"), limit=6)
+        body = format_news(items)
+        text = greeting() + "\n\n" + body
+        return text, greeting() + " " + spoken_news(items)
+    if kind == "news":
+        items = pick_news()
+        body = news_synthesis(items) + "\n\n" + format_news(items)
+        text = greeting() + "\n\n" + body
+        return text, greeting() + " " + spoken_news(items)
+    # full
+    cu = metal_block("Měď", lme("copper"))
+    al = metal_block("Hliník", lme("aluminum"))
+    items = pick_news()
+    syn = news_synthesis(items)
+    text = "\n".join([
+        greeting(),
+        "",
+        cu,
+        al,
+        "",
+        syn,
+        "",
+        format_news(items),
+        "",
+        "Westmetall LME Cash, Kurzy.cz, ČNB na příkaz kurzy.",
+    ])
+    spoken = " ".join([greeting(), cu, al, syn, "Odkazy jsou v textu."])
+    return text, spoken
+
+
+def intent(text: str) -> str | None:
+    raw = re.sub(r"@[\w]+", "", text or "").strip()
+    low = raw.lower()
+    if re.search(r"/help\b|n[áa]pov[eě]da|\bpomoc\b|p[rř][ií]kaz", low):
+        return "help"
+    if re.search(r"doprav|kontejner|fracht|tureck|hormuz|suez", low):
+        return "freight"
+    if re.search(r"kurz|/fx\b|\bčnb\b|\bcnb\b|eur/usd|eur/czk", low):
+        return "fx"
+    if re.search(r"zpr[aá]v|/news\b", low) and not re.search(
+        r"souhrn|briefing|/henry|update", low
+    ):
+        return "news"
+    if re.search(r"hlin[ií]k|aluminum|/al\b", low):
+        return "aluminum"
+    if re.search(r"měď|mědi|\bmed\b|\bcopper\b|/cu\b", low):
+        return "copper"
+    if re.search(
+        r"ahoj|henry|/henry|/start|/update|\bupdate\b|briefing|souhrn|jaké jsou",
+        low,
+    ):
+        return "full"
+    return None
 
 
 def tg_token() -> str:
@@ -430,8 +661,75 @@ def send_text(chat_id: str, text: str) -> bool:
     return ok
 
 
-def send_briefing(chat_id: str) -> bool:
-    return send_text(chat_id, build_briefing())
+def _tts_enabled() -> bool:
+    flag = (os.environ.get("HENRY_TTS") or "1").strip().lower()
+    return flag not in ("0", "false", "no")
+
+
+def speak_to_mp3(text: str, path: str) -> bool:
+    try:
+        import edge_tts
+    except Exception as e:
+        print(f"TTS import: {e}")
+        return False
+    spoken = re.sub(r"https?://\S+", "", text)
+    spoken = re.sub(r"\s+", " ", spoken).strip()[:2200]
+    if not spoken:
+        return False
+
+    async def _run() -> None:
+        comm = edge_tts.Communicate(spoken, TTS_VOICE)
+        await comm.save(path)
+
+    try:
+        asyncio.run(_run())
+        return os.path.isfile(path) and os.path.getsize(path) > 800
+    except Exception as e:
+        print(f"TTS: {e}")
+        return False
+
+
+def send_voice(chat_id: str, spoken: str) -> bool:
+    if not _tts_enabled() or not spoken.strip():
+        return False
+    token = tg_token()
+    if not token:
+        return False
+    fd, path = tempfile.mkstemp(suffix=".mp3")
+    os.close(fd)
+    try:
+        if not speak_to_mp3(spoken, path):
+            return False
+        with open(path, "rb") as f:
+            r = requests.post(
+                f"https://api.telegram.org/bot{token}/sendAudio",
+                data={
+                    "chat_id": chat_id,
+                    "title": "Henry",
+                    "performer": "Henry",
+                },
+                files={"audio": ("henry.mp3", f, "audio/mpeg")},
+                timeout=120,
+            )
+        data = r.json() if r.content else {}
+        if r.status_code >= 300 or not data.get("ok"):
+            print(f"Telegram sendAudio: {r.status_code} {str(data)[:240]}")
+            return False
+        return True
+    except Exception as e:
+        print(f"send_voice: {e}")
+        return False
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def send_reply(chat_id: str, text: str, spoken: str) -> bool:
+    ok = send_text(chat_id, text)
+    send_voice(chat_id, spoken)
+    return ok
 
 
 def _read_offset() -> int:
@@ -464,8 +762,7 @@ def _mark_daily_sent() -> None:
         f.write(_daily_stamp())
 
 
-def process_inbox(*, skip_allowed_reply: bool = False) -> int:
-    """Odpoví na Ahoj Henry / /henry. Cizí chaty ignoruje."""
+def process_inbox(*, skip_full: bool = False) -> int:
     allowed = allowed_chats()
     if not tg_token() or not allowed:
         if not allowed:
@@ -480,7 +777,7 @@ def process_inbox(*, skip_allowed_reply: bool = False) -> int:
         return 0
     replied = 0
     last_id = offset
-    briefing_cache = None
+    cache: dict[str, tuple[str, str]] = {}
     for upd in data.get("result") or []:
         last_id = max(last_id, int(upd.get("update_id") or 0) + 1)
         msg = upd.get("message") or upd.get("edited_message") or {}
@@ -489,16 +786,18 @@ def process_inbox(*, skip_allowed_reply: bool = False) -> int:
         if chat is None or not text:
             continue
         chat_s = str(chat)
-        if allowed and chat_s not in allowed:
+        if chat_s not in allowed:
             print(f"Ignoruji cizí chat {chat_s}")
             continue
-        if not ASK_RE.search(text):
+        kind = intent(text)
+        if kind is None:
             continue
-        if skip_allowed_reply:
+        if skip_full and kind == "full":
             continue
-        if briefing_cache is None:
-            briefing_cache = build_briefing()
-        send_text(chat_s, briefing_cache)
+        if kind not in cache:
+            cache[kind] = build_payload(kind)
+        body, spoken = cache[kind]
+        send_reply(chat_s, body, spoken)
         replied += 1
     if last_id:
         _write_offset(last_id)
@@ -517,16 +816,16 @@ def run(*, daily: bool, inbox: bool) -> int:
         elif _daily_already_sent() and "--daily" not in sys.argv:
             print("Denní souhrn už dnes šel — přeskočeno.")
         else:
-            text = build_briefing()
+            text, spoken = build_payload("full")
             ok = True
             for chat in chats:
                 print(f"Posílám denní souhrn do {chat}")
-                ok = send_text(chat, text) and ok
+                ok = send_reply(chat, text, spoken) and ok
             if ok:
                 _mark_daily_sent()
             sent_daily = ok
     if inbox:
-        n = process_inbox(skip_allowed_reply=sent_daily)
+        n = process_inbox(skip_full=sent_daily)
         print(f"Inbox: {n} odpovědí.")
     return 0
 
