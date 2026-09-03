@@ -51,17 +51,22 @@ WEEKDAY_CS = (
 )
 WD_CS = {"po": 0, "út": 1, "ut": 1, "st": 2, "čt": 3, "ct": 3, "pá": 4, "pa": 4, "so": 5, "ne": 6}
 NEWS_DAYS = 7
-NEWS_LIMIT = 8
-LIST_QUERIES = ("měď", "hliník", "kontejner", "Turecko", "Čína", "clo")
+NEWS_LIMIT = 12
+LIST_QUERIES = ("měď", "hliník", "kontejner", "Turecko", "Čína", "clo", "energetika")
 RSS_COLS = ("ptKomodity", "wzMeny", "wzMakro", "ptEkonomika", "ptPolitika")
-CAT_ORDER = {"metal": 0, "freight": 1, "geo": 2, "macro": 3}
+GNEWS_QUERIES = (
+    "site:businessinfo.cz when:7d (energetika OR clo OR Čína OR doprava OR Turecko OR sankce)",
+    "when:7d (hliník OR aluminium) (LME OR cena OR zásob)",
+)
+CAT_ORDER = {"metal": 0, "freight": 1, "energy": 2, "geo": 3, "macro": 4}
 CAT_LABEL = {
-    "metal": "Kov",
+    "metal": "Kov (měď / hliník)",
     "freight": "Doprava / trasy",
-    "geo": "Čína / Turecko / cla",
-    "macro": "Makro / FX / energie",
+    "energy": "Energetika",
+    "geo": "Politika / Čína / Turecko / cla",
+    "macro": "Makro / FX",
 }
-CAT_QUOTA = {"metal": 3, "freight": 2, "geo": 2, "macro": 2}
+CAT_QUOTA = {"metal": 4, "freight": 2, "energy": 2, "geo": 2, "macro": 2}
 CNB_URL = (
     "https://www.cnb.cz/cs/financni-trhy/devizovy-trh/"
     "kurzy-devizoveho-trhu/kurzy-devizoveho-trhu/denni_kurz.txt"
@@ -79,20 +84,27 @@ FREIGHT_RE = re.compile(
     r"shanghai.{0,12}(index|spot)|spot rate",
     re.I,
 )
+ENERGY_RE = re.compile(
+    r"energetik|elektřin|zemní plyn|\bLNG\b|\bMWh\b|jád(ro|ern)|uhlí|"
+    r"fotovolta|větrn|obnoviteln|\bČEPS\b|\bETS\b|emisní povol|vodík|"
+    r"cena elektř|ceny energi",
+    re.I,
+)
 GEO_RE = re.compile(
     r"čín|cína|\bchina\b|tureck|\bturkey\b|yuan|\bcny\b|"
-    r"\bcla\b|\bclo\b|tarif|sankc|embarg|\bcbam\b|írán|\biran\b",
+    r"\bcla\b|\bclo\b|tarif|sankc|embarg|\bcbam\b|írán|\biran\b|"
+    r"geopolit|trump| clo | clo,|dovoz|vývoz|export",
     re.I,
 )
 MACRO_RE = re.compile(
     r"\bfed\b|sazb|\bbrent\b|\bwti\b|\bropa\b|eurodolar|eur/usd|eur/czk|"
-    r"\becb\b|\bčnb\b|inflac|geopolit|dolar",
+    r"\becb\b|\bčnb\b|inflac|dolar|dluhopis",
     re.I,
 )
 NOISE_RE = re.compile(
     r"bitcoin|nvidia|robinhood|hlídačkovn|průměrn[áa] mzda|kakao|pšenice|"
-    r"nasdaq|marriott|airbnb|coinbase|hypoték|teplárn|fotovolta|"
-    r"plešat|ozempic|cistern",
+    r"nasdaq|marriott|airbnb|coinbase|hypoték|teplárn|"
+    r"plešat|ozempic|cistern|mapa globálních oborových",
     re.I,
 )
 GOLD_RE = re.compile(r"\bzlato\b|\bgold\b", re.I)
@@ -100,16 +112,52 @@ OFFSET_PATH = ".henry_tg_offset"
 DAILY_MARK = ".henry_daily_sent"
 TG_LIMIT = 3500
 HELP_TEXT = (
-    "Henry, 2–3× denně stačí. Napište příkaz, za cca 10 min odpovím textem i hlasem.\n"
+    "Henry. Nic nepíšete — klikněte dole na tlačítko, nebo vlevo na lomítko /.\n"
     "\n"
-    "/henry nebo update — krátký souhrn (ceny + zprávy za 7 dní)\n"
-    "měď\n"
-    "hliník\n"
-    "zprávy — kov, doprava, Čína/Turecko, makro\n"
-    "doprava — kontejnery, trasy, cla\n"
-    "kurzy — ČNB EUR, USD, CNY, TRY\n"
-    "/help"
+    "Měď — cena LME + zprávy o mědi za 7 dní\n"
+    "Hliník — to samé pro hliník\n"
+    "Zprávy — měď, hliník, doprava, energetika, politika\n"
+    "Doprava — kontejnery, trasy, cla, energie\n"
+    "Kurzy — ČNB EUR, USD, CNY, TRY\n"
+    "Souhrn — všechno naráz\n"
+    "\n"
+    "Odpověď přijde do cca 10 minut. Kolegy přidejte do této skupiny."
 )
+BOT_COMMANDS = [
+    {"command": "henry", "description": "Celý souhrn"},
+    {"command": "med", "description": "Měď — cena a zprávy"},
+    {"command": "hlinik", "description": "Hliník — cena a zprávy"},
+    {"command": "zpravy", "description": "Zprávy za 7 dní"},
+    {"command": "doprava", "description": "Doprava, Čína, Turecko"},
+    {"command": "kurzy", "description": "ČNB EUR USD CNY TRY"},
+    {"command": "help", "description": "Tlačítka a nápověda"},
+]
+KINDS = {"help", "fx", "copper", "aluminum", "freight", "news", "full"}
+CU_NEWS_RE = re.compile(r"měď|mědi|měděn|\bcopper\b|-medi-|_medi_|/medi-", re.I)
+AL_NEWS_RE = re.compile(r"hliník|hliníku|hliniku|aluminium|aluminum", re.I)
+REPLY_KEYBOARD = {
+    "keyboard": [
+        [{"text": "Měď"}, {"text": "Hliník"}, {"text": "Zprávy"}],
+        [{"text": "Doprava"}, {"text": "Kurzy"}, {"text": "Souhrn"}],
+        [{"text": "Nápověda"}],
+    ],
+    "resize_keyboard": True,
+    "is_persistent": True,
+}
+INLINE_KEYBOARD = {
+    "inline_keyboard": [
+        [
+            {"text": "Měď", "callback_data": "copper"},
+            {"text": "Hliník", "callback_data": "aluminum"},
+            {"text": "Zprávy", "callback_data": "news"},
+        ],
+        [
+            {"text": "Doprava", "callback_data": "freight"},
+            {"text": "Kurzy", "callback_data": "fx"},
+            {"text": "Souhrn", "callback_data": "full"},
+        ],
+    ],
+}
 
 _lme_cache: dict[str, pd.DataFrame | None] = {}
 _news_cache: list[dict] | None = None
@@ -394,14 +442,17 @@ def classify(title: str, url: str) -> str | None:
     blob = f"{title} {url}"
     metal = bool(METAL_RE.search(blob))
     freight = bool(FREIGHT_RE.search(blob))
-    if GOLD_RE.search(title) and not metal and not freight:
+    energy = bool(ENERGY_RE.search(blob))
+    if GOLD_RE.search(title) and not metal and not freight and not energy:
         return None
-    if NOISE_RE.search(title) and not metal and not freight:
+    if NOISE_RE.search(title) and not metal and not freight and not energy:
         return None
     if metal:
         return "metal"
     if freight:
         return "freight"
+    if energy:
+        return "energy"
     if GEO_RE.search(blob):
         return "geo"
     if MACRO_RE.search(title):
@@ -409,15 +460,47 @@ def classify(title: str, url: str) -> str | None:
     return None
 
 
+def google_news(query: str) -> list[dict]:
+    url = (
+        "https://news.google.com/rss/search?q="
+        + quote(query)
+        + "&hl=cs&gl=CZ&ceid=CZ:cs"
+    )
+    r = _get(url, timeout=25)
+    if r is None:
+        return []
+    try:
+        root = ET.fromstring(r.content)
+    except Exception:
+        return []
+    out = []
+    for item in root.findall(".//item"):
+        title = (item.findtext("title") or "").strip()
+        link = (item.findtext("link") or "").strip()
+        pub = (item.findtext("pubDate") or "").strip()
+        if not title or not link:
+            continue
+        title = re.sub(r"\s*-\s*BusinessInfo\.cz\s*$", "", title, flags=re.I)
+        out.append({
+            "title": title,
+            "url": link,
+            "when": pub,
+            "dt": parse_news_dt(pub),
+        })
+    return out
+
+
 def pick_news(*, cats: tuple[str, ...] | None = None, limit: int = NEWS_LIMIT) -> list[dict]:
     global _news_cache
     if _news_cache is None:
-        print("Kurzy.cz zprávy za 7 dní…")
+        print("Kurzy.cz + BusinessInfo zprávy za 7 dní…")
         pooled: list[dict] = []
         for q in LIST_QUERIES:
             pooled.extend(listing(q))
         for col in RSS_COLS:
             pooled.extend(rss_col(col))
+        for q in GNEWS_QUERIES:
+            pooled.extend(google_news(q))
         cutoff = _now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=NEWS_DAYS)
         buckets: dict[str, list[dict]] = {k: [] for k in CAT_ORDER}
         seen: set[str] = set()
@@ -453,20 +536,29 @@ def pick_news(*, cats: tuple[str, ...] | None = None, limit: int = NEWS_LIMIT) -
         if len(items) < limit:
             # freight příkaz bere i geo (Čína/Turecko/cla)
             if "freight" in cats:
-                extra = [x for x in (_news_cache or []) if x.get("cat") == "geo" and x not in items]
+                extra = [
+                    x for x in (_news_cache or [])
+                    if x.get("cat") in ("geo", "energy") and x not in items
+                ]
         items = (items + extra)[:limit]
     return items[:limit]
 
 
 def news_synthesis(items: list[dict]) -> str:
     if not items:
-        return "Za posledních 7 dní nemám použitelný titulek k kovu, dopravě ani Číně/Turecku."
+        return "Za posledních 7 dní nemám použitelný titulek k kovu, dopravě, energetice ani politice."
     blob = " ".join(i["title"].lower() for i in items)
     bits = []
+    if re.search(r"hliník|aluminium|aluminum", blob):
+        bits.append("hliník")
+    if re.search(r"měď|copper", blob):
+        bits.append("měď")
     if re.search(r"nedostat|squeeze|zásob", blob):
         bits.append("fyzický kov / zásoby LME")
     if re.search(r"hormuz|suez|námoř|kontejner|fracht", blob):
         bits.append("námořní trasy")
+    if re.search(r"energetik|elektřin|plyn|LNG|jád", blob):
+        bits.append("energetika")
     if re.search(r"tureck|turkey", blob):
         bits.append("Turecko")
     if re.search(r"clo|cla|tarif|sankc|cbam", blob):
@@ -475,7 +567,7 @@ def news_synthesis(items: list[dict]) -> str:
         bits.append("Čína")
     if re.search(r"fed|sazb", blob):
         bits.append("Fed / sazby")
-    if re.search(r"ropa|brent|wti|hormuz", blob):
+    if re.search(r"ropa|brent|wti", blob):
         bits.append("ropa")
     if "bhp" in blob:
         bits.append("BHP")
@@ -534,7 +626,16 @@ def fetch_cnb_text() -> str:
     return f"ČNB {date_str}: " + " · ".join(bits) + " (Kč za 1 jednotku)."
 
 
-def spoken_news(items: list[dict]) -> str:
+def _metal_news(kind: str) -> list[dict]:
+    needle = CU_NEWS_RE if kind == "copper" else AL_NEWS_RE
+    items = []
+    for row in pick_news(cats=("metal",), limit=NEWS_LIMIT):
+        blob = f"{row.get('title') or ''} {row.get('url') or ''}"
+        if needle.search(blob):
+            items.append(row)
+        if len(items) >= 5:
+            break
+    return items
     if not items:
         return news_synthesis(items)
     titles = ". ".join(i["title"] for i in items[:5])
@@ -550,12 +651,16 @@ def build_payload(kind: str) -> tuple[str, str]:
         return text, text
     if kind == "copper":
         block = metal_block("Měď", lme("copper"))
-        text = greeting() + "\n\n" + block
-        return text, text
+        items = _metal_news("copper")
+        extra = ("\n\n" + format_news(items)) if items else "\n\nZa posledních 7 dní nemám zvláštní titulek jen k mědi."
+        text = greeting() + "\n\n" + block + extra
+        return text, greeting() + " " + block + " " + spoken_news(items)
     if kind == "aluminum":
         block = metal_block("Hliník", lme("aluminum"))
-        text = greeting() + "\n\n" + block
-        return text, text
+        items = _metal_news("aluminum")
+        extra = ("\n\n" + format_news(items)) if items else "\n\nZa posledních 7 dní nemám zvláštní titulek jen k hliníku."
+        text = greeting() + "\n\n" + block + extra
+        return text, greeting() + " " + block + " " + spoken_news(items)
     if kind == "freight":
         items = pick_news(cats=("freight", "geo"), limit=6)
         body = format_news(items)
@@ -581,7 +686,7 @@ def build_payload(kind: str) -> tuple[str, str]:
         "",
         format_news(items),
         "",
-        "Westmetall LME Cash, Kurzy.cz, ČNB na příkaz kurzy.",
+        "Westmetall LME Cash, Kurzy.cz, BusinessInfo.cz, ČNB na příkaz kurzy.",
     ])
     spoken = " ".join([greeting(), cu, al, syn, "Odkazy jsou v textu."])
     return text, spoken
@@ -590,6 +695,16 @@ def build_payload(kind: str) -> tuple[str, str]:
 def intent(text: str) -> str | None:
     raw = re.sub(r"@[\w]+", "", text or "").strip()
     low = raw.lower()
+    if re.search(r"/med\b|/cu\b", low):
+        return "copper"
+    if re.search(r"/hlinik\b|/al\b", low):
+        return "aluminum"
+    if re.search(r"/zpravy\b|/news\b", low):
+        return "news"
+    if re.search(r"/doprava\b", low):
+        return "freight"
+    if re.search(r"/kurzy\b|/fx\b", low):
+        return "fx"
     if re.search(r"/help\b|n[áa]pov[eě]da|\bpomoc\b|p[rř][ií]kaz", low):
         return "help"
     if re.search(r"doprav|kontejner|fracht|tureck|hormuz|suez", low):
@@ -642,6 +757,10 @@ def tg_api(method: str, payload: dict) -> dict | None:
         return None
 
 
+def register_commands() -> None:
+    tg_api("setMyCommands", {"commands": BOT_COMMANDS})
+
+
 def send_text(chat_id: str, text: str) -> bool:
     ok = True
     rest = text
@@ -652,11 +771,14 @@ def send_text(chat_id: str, text: str) -> bool:
             if cut > 500:
                 rest = chunk[cut + 1 :] + rest
                 chunk = chunk[:cut]
-        sent = tg_api("sendMessage", {
+        payload = {
             "chat_id": chat_id,
             "text": chunk,
             "disable_web_page_preview": True,
-        })
+        }
+        if not rest:
+            payload["reply_markup"] = REPLY_KEYBOARD
+        sent = tg_api("sendMessage", payload)
         ok = bool(sent) and ok
     return ok
 
@@ -769,7 +891,7 @@ def process_inbox(*, skip_full: bool = False) -> int:
             print("TELEGRAM_CHAT_ID není nastavené — inbox ignoruji.")
         return 0
     offset = _read_offset()
-    payload = {"timeout": 0, "limit": 50}
+    payload = {"timeout": 0, "limit": 50, "allowed_updates": ["message", "edited_message", "callback_query"]}
     if offset:
         payload["offset"] = offset
     data = tg_api("getUpdates", payload)
@@ -780,17 +902,25 @@ def process_inbox(*, skip_full: bool = False) -> int:
     cache: dict[str, tuple[str, str]] = {}
     for upd in data.get("result") or []:
         last_id = max(last_id, int(upd.get("update_id") or 0) + 1)
+        cb = upd.get("callback_query") or {}
         msg = upd.get("message") or upd.get("edited_message") or {}
-        chat = (msg.get("chat") or {}).get("id")
-        text = (msg.get("text") or msg.get("caption") or "").strip()
-        if chat is None or not text:
+        kind = None
+        chat = None
+        if cb:
+            tg_api("answerCallbackQuery", {"callback_query_id": cb.get("id")})
+            chat = ((cb.get("message") or {}).get("chat") or {}).get("id")
+            kind = cb.get("data") if cb.get("data") in KINDS else None
+        else:
+            chat = (msg.get("chat") or {}).get("id")
+            text = (msg.get("text") or msg.get("caption") or "").strip()
+            if chat is None or not text:
+                continue
+            kind = intent(text)
+        if chat is None or kind is None:
             continue
         chat_s = str(chat)
         if chat_s not in allowed:
             print(f"Ignoruji cizí chat {chat_s}")
-            continue
-        kind = intent(text)
-        if kind is None:
             continue
         if skip_full and kind == "full":
             continue
@@ -808,6 +938,7 @@ def run(*, daily: bool, inbox: bool) -> int:
     if not tg_token():
         print("Nastavte GitHub Actions secret TELEGRAM_BOT_TOKEN (a TELEGRAM_CHAT_ID).")
         return 1
+    register_commands()
     sent_daily = False
     if daily:
         chats = allowed_chats()
