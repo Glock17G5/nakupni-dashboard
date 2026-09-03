@@ -3326,7 +3326,10 @@ def render_morning_briefing() -> None:
             unsafe_allow_html=True,
         )
     st.caption(
-        t("Jen veřejné trhy (LME, CCMN, ČNB, Yahoo). Interní nákupy a zásilky sem nepatří.")
+        t(
+            "Jen veřejné trhy (LME Westmetall, CCMN, ČNB, Yahoo). "
+            "Interní nákupy a zásilky sem nepatří."
+        )
     )
 
 
