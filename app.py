@@ -719,20 +719,73 @@ footer { visibility: hidden; }
     .card-extra-emphasis { font-size: 0.92rem; }
     .section-title { font-size: 0.85rem; }
     [data-testid="stHorizontalBlock"] { flex-direction: column !important; }
-    [data-testid="stHorizontalBlock"] > div { width: 100% !important; }
-    [data-testid="stTabs"] { padding: 6px 8px 14px 8px; border-radius: 14px; }
+    [data-testid="stHorizontalBlock"] > div,
+    [data-testid="column"],
+    [data-testid="stColumn"] {
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        position: relative !important;
+        overflow: visible !important;
+    }
+    [data-testid="stTabs"] {
+        position: relative !important;
+        top: auto !important;
+        z-index: auto;
+        padding: 4px 6px 10px !important;
+        margin-left: -0.4rem;
+        margin-right: -0.4rem;
+        border-radius: 14px;
+    }
     [data-testid="stTabs"] button {
         font-size: 0.88rem !important;
         padding: 6px 10px !important;
         white-space: nowrap !important;
     }
+    /* Lepí se jen hlavní lišta (Kovy, Měny, …), ne celý blok i s grafy */
     [data-testid="stTabs"] [data-baseweb="tab-list"] {
+        position: sticky;
+        top: 0;
+        z-index: 50;
         overflow-x: auto !important;
         flex-wrap: nowrap !important;
         scrollbar-width: none;
+        background: #171B22;
+        padding: 6px 4px 8px;
+        border-radius: 0 0 12px 12px;
+        box-shadow: 0 10px 18px -12px rgba(0, 0, 0, 0.7);
     }
     [data-testid="stTabs"] [data-baseweb="tab-list"]::-webkit-scrollbar { display: none; }
-    .chart-wrap { padding: 10px 4px; border-radius: 12px; }
+    /* Vnořené Graf / Tabulka u kovů se nesmí lepit přes další karty */
+    [data-testid="stTabs"] [data-testid="stTabs"] {
+        position: relative !important;
+        top: auto !important;
+        z-index: 1 !important;
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+        padding: 4px 0 8px !important;
+        background: transparent;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+        border: none;
+        box-shadow: none;
+        overflow: hidden;
+    }
+    [data-testid="stTabs"] [data-testid="stTabs"] [data-baseweb="tab-list"] {
+        position: relative !important;
+        top: auto !important;
+        z-index: 1 !important;
+        background: transparent;
+        box-shadow: none;
+        padding: 0 0 6px;
+    }
+    .chart-wrap {
+        padding: 10px 4px;
+        border-radius: 12px;
+        overflow: hidden;
+        isolation: isolate;
+    }
+    div[data-testid="stPlotlyChart"] { overflow: hidden; }
     .currency-bar { padding: 10px 12px; }
     .gps-shipment { padding: 12px 14px; }
     .gps-shipment-name { font-size: 1.08rem; }
@@ -740,14 +793,6 @@ footer { visibility: hidden; }
     .stButton > button { min-height: 44px; }
     .currency-bar-hint { display: none; }
     .dash-header-content { flex-direction: column; align-items: flex-start; }
-    [data-testid="stTabs"] {
-        position: sticky;
-        top: 0;
-        z-index: 40;
-        padding: 4px 6px 10px !important;
-        margin-left: -0.4rem;
-        margin-right: -0.4rem;
-    }
     [data-testid="stMetric"] { width: 100%; }
     [data-testid="stDataFrame"],
     [data-testid="stDataEditor"] {
@@ -856,7 +901,7 @@ footer { visibility: hidden; }
     .briefing-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 640px) {
-    .briefing-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .briefing-grid { grid-template-columns: 1fr; }
 }
 .briefing-tile {
     background: rgba(30, 36, 46, 0.92);
@@ -971,6 +1016,11 @@ button[kind="secondary"]:hover { background: rgba(77, 159, 255, 0.12) !important
     border-radius: 3px !important;
 }
 [data-testid="stTabs"] [data-baseweb="tab-border"] { background: #2C3442 !important; }
+[data-testid="stTabs"] [data-testid="stTabs"] {
+    position: relative !important;
+    top: auto !important;
+    z-index: 1;
+}
 
 details summary {
     font-family: 'Syne', sans-serif !important;

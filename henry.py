@@ -14,6 +14,7 @@ import os
 import re
 import sys
 import tempfile
+import traceback
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
@@ -360,15 +361,21 @@ def _abs_url(href: str) -> str:
     return raw
 
 
+def _naive(dt: datetime | None) -> datetime | None:
+    """Porovnávání datumů musí být bez mixu tz-aware / tz-naive."""
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        return dt.astimezone(TZ).replace(tzinfo=None)
+    return dt
+
+
 def parse_news_dt(text: str) -> datetime | None:
     text = (text or "").strip()
     if not text:
         return None
     try:
-        dt = parsedate_to_datetime(text)
-        if dt.tzinfo is not None:
-            dt = dt.astimezone(TZ).replace(tzinfo=None)
-        return dt
+        return _naive(parsedate_to_datetime(text))
     except Exception:
         pass
     m = re.search(r"(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})", text)
@@ -384,7 +391,7 @@ def parse_news_dt(text: str) -> datetime | None:
     want = WD_CS.get(key)
     if want is None:
         return None
-    today = _now().replace(hour=0, minute=0, second=0, microsecond=0)
+    today = _naive(_now()).replace(hour=0, minute=0, second=0, microsecond=0)
     delta = (today.weekday() - want) % 7
     return today - timedelta(days=delta)
 
@@ -501,13 +508,13 @@ def pick_news(*, cats: tuple[str, ...] | None = None, limit: int = NEWS_LIMIT) -
             pooled.extend(rss_col(col))
         for q in GNEWS_QUERIES:
             pooled.extend(google_news(q))
-        cutoff = _now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=NEWS_DAYS)
+        cutoff = _naive(_now()).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=NEWS_DAYS)
         buckets: dict[str, list[dict]] = {k: [] for k in CAT_ORDER}
         seen: set[str] = set()
         for item in pooled:
             url = item.get("url") or ""
             title = item.get("title") or ""
-            dt = item.get("dt")
+            dt = _naive(item.get("dt"))
             if not url or url in seen or dt is None or dt < cutoff:
                 continue
             cat = classify(title, url)
@@ -594,6 +601,13 @@ def format_news(items: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def spoken_news(items: list[dict]) -> str:
+    if not items:
+        return news_synthesis(items)
+    titles = ". ".join(i["title"] for i in items[:5])
+    return news_synthesis(items) + " Hlavní titulky: " + titles + "."
+
+
 def greeting() -> str:
     now = _now()
     return f"Ahoj. Tady Henry, {WEEKDAY_CS[now.weekday()]} {now.strftime('%d. %m. %Y %H:%M')}."
@@ -636,10 +650,6 @@ def _metal_news(kind: str) -> list[dict]:
         if len(items) >= 5:
             break
     return items
-    if not items:
-        return news_synthesis(items)
-    titles = ". ".join(i["title"] for i in items[:5])
-    return news_synthesis(items) + " Hlavní titulky: " + titles + "."
 
 
 def build_payload(kind: str) -> tuple[str, str]:
@@ -924,11 +934,15 @@ def process_inbox(*, skip_full: bool = False) -> int:
             continue
         if skip_full and kind == "full":
             continue
-        if kind not in cache:
-            cache[kind] = build_payload(kind)
-        body, spoken = cache[kind]
-        send_reply(chat_s, body, spoken)
-        replied += 1
+        try:
+            if kind not in cache:
+                cache[kind] = build_payload(kind)
+            body, spoken = cache[kind]
+            send_reply(chat_s, body, spoken)
+            replied += 1
+        except Exception:
+            print(f"Chyba při odpovědi ({kind}) do {chat_s}:")
+            traceback.print_exc()
     if last_id:
         _write_offset(last_id)
     return replied
@@ -947,14 +961,18 @@ def run(*, daily: bool, inbox: bool) -> int:
         elif _daily_already_sent() and "--daily" not in sys.argv:
             print("Denní souhrn už dnes šel — přeskočeno.")
         else:
-            text, spoken = build_payload("full")
-            ok = True
-            for chat in chats:
-                print(f"Posílám denní souhrn do {chat}")
-                ok = send_reply(chat, text, spoken) and ok
-            if ok:
-                _mark_daily_sent()
-            sent_daily = ok
+            try:
+                text, spoken = build_payload("full")
+                ok = True
+                for chat in chats:
+                    print(f"Posílám denní souhrn do {chat}")
+                    ok = send_reply(chat, text, spoken) and ok
+                if ok:
+                    _mark_daily_sent()
+                sent_daily = ok
+            except Exception:
+                traceback.print_exc()
+                sent_daily = False
     if inbox:
         n = process_inbox(skip_full=sent_daily)
         print(f"Inbox: {n} odpovědí.")
