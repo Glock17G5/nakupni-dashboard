@@ -7,7 +7,7 @@ Polední report 11:00–13:00 jen při silných dnešních titulcích.
 LME flash 14:00–16:00, až je dnešní Official a |den| ≥ práh.
 
 Hlas jen u ranního souhrnu, extra reportů a tlačítka Souhrn.
-Zprávy: CZ + svět (Google News), titulky do češtiny.
+Zprávy jen z českých webů (Kurzy.cz, BusinessInfo). Hlas čte česky, bez vlnovek.
 
 Příkazy: /henry, update, měď, hliník, zprávy, doprava, kurzy, hlas, /help
 """
@@ -63,13 +63,23 @@ NEWS_LIMIT = 12
 LIST_QUERIES = ("měď", "hliník", "kontejner", "Turecko", "Čína", "clo", "energetika")
 RSS_COLS = ("ptKomodity", "wzMeny", "wzMakro", "ptEkonomika", "ptPolitika")
 GNEWS_CZ = (
-    "site:businessinfo.cz when:7d (energetika OR clo OR Čína OR doprava OR Turecko OR sankce)",
-    "when:7d (hliník OR aluminium) (LME OR cena OR zásob)",
+    "site:businessinfo.cz when:7d (energetika OR clo OR Čína OR doprava OR Turecko OR sankce OR měď OR hliník)",
+    "site:kurzy.cz when:7d (měď OR hliník OR LME OR kontejner OR clo OR energetika)",
 )
-GNEWS_WORLD = (
-    "when:7d (copper OR aluminium OR aluminum) (LME OR SHFE OR smelter OR concentrate OR stocks)",
-    "when:7d (China OR Turkey) (copper OR aluminium OR aluminum) (tariff OR export OR quota OR CBAM)",
-    "when:7d (Red Sea OR Hormuz OR Suez OR \"container freight\" OR SCFI) (shipping OR port OR houthi)",
+CZ_HOST_RE = re.compile(
+    r"kurzy\.cz|businessinfo\.cz|cnb\.cz|novinky\.cz|idnes\.cz|"
+    r"seznamzpravy\.cz|ceskatelevize\.cz|\bct24\b|ihned\.cz|ekonom\.cz|"
+    r"e15\.cz|patria\.cz|irozhlas\.cz|aktualne\.cz|lidovky\.cz|"
+    r"denikn?\.cz|oenergetice\.cz|euro\.cz|penize\.cz|finance\.cz|"
+    r"czechtrade\.cz|mpo\.cz|mfcr\.cz",
+    re.I,
+)
+FOREIGN_PUB_RE = re.compile(
+    r"\bcnbc\b|al jazeera|ahram|middle[- ]east|reuters|bloomberg|"
+    r"\bbbc\b|yahoo news|associated press|\bap news\b|scmp|"
+    r"south china morning|the guardian|\bcnn\b|fox news|"
+    r"middle-east-online",
+    re.I,
 )
 CAT_ORDER = {"metal": 0, "freight": 1, "energy": 2, "geo": 3, "macro": 4}
 CAT_LABEL = {
@@ -196,14 +206,14 @@ HELP_TEXT = (
     "\n"
     "Měď — LME + Čína CCMN vs LME + zprávy o mědi za 7 dní\n"
     "Hliník — to samé pro hliník\n"
-    "Zprávy — CZ i svět, titulky česky (měď, hliník, doprava, energetika, politika)\n"
+    "Zprávy — jen české weby (Kurzy.cz, BusinessInfo): měď, hliník, doprava, energetika, politika\n"
     "Doprava — kontejnery, trasy, cla, energie\n"
     "Kurzy — ČNB EUR, USD, CNY, TRY\n"
     "Souhrn — všechno naráz (s hlasem)\n"
     "Hlas — další hlas (Antonín, klidný, hluboký, Vlasta)\n"
     "\n"
     "Ranní souhrn v 7:00 (Po–Pá) a víkendový v 8:00 jsou s hlasem, stejně jako Souhrn.\n"
-    "O víkendu LME neobchoduje — číslo zůstane páteční official, zprávy jedou dál.\n"
+    "O víkendu LME neobchoduje — číslo zůstane páteční oficiální kurz, zprávy jedou dál.\n"
     "Po–Pá mezi 11. a 13. hodinou jen při velké zprávě. Dnešní LME Cash až po 14. hodině.\n"
     f"Dashboard: {DASHBOARD_URL}\n"
     "Kolegy přidejte do této skupiny."
@@ -374,6 +384,56 @@ def to_czech(text: str) -> str:
         print(f"překlad selhal: {raw[:80]}")
     _tr_cache[raw] = out
     return out
+
+
+def _pct_spoken(p: float) -> str:
+    sign = "plus" if p >= 0 else "mínus"
+    return f"{sign} {abs(p):.1f} procent".replace(".", ",")
+
+
+def for_speech(text: str) -> str:
+    """Text pro TTS: česky, bez vlnovek a zkratek, které Edge hláskuje."""
+    t = text or ""
+    t = re.sub(r"https?://\S+", "", t)
+    t = t.replace("≈", " přibližně ")
+    t = t.replace("~", " přibližně ")
+    t = t.replace("→", " na ")
+    t = t.replace("·", ". ")
+    t = t.replace("—", ". ")
+    t = t.replace("–", " až ")
+    t = t.replace("%", " procent")
+    t = re.sub(r"(?<!\w)\+(?=\d)", " plus ", t)
+    t = re.sub(r"(?<!\d)-(?=\d)", " mínus ", t)
+    t = re.sub(r"USD/t", " dolarů za tunu", t, flags=re.I)
+    t = re.sub(r"CNY/t", " jüanů za tunu", t, flags=re.I)
+    t = re.sub(r"EUR/t", " eur za tunu", t, flags=re.I)
+    t = re.sub(r"\bLME Cash\b", "cena LME", t, flags=re.I)
+    t = re.sub(r"\bOfficial Settlement\b", "oficiální vypořádání", t, flags=re.I)
+    t = re.sub(r"\bofficial\b", "oficiální kurz", t, flags=re.I)
+    t = re.sub(r"\bChangjiang\b", "Čchang-ťiang", t, flags=re.I)
+    t = re.sub(r"\bCCMN\b", "čínský spot", t)
+    t = re.sub(r"\bSMA20\b", "dvacetidenní průměr", t)
+    t = re.sub(r"\bSMA50\b", "padesátidenní průměr", t)
+    t = re.sub(r"\bRSI\b", "ukazatel RSI", t)
+    t = re.sub(r"\bN/A\b", "není k dispozici", t)
+    t = re.sub(r"\bWestmetallu\b", "Westmetalu", t)
+    t = re.sub(r"\bWestmetall\b", "Westmetal", t)
+    t = re.sub(r"\bCBAM\b", "uhlíkové clo", t)
+    t = re.sub(r"\bSCFI\b", "šanghajský index kontejnerů", t)
+    t = re.sub(r"\bLNG\b", "zkapalněný plyn", t)
+    t = re.sub(r"\bEUR\b", "euro", t)
+    t = re.sub(r"\bUSD\b", "dolar", t)
+    t = re.sub(r"\bCNY\b", "jüan", t)
+    t = re.sub(r"\bTRY\b", "turecká lira", t)
+    t = re.sub(r"\bcca\b", "přibližně", t, flags=re.I)
+    t = re.sub(
+        r"(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})\s+(\d{1,2}):(\d{2})",
+        r"\1. \2. \3, \4 hodin \5",
+        t,
+    )
+    t = re.sub(r"\b(\d{1,2}):(\d{2})\b", r"\1 hodin \2", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t[:2200]
 
 
 def _now() -> datetime:
@@ -675,25 +735,44 @@ def usd_per_cny() -> float | None:
         return None
 
 
-def china_vs_lme(metal: str, lme_usd: float | None) -> str:
+def china_vs_lme(metal: str, lme_usd: float | None, *, spoken: bool = False) -> str:
     cny = fetch_ccmn_cny(metal)
     fx = usd_per_cny()
     if not cny:
-        return "Čína CCMN: spot teď nemám."
+        return "Čínský spot teď nemám." if spoken else "Čína CCMN: spot teď nemám."
     if not fx:
-        return f"Čína CCMN {_fmt(cny, 0)} CNY/t (kurz CNY→USD teď nemám)."
+        if spoken:
+            return f"Čínský spot {_fmt(cny, 0)} jüanů za tunu. Kurz jüanu na dolar teď nemám."
+        return f"Čína CCMN {_fmt(cny, 0)} CNY/t (kurz CNY na USD teď nemám)."
     usd = cny * fx
     if not lme_usd:
-        return f"Čína Changjiang {_fmt(cny, 0)} CNY/t ≈ {_fmt(usd, 0)} USD/t."
+        if spoken:
+            return (
+                f"Čínský spot Čchang-ťiang je {_fmt(cny, 0)} jüanů za tunu, "
+                f"přibližně {_fmt(usd, 0)} dolarů za tunu."
+            )
+        return f"Čína Čchang-ťiang {_fmt(cny, 0)} CNY/t, cca {_fmt(usd, 0)} USD/t."
     spread = (usd - lme_usd) / lme_usd * 100.0
     if spread < -1:
         vs = f"levnější než LME o {abs(spread):.1f} %"
+        vs_s = (
+            f"Je levnější než LME o {abs(spread):.1f} procent".replace(".", ",") + "."
+        )
     elif spread > 1:
         vs = f"dražší než LME o {spread:.1f} %"
+        vs_s = (
+            f"Je dražší než LME o {spread:.1f} procent".replace(".", ",") + "."
+        )
     else:
         vs = f"skoro stejně jako LME ({spread:+.1f} %)"
+        vs_s = f"Je skoro stejně jako LME, {_pct_spoken(spread)}."
+    if spoken:
+        return (
+            f"Čínský spot Čchang-ťiang je {_fmt(cny, 0)} jüanů za tunu, "
+            f"přibližně {_fmt(usd, 0)} dolarů za tunu. {vs_s}"
+        )
     return (
-        f"Čína Changjiang {_fmt(cny, 0)} CNY/t ≈ {_fmt(usd, 0)} USD/t — {vs}."
+        f"Čína Čchang-ťiang {_fmt(cny, 0)} CNY/t, cca {_fmt(usd, 0)} USD/t — {vs}."
     )
 
 
@@ -702,51 +781,107 @@ def _lme_closed() -> bool:
     return _now().weekday() >= 5
 
 
-def _lme_stamp(asof) -> str:
+def _lme_stamp(asof, *, spoken: bool = False) -> str:
     asof_s = asof.strftime("%d.%m.") if asof else "?"
     today = asof is not None and asof == _naive(_now()).date()
     if today:
-        return "dnešní official"
+        return "dnešní oficiální kurz"
     if _lme_closed():
+        if spoken:
+            return (
+                f"poslední oficiální kurz z {asof_s}. "
+                "Burza o víkendu neobchoduje, číslo se nemění"
+            )
         return (
-            f"poslední official {asof_s} — LME o víkendu neobchoduje, "
+            f"poslední oficiální kurz {asof_s} — LME o víkendu neobchoduje, "
             "číslo se nemění"
         )
-    return f"official {asof_s} (dnešní až ~13:20 Praha)"
+    if spoken:
+        return (
+            f"oficiální kurz z {asof_s}. "
+            "Dnešní číslo bývá až kolem třinácté dvacet v Praze"
+        )
+    return f"oficiální kurz {asof_s} (dnešní až cca 13:20 Praha)"
 
 
-def metal_block(name: str, df: pd.DataFrame | None, *, metal: str | None = None) -> str:
+def metal_block(
+    name: str,
+    df: pd.DataFrame | None,
+    *,
+    metal: str | None = None,
+    spoken: bool = False,
+) -> str:
     if df is None or df.empty:
-        lme_line = f"{name}: Westmetall teď neodpověděl."
+        lme_line = (
+            f"{name}: Westmetal teď neodpověděl."
+            if spoken
+            else f"{name}: Westmetall teď neodpověděl."
+        )
         price = None
     else:
         price = float(df["Close"].iloc[-1])
         rsi = rsi14(df)
         s20, s50 = sma_last(df, 20), sma_last(df, 50)
         wp = week_pct(df)
-        week = "týden N/A" if wp is None else f"týden {wp:+.1f} %"
-        rsi_s = "RSI N/A" if rsi is None else f"RSI {rsi:.0f} ({rsi_words(rsi)})"
-
-        def vs(sma, label):
-            if not sma:
-                return f"{label} N/A"
-            pct = (price / sma - 1.0) * 100.0
-            return f"{'nad' if pct >= 0 else 'pod'} {label} o {abs(pct):.1f} %"
-
         look = outlook(df)
-        if look:
-            pct, direction = look
-            ens = f"Výhled ~21 dní: {direction} ({pct:+.1f} %, statistika)."
-        else:
-            ens = "Výhled: málo historie."
         asof = lme_asof(df)
-        stamp = _lme_stamp(asof)
-        lme_line = (
-            f"{name} LME Cash {_fmt(price, 0)} USD/t ({stamp}) · {week}. {rsi_s}. "
-            f"{vs(s20, 'SMA20')}, {vs(s50, 'SMA50')}. {ens}"
-        )
+        stamp = _lme_stamp(asof, spoken=spoken)
+        if spoken:
+            week = (
+                "Týdenní změnu teď nemám."
+                if wp is None
+                else f"Za týden {_pct_spoken(wp)}."
+            )
+            rsi_s = (
+                "Ukazatel RSI teď nemám."
+                if rsi is None
+                else f"Ukazatel RSI {rsi:.0f}, {rsi_words(rsi)}."
+            )
+
+            def vs_s(sma, label):
+                if not sma:
+                    return f"{label} teď nemám."
+                pct = (price / sma - 1.0) * 100.0
+                side = "nad" if pct >= 0 else "pod"
+                num = f"{abs(pct):.1f}".replace(".", ",")
+                return f"Cena je {side} {label} o {num} procent."
+
+            if look:
+                pct, direction = look
+                ens = (
+                    f"Statistika na příštích zhruba tři týdny ukazuje {direction}, "
+                    f"{_pct_spoken(pct)}."
+                )
+            else:
+                ens = "Na delší výhled je málo historie."
+            lme_line = (
+                f"{name} na LME stojí {_fmt(price, 0)} dolarů za tunu. "
+                f"Jde o {stamp}. {week} {rsi_s} "
+                f"{vs_s(s20, 'dvacetidenním průměrem')} "
+                f"{vs_s(s50, 'padesátidenním průměrem')} {ens}"
+            )
+        else:
+            week = "týden N/A" if wp is None else f"týden {wp:+.1f} %"
+            rsi_s = "RSI N/A" if rsi is None else f"RSI {rsi:.0f} ({rsi_words(rsi)})"
+
+            def vs(sma, label):
+                if not sma:
+                    return f"{label} N/A"
+                pct = (price / sma - 1.0) * 100.0
+                return f"{'nad' if pct >= 0 else 'pod'} {label} o {abs(pct):.1f} %"
+
+            if look:
+                pct, direction = look
+                ens = f"Výhled cca 21 dní: {direction} ({pct:+.1f} %, statistika)."
+            else:
+                ens = "Výhled: málo historie."
+            lme_line = (
+                f"{name} LME Cash {_fmt(price, 0)} USD/t ({stamp}) · {week}. {rsi_s}. "
+                f"{vs(s20, 'SMA20')}, {vs(s50, 'SMA50')}. {ens}"
+            )
     if metal in ("copper", "aluminum"):
-        return lme_line + "\n" + china_vs_lme(metal, price)
+        sep = " " if spoken else "\n"
+        return lme_line + sep + china_vs_lme(metal, price, spoken=spoken)
     return lme_line
 
 
@@ -888,20 +1023,45 @@ def google_news(query: str, *, hl: str = "cs", gl: str = "CZ", ceid: str = "CZ:c
         if not title or not link:
             continue
         title = re.sub(r"\s*-\s*BusinessInfo\.cz\s*$", "", title, flags=re.I)
+        src_el = item.find("source")
+        source = (src_el.text or "").strip() if src_el is not None else ""
+        src_url = (src_el.get("url") or "") if src_el is not None else ""
         out.append({
             "title": title,
             "url": link,
             "when": pub,
             "dt": parse_news_dt(pub),
+            "source": source,
+            "source_url": src_url,
         })
     return out
+
+
+def _story_key(title: str) -> str:
+    t = (title or "").lower()
+    t = re.sub(r"\s*[-–|]\s*[^-–|]{2,50}$", "", t)
+    t = re.sub(r"[^a-záčďéěíňóřšťúůýž0-9]+", " ", t, flags=re.I)
+    words = [w for w in t.split() if len(w) > 2]
+    return " ".join(words[:8])
+
+
+def _is_cz_news(url: str, title: str, source: str = "", source_url: str = "") -> bool:
+    blob = f"{title} {source} {url} {source_url}"
+    if FOREIGN_PUB_RE.search(blob):
+        return False
+    host_blob = f"{url} {source} {source_url}"
+    if CZ_HOST_RE.search(host_blob) or "kurzy" in (url or "").lower():
+        return True
+    if "news.google.com" in (url or "").lower():
+        return _looks_czech(title)
+    return False
 
 
 def pick_news(*, cats: tuple[str, ...] | None = None, limit: int = NEWS_LIMIT) -> list[dict]:
     global _news_cache, _news_cache_at, _news_pool
     stale = _news_cache is None or (time.time() - _news_cache_at) > NEWS_CACHE_SEC
     if stale:
-        print("Kurzy.cz + Google News CZ/svět za 7 dní…")
+        print("Kurzy.cz + BusinessInfo za 7 dní…")
         pooled: list[dict] = []
         for q in LIST_QUERIES:
             pooled.extend(listing(q))
@@ -909,21 +1069,34 @@ def pick_news(*, cats: tuple[str, ...] | None = None, limit: int = NEWS_LIMIT) -
             pooled.extend(rss_col(col))
         for q in GNEWS_CZ:
             pooled.extend(google_news(q))
-        for q in GNEWS_WORLD:
-            pooled.extend(google_news(q, hl="en-US", gl="US", ceid="US:en"))
         cutoff = _naive(_now()).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=NEWS_DAYS)
         buckets: dict[str, list[dict]] = {k: [] for k in CAT_ORDER}
         seen: set[str] = set()
+        seen_stories: set[str] = set()
         for item in pooled:
             url = item.get("url") or ""
             title = item.get("title") or ""
             dt = _naive(item.get("dt"))
             if not url or url in seen or dt is None or dt < cutoff:
                 continue
+            if not _is_cz_news(
+                url,
+                title,
+                item.get("source") or "",
+                item.get("source_url") or "",
+            ):
+                continue
+            key = _story_key(title)
+            if key:
+                words = set(key.split())
+                if any(len(words & set(prev.split())) >= 5 for prev in seen_stories):
+                    continue
             cat = classify(title, url)
             if not cat:
                 continue
             seen.add(url)
+            if key:
+                seen_stories.add(key)
             row = {
                 "title": title,
                 "url": url,
@@ -1037,6 +1210,32 @@ def fetch_cnb_text() -> str:
     return f"ČNB {date_str}: " + " · ".join(bits) + " (Kč za 1 jednotku)."
 
 
+def fetch_cnb_spoken() -> str:
+    rates = fetch_cnb_rates()
+    if not rates:
+        return "Česká národní banka teď neodpověděla."
+    names = {
+        "EUR": "euro",
+        "USD": "americký dolar",
+        "CNY": "čínský jüan",
+        "TRY": "turecká lira",
+    }
+    bits = []
+    for code, label in names.items():
+        val = rates.get(code)
+        if val is None:
+            continue
+        bits.append(f"{label} {float(val):.3f}".replace(".", ","))
+    if not bits:
+        return "Lístek České národní banky se nepovedlo přečíst."
+    date_str = str(rates.get("_date") or "")
+    return (
+        f"Kurzy České národní banky z {date_str}. "
+        + ". ".join(bits)
+        + ". Koruny za jednu jednotku."
+    )
+
+
 def _metal_news(kind: str) -> list[dict]:
     needle = CU_NEWS_RE if kind == "copper" else AL_NEWS_RE
     items = []
@@ -1060,19 +1259,21 @@ def build_payload(kind: str) -> tuple[str, str]:
         return HELP_TEXT, "Napište update, měď, hliník, zprávy, doprava, nebo kurzy."
     if kind == "fx":
         text = greeting() + "\n\n" + fetch_cnb_text()
-        return text, text
+        return text, greeting() + " " + fetch_cnb_spoken()
     if kind == "copper":
         block = metal_block("Měď", lme("copper"), metal="copper")
+        spoken_block = metal_block("Měď", lme("copper"), metal="copper", spoken=True)
         items = _metal_news("copper")
         extra = ("\n\n" + format_news(items)) if items else "\n\nZa posledních 7 dní nemám zvláštní titulek jen k mědi."
         text = greeting() + "\n\n" + block + extra
-        return text, greeting() + " " + block + " " + spoken_news(items)
+        return text, greeting() + " " + spoken_block + " " + spoken_news(items)
     if kind == "aluminum":
         block = metal_block("Hliník", lme("aluminum"), metal="aluminum")
+        spoken_block = metal_block("Hliník", lme("aluminum"), metal="aluminum", spoken=True)
         items = _metal_news("aluminum")
         extra = ("\n\n" + format_news(items)) if items else "\n\nZa posledních 7 dní nemám zvláštní titulek jen k hliníku."
         text = greeting() + "\n\n" + block + extra
-        return text, greeting() + " " + block + " " + spoken_news(items)
+        return text, greeting() + " " + spoken_block + " " + spoken_news(items)
     if kind == "freight":
         items = pick_news(cats=("freight", "geo"), limit=6)
         body = format_news(items)
@@ -1088,6 +1289,8 @@ def build_payload(kind: str) -> tuple[str, str]:
     # full / morning
     cu = metal_block("Měď", lme("copper"), metal="copper")
     al = metal_block("Hliník", lme("aluminum"), metal="aluminum")
+    cu_s = metal_block("Měď", lme("copper"), metal="copper", spoken=True)
+    al_s = metal_block("Hliník", lme("aluminum"), metal="aluminum", spoken=True)
     items = pick_news()
     syn = news_synthesis(items)
     text = "\n".join([
@@ -1100,13 +1303,13 @@ def build_payload(kind: str) -> tuple[str, str]:
         "",
         format_news(items),
         "",
-        "LME Official Settlement na Westmetallu: dnešní číslo bývá ~13:20–14:25 Praha. "
-        "O víkendu LME neobchoduje — zůstane páteční official. "
-        "CCMN Changjiang ráno ~10:30 čínského času (u nás okolo 4:30).",
+        "Oficiální vypořádání LME na Westmetalu: dnešní číslo bývá cca 13:20–14:25 Praha. "
+        "O víkendu LME neobchoduje — zůstane páteční oficiální kurz. "
+        "Čínský spot Čchang-ťiang ráno cca 10:30 čínského času (u nás okolo 4:30).",
         f"Dashboard: {DASHBOARD_URL}",
-        "Westmetall LME Cash, ccmn.cn, Kurzy.cz, Google News (CZ i svět, titulky česky), ČNB na příkaz kurzy.",
+        "Westmetall LME Cash, ccmn.cn, Kurzy.cz, BusinessInfo, ČNB na příkaz kurzy.",
     ])
-    spoken = " ".join([greeting(), cu, al, syn, "Odkazy jsou v textu."])
+    spoken = " ".join([greeting(), cu_s, al_s, syn, "Odkazy jsou v textu."])
     return text, spoken
 
 
@@ -1239,8 +1442,7 @@ def speak_to_mp3(text: str, path: str) -> bool:
     except Exception as e:
         print(f"TTS import: {e}")
         return False
-    spoken = re.sub(r"https?://\S+", "", text)
-    spoken = re.sub(r"\s+", " ", spoken).strip()[:2200]
+    spoken = for_speech(text)
     if not spoken:
         return False
 
@@ -1439,13 +1641,13 @@ def evaluate_midday(*, allow_lme_price: bool = False) -> dict:
     lme_today = lme_is_today(cu_df) or lme_is_today(al_df)
     if allow_lme_price and lme_today:
         if cu_d is not None and abs(cu_d) >= PRICE_SHOCK_PCT:
-            reasons.append(f"měď {cu_d:+.1f} % vs včerejší LME Official")
+            reasons.append(f"měď {cu_d:+.1f} % proti včerejšímu oficiálnímu kurzu LME")
         if al_d is not None and abs(al_d) >= PRICE_SHOCK_PCT:
-            reasons.append(f"hliník {al_d:+.1f} % vs včerejší LME Official")
+            reasons.append(f"hliník {al_d:+.1f} % proti včerejšímu oficiálnímu kurzu LME")
     critical = [h for h in headlines if int(h.get("impact") or 0) >= 3]
     strong = [h for h in headlines if int(h.get("impact") or 0) >= 2]
     if critical:
-        reasons.append("kritický titulek: " + critical[0]["title"])
+        reasons.append("kritický titulek: " + to_czech(critical[0]["title"]))
     score = sum(int(h.get("impact") or 0) for h in headlines)
     if (
         score >= MIDDAY_IMPACT_MIN
@@ -1479,6 +1681,8 @@ def _midday_payload(decision: dict | None = None) -> tuple[str, str]:
     why = d["reasons"] or ["ruční spuštění"]
     cu = metal_block("Měď", lme("copper"), metal="copper")
     al = metal_block("Hliník", lme("aluminum"), metal="aluminum")
+    cu_s = metal_block("Měď", lme("copper"), metal="copper", spoken=True)
+    al_s = metal_block("Hliník", lme("aluminum"), metal="aluminum", spoken=True)
     items = d.get("headlines") or []
     news = format_news(items) if items else "Nový silný titulek od rána nemám — spouštěč je pohyb LME."
     text = "\n".join([
@@ -1493,7 +1697,7 @@ def _midday_payload(decision: dict | None = None) -> tuple[str, str]:
         news,
     ])
     spoken = (
-        "Polední report. " + " ".join(why) + " " + cu + " " + al
+        "Polední report. " + " ".join(why) + " " + cu_s + " " + al_s
         + " Odkazy jsou v textu."
     )
     return text, spoken
@@ -1511,10 +1715,10 @@ def send_morning(*, force: bool = False) -> bool:
         text, spoken = build_payload("full")
         if _lme_closed():
             head = (
-                "Víkendový souhrn. LME neobchoduje — beru poslední official, "
+                "Víkendový souhrn. LME neobchoduje — beru poslední oficiální kurz, "
                 "číslo se nemění. Zprávy jedou dál.\n\n"
             )
-            spoken_head = "Víkendový souhrn. Burza kovů stojí, číslo je poslední official. "
+            spoken_head = "Víkendový souhrn. Burza kovů stojí, číslo je poslední oficiální kurz. "
         else:
             head = "Ranní souhrn.\n\n"
             spoken_head = "Ranní souhrn. "
@@ -1579,8 +1783,11 @@ def send_lme_flash(*, force: bool = False) -> bool:
             _mark_lme_sent()
             return False
         text, spoken = _midday_payload(decision)
-        text = text.replace("Polední report — jen protože se něco hnulo:", "Dnešní LME Official je na Westmetallu:")
-        spoken = "Dnešní LME Official. " + spoken
+        text = text.replace(
+            "Polední report — jen protože se něco hnulo:",
+            "Dnešní oficiální kurz LME je na Westmetalu:",
+        )
+        spoken = "Dnešní oficiální kurz LME. " + spoken
         ok = True
         for chat in chats:
             print(f"Posílám LME Official flash do {chat}")
