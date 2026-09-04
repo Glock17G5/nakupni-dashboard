@@ -2,13 +2,18 @@ name: Henry Telegram
 
 on:
   schedule:
-    # Každých 10 min: stačí na 2–3 použití denně, bez půlhodinového čekání.
-    - cron: "*/10 * * * *"
+    # Job běží ~6 h (long poll). Každých 5 h se restartuje, mezera je jen pip.
+    - cron: "0 */5 * * *"
   workflow_dispatch:
+
+concurrency:
+  group: henry-telegram
+  cancel-in-progress: true
 
 jobs:
   henry:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
     permissions:
       contents: read
     steps:
@@ -22,20 +27,20 @@ jobs:
           path: |
             .henry_tg_offset
             .henry_daily_sent
+            .henry_midday_sent
+            .henry_lme_sent
+            .henry_morning_urls
           key: henry-tg-${{ github.run_id }}
           restore-keys: |
             henry-tg-
       - run: pip install requests beautifulsoup4 lxml pandas edge-tts
       - name: Run Henry
+        timeout-minutes: 355
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            python henry.py --daily --inbox
-          else
-            python henry.py --inbox
-          fi
+          HENRY_LISTEN_SEC: "20700"
+        run: python henry.py --listen
       - name: Save Telegram offset
         if: always()
         uses: actions/cache/save@v5
@@ -43,4 +48,7 @@ jobs:
           path: |
             .henry_tg_offset
             .henry_daily_sent
+            .henry_midday_sent
+            .henry_lme_sent
+            .henry_morning_urls
           key: henry-tg-${{ github.run_id }}
