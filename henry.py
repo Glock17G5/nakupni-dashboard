@@ -1,9 +1,12 @@
 """
-Henry — Telegram souhrn (ne do dashboardu).
+Henry — Telegram souhrn (ne briefing do dashboardu, jen odkaz).
 
 Běží pořád na GitHub Actions (long poll). Na zprávu odpoví během sekund.
-Ranní souhrn vždy v 7:00 (Po–Pá, Praha). Polední report 11:00–13:00 jen
-při velkém pohybu LME nebo silných dnešních titulcích.
+Ranní souhrn vždy v 7:00 (Po–Pá, Praha): LME Cash + CCMN vs LME.
+Polední report 11:00–13:00 jen při silných dnešních titulcích.
+LME flash 14:00–16:00, až je dnešní Official a |den| ≥ práh.
+
+Hlas jen u ranního souhrnu a extra reportů. Tlačítka = text.
 
 Příkazy: /henry, update, měď, hliník, zprávy, doprava, kurzy, /help
 """
@@ -130,7 +133,11 @@ HIGH_NEWS_RE = re.compile(
     re.I,
 )
 PRICE_SHOCK_PCT = float(os.environ.get("HENRY_SHOCK_PCT") or "1.5")
-MIDDAY_IMPACT_MIN = int(os.environ.get("HENRY_IMPACT_MIN") or "3")
+# 11–13: default 5 = nestačí jeden slabý titulek (high=2 + metal=1).
+MIDDAY_IMPACT_MIN = int(os.environ.get("HENRY_IMPACT_MIN") or "5")
+DASHBOARD_URL = (
+    os.environ.get("HENRY_DASHBOARD_URL") or "https://pbcable.streamlit.app/"
+).strip()
 OFFSET_PATH = ".henry_tg_offset"
 DAILY_MARK = ".henry_daily_sent"
 MIDDAY_MARK = ".henry_midday_sent"
@@ -140,15 +147,16 @@ TG_LIMIT = 3500
 HELP_TEXT = (
     "Henry. Nic nepíšete — klikněte dole na tlačítko, nebo vlevo na lomítko /.\n"
     "\n"
-    "Měď — cena LME + zprávy o mědi za 7 dní\n"
+    "Měď — LME + Čína CCMN vs LME + zprávy o mědi za 7 dní\n"
     "Hliník — to samé pro hliník\n"
     "Zprávy — měď, hliník, doprava, energetika, politika\n"
     "Doprava — kontejnery, trasy, cla, energie\n"
     "Kurzy — ČNB EUR, USD, CNY, TRY\n"
     "Souhrn — všechno naráz\n"
     "\n"
-    "Ranní souhrn chodí v 7:00 (CCMN už bývá, LME ještě včerejší official).\n"
+    "Ranní souhrn v 7:00 (hlas). Tlačítka odpovídají jen textem.\n"
     "Mezi 11. a 13. hodinou jen při velké zprávě. Dnešní LME Cash až po 14. hodině.\n"
+    f"Dashboard: {DASHBOARD_URL}\n"
     "Kolegy přidejte do této skupiny."
 )
 BOT_COMMANDS = [
@@ -192,6 +200,17 @@ _news_cache: list[dict] | None = None
 _news_pool: list[dict] = []
 _news_cache_at = 0.0
 NEWS_CACHE_SEC = 12 * 60
+_ccmn_cache: dict[str, tuple[float, float | None]] = {}
+_cnb_cache: dict | None = None
+_cnb_cache_at = 0.0
+CCMN_CACHE_SEC = 12 * 60
+CNB_CACHE_SEC = 30 * 60
+CCMN_UA = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+}
 
 
 def _now() -> datetime:
@@ -375,36 +394,181 @@ def outlook(df: pd.DataFrame, horizon: int = 21) -> tuple[float, str] | None:
     return pct, direction
 
 
-def metal_block(name: str, df: pd.DataFrame | None) -> str:
-    if df is None or df.empty:
-        return f"{name}: Westmetall teď neodpověděl."
-    price = float(df["Close"].iloc[-1])
-    rsi = rsi14(df)
-    s20, s50 = sma_last(df, 20), sma_last(df, 50)
-    wp = week_pct(df)
-    week = "týden N/A" if wp is None else f"týden {wp:+.1f} %"
-    rsi_s = "RSI N/A" if rsi is None else f"RSI {rsi:.0f} ({rsi_words(rsi)})"
+CCMN_RANGE = {"copper": (30_000, 180_000), "aluminum": (8_000, 50_000)}
 
-    def vs(sma, label):
-        if not sma:
-            return f"{label} N/A"
-        pct = (price / sma - 1.0) * 100.0
-        return f"{'nad' if pct >= 0 else 'pod'} {label} o {abs(pct):.1f} %"
 
-    look = outlook(df)
-    if look:
-        pct, direction = look
-        ens = f"Výhled ~21 dní: {direction} ({pct:+.1f} %, statistika)."
-    else:
-        ens = "Výhled: málo historie."
-    asof = lme_asof(df)
-    asof_s = asof.strftime("%d.%m.") if asof else "?"
-    today = asof is not None and asof == _naive(_now()).date()
-    stamp = "dnešní official" if today else f"official {asof_s} (dnešní až ~13:20 Praha)"
-    return (
-        f"{name} LME Cash {_fmt(price, 0)} USD/t ({stamp}) · {week}. {rsi_s}. "
-        f"{vs(s20, 'SMA20')}, {vs(s50, 'SMA50')}. {ens}"
+def _ccmn_price_from_text(text: str, metal: str) -> float | None:
+    """První číslo v rozumném CNY/t — ne cena + denní změna dohromady."""
+    lo, hi = CCMN_RANGE[metal]
+    for m in re.finditer(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?", text):
+        val = float(m.group(0).replace(",", ""))
+        if lo <= val <= hi:
+            return val
+    for m in re.finditer(r"\d{1,3}(?:\s\d{3})+(?:\.\d+)?", text):
+        val = float(re.sub(r"\s+", "", m.group(0)))
+        if lo <= val <= hi:
+            return val
+    for m in re.finditer(r"\d{4,6}(?:\.\d+)?", text):
+        val = float(m.group(0))
+        if lo <= val <= hi:
+            return val
+    return None
+
+
+def _scrape_ccmn_url(url: str, target: str, metal: str) -> float | None:
+    """Stejný scrape jako data_robot.py — Changjiang / Shanghai, CNY/t."""
+    try:
+        res = requests.get(url, headers=CCMN_UA, timeout=15)
+        res.encoding = "utf-8"
+        soup = BeautifulSoup(res.text, "lxml")
+    except Exception as e:
+        print(f"CCMN {url[:60]}: {e}")
+        return None
+    cell = soup.find(
+        lambda tag: tag.name in ["td", "a", "span"] and tag.get_text(strip=True) == target
     )
+    if cell:
+        parent_tr = cell.find_parent("tr")
+        if parent_tr:
+            cols = parent_tr.find_all("td")
+            if len(cols) >= 3:
+                price = _ccmn_price_from_text(cols[2].get_text(" ", strip=True), metal)
+                if price:
+                    return price
+    picked = None
+    for block in soup.select("div.content1-text-div"):
+        right = block.find("span", class_="right")
+        if not right or right.get_text(strip=True) != target:
+            continue
+        region_el = block.find("span", class_="left")
+        region = region_el.get_text(strip=True) if region_el else ""
+        span = block.select_one("span.up_down_span")
+        if not span:
+            continue
+        price = _ccmn_price_from_text(span.get_text(), metal)
+        if not price:
+            continue
+        if "长江综合" in region:
+            return price
+        if picked is None or "上海地区" in region:
+            picked = price
+    return picked
+
+
+def fetch_ccmn_cny(metal: str) -> float | None:
+    hit = _ccmn_cache.get(metal)
+    if hit and (time.time() - hit[0]) < CCMN_CACHE_SEC:
+        return hit[1]
+    target = "1#铜" if metal == "copper" else "A00铝"
+    fallback = "https://copper.ccmn.cn/" if metal == "copper" else "https://alu.ccmn.cn/"
+    price = None
+    for url in ("https://www.ccmn.cn/", fallback):
+        price = _scrape_ccmn_url(url, target, metal)
+        if price:
+            break
+    _ccmn_cache[metal] = (time.time(), price)
+    return price
+
+
+def fetch_cnb_rates() -> dict | None:
+    global _cnb_cache, _cnb_cache_at
+    if _cnb_cache is not None and (time.time() - _cnb_cache_at) < CNB_CACHE_SEC:
+        return _cnb_cache
+    r = _get(CNB_URL, timeout=20)
+    if r is None:
+        return _cnb_cache
+    lines = r.text.strip().splitlines()
+    if len(lines) < 3:
+        return _cnb_cache
+    out: dict = {"_date": lines[0].split("#")[0].strip()}
+    for line in lines[2:]:
+        parts = line.strip().split("|")
+        if len(parts) != 5:
+            continue
+        code = parts[3].strip().upper()
+        try:
+            amount = int(parts[2])
+            rate = float(parts[4].replace(",", ".")) / amount
+        except (ValueError, ZeroDivisionError):
+            continue
+        out[code] = rate
+    if len(out) < 3:
+        return _cnb_cache
+    _cnb_cache = out
+    _cnb_cache_at = time.time()
+    return out
+
+
+def usd_per_cny() -> float | None:
+    """USD za 1 CNY z ČNB (CNY/CZK ÷ USD/CZK) — stejná logika jako dashboard."""
+    rates = fetch_cnb_rates() or {}
+    try:
+        cny = float(rates["CNY"])
+        usd = float(rates["USD"])
+        if usd == 0:
+            return None
+        return cny / usd
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def china_vs_lme(metal: str, lme_usd: float | None) -> str:
+    cny = fetch_ccmn_cny(metal)
+    fx = usd_per_cny()
+    if not cny:
+        return "Čína CCMN: spot teď nemám."
+    if not fx:
+        return f"Čína CCMN {_fmt(cny, 0)} CNY/t (kurz CNY→USD teď nemám)."
+    usd = cny * fx
+    if not lme_usd:
+        return f"Čína Changjiang {_fmt(cny, 0)} CNY/t ≈ {_fmt(usd, 0)} USD/t."
+    spread = (usd - lme_usd) / lme_usd * 100.0
+    if spread < -1:
+        vs = f"levnější než LME o {abs(spread):.1f} %"
+    elif spread > 1:
+        vs = f"dražší než LME o {spread:.1f} %"
+    else:
+        vs = f"skoro stejně jako LME ({spread:+.1f} %)"
+    return (
+        f"Čína Changjiang {_fmt(cny, 0)} CNY/t ≈ {_fmt(usd, 0)} USD/t — {vs}."
+    )
+
+
+def metal_block(name: str, df: pd.DataFrame | None, *, metal: str | None = None) -> str:
+    if df is None or df.empty:
+        lme_line = f"{name}: Westmetall teď neodpověděl."
+        price = None
+    else:
+        price = float(df["Close"].iloc[-1])
+        rsi = rsi14(df)
+        s20, s50 = sma_last(df, 20), sma_last(df, 50)
+        wp = week_pct(df)
+        week = "týden N/A" if wp is None else f"týden {wp:+.1f} %"
+        rsi_s = "RSI N/A" if rsi is None else f"RSI {rsi:.0f} ({rsi_words(rsi)})"
+
+        def vs(sma, label):
+            if not sma:
+                return f"{label} N/A"
+            pct = (price / sma - 1.0) * 100.0
+            return f"{'nad' if pct >= 0 else 'pod'} {label} o {abs(pct):.1f} %"
+
+        look = outlook(df)
+        if look:
+            pct, direction = look
+            ens = f"Výhled ~21 dní: {direction} ({pct:+.1f} %, statistika)."
+        else:
+            ens = "Výhled: málo historie."
+        asof = lme_asof(df)
+        asof_s = asof.strftime("%d.%m.") if asof else "?"
+        today = asof is not None and asof == _naive(_now()).date()
+        stamp = "dnešní official" if today else f"official {asof_s} (dnešní až ~13:20 Praha)"
+        lme_line = (
+            f"{name} LME Cash {_fmt(price, 0)} USD/t ({stamp}) · {week}. {rsi_s}. "
+            f"{vs(s20, 'SMA20')}, {vs(s50, 'SMA50')}. {ens}"
+        )
+    if metal in ("copper", "aluminum"):
+        return lme_line + "\n" + china_vs_lme(metal, price)
+    return lme_line
 
 
 def _abs_url(href: str) -> str:
@@ -676,29 +840,19 @@ def greeting() -> str:
 
 
 def fetch_cnb_text() -> str:
-    r = _get(CNB_URL, timeout=20)
-    if r is None:
+    rates = fetch_cnb_rates()
+    if not rates:
         return "ČNB teď neodpověděla."
-    lines = r.text.strip().splitlines()
-    date_str = lines[0].split("#")[0].strip() if lines else ""
     want = ("EUR", "USD", "CNY", "TRY")
-    found: dict[str, str] = {}
-    for line in lines[2:]:
-        parts = line.strip().split("|")
-        if len(parts) != 5:
+    bits = []
+    for code in want:
+        val = rates.get(code)
+        if val is None:
             continue
-        code = parts[3].strip().upper()
-        if code not in want:
-            continue
-        try:
-            amount = int(parts[2])
-            rate = float(parts[4].replace(",", ".")) / amount
-        except ValueError:
-            continue
-        found[code] = f"{rate:.3f}".replace(".", ",")
-    if not found:
+        bits.append(f"{code} {float(val):.3f}".replace(".", ","))
+    if not bits:
         return "ČNB lístek se nepovedlo přečíst."
-    bits = [f"{c} {found[c]}" for c in want if c in found]
+    date_str = str(rates.get("_date") or "")
     return f"ČNB {date_str}: " + " · ".join(bits) + " (Kč za 1 jednotku)."
 
 
@@ -722,13 +876,13 @@ def build_payload(kind: str) -> tuple[str, str]:
         text = greeting() + "\n\n" + fetch_cnb_text()
         return text, text
     if kind == "copper":
-        block = metal_block("Měď", lme("copper"))
+        block = metal_block("Měď", lme("copper"), metal="copper")
         items = _metal_news("copper")
         extra = ("\n\n" + format_news(items)) if items else "\n\nZa posledních 7 dní nemám zvláštní titulek jen k mědi."
         text = greeting() + "\n\n" + block + extra
         return text, greeting() + " " + block + " " + spoken_news(items)
     if kind == "aluminum":
-        block = metal_block("Hliník", lme("aluminum"))
+        block = metal_block("Hliník", lme("aluminum"), metal="aluminum")
         items = _metal_news("aluminum")
         extra = ("\n\n" + format_news(items)) if items else "\n\nZa posledních 7 dní nemám zvláštní titulek jen k hliníku."
         text = greeting() + "\n\n" + block + extra
@@ -746,8 +900,8 @@ def build_payload(kind: str) -> tuple[str, str]:
     if kind == "midday":
         return _midday_payload()
     # full / morning
-    cu = metal_block("Měď", lme("copper"))
-    al = metal_block("Hliník", lme("aluminum"))
+    cu = metal_block("Měď", lme("copper"), metal="copper")
+    al = metal_block("Hliník", lme("aluminum"), metal="aluminum")
     items = pick_news()
     syn = news_synthesis(items)
     text = "\n".join([
@@ -762,7 +916,8 @@ def build_payload(kind: str) -> tuple[str, str]:
         "",
         "LME Official Settlement na Westmetallu: dnešní číslo bývá ~13:20–14:25 Praha. "
         "CCMN Changjiang ráno ~10:30 čínského času (u nás okolo 4:30).",
-        "Westmetall LME Cash, Kurzy.cz, BusinessInfo.cz, ČNB na příkaz kurzy.",
+        f"Dashboard: {DASHBOARD_URL}",
+        "Westmetall LME Cash, ccmn.cn, Kurzy.cz, BusinessInfo.cz, ČNB na příkaz kurzy.",
     ])
     spoken = " ".join([greeting(), cu, al, syn, "Odkazy jsou v textu."])
     return text, spoken
@@ -924,9 +1079,10 @@ def send_voice(chat_id: str, spoken: str) -> bool:
             pass
 
 
-def send_reply(chat_id: str, text: str, spoken: str) -> bool:
+def send_reply(chat_id: str, text: str, spoken: str, *, voice: bool = False) -> bool:
     ok = send_text(chat_id, text)
-    send_voice(chat_id, spoken)
+    if voice:
+        send_voice(chat_id, spoken)
     return ok
 
 
@@ -1003,8 +1159,11 @@ def _load_morning_urls() -> set[str]:
 
 
 def _refresh_market() -> None:
-    global _news_cache, _news_cache_at, _news_pool
+    global _news_cache, _news_cache_at, _news_pool, _cnb_cache, _cnb_cache_at
     _lme_cache.clear()
+    _ccmn_cache.clear()
+    _cnb_cache = None
+    _cnb_cache_at = 0.0
     _news_cache = None
     _news_pool = []
     _news_cache_at = 0.0
@@ -1061,11 +1220,19 @@ def evaluate_midday(*, allow_lme_price: bool = False) -> dict:
         if al_d is not None and abs(al_d) >= PRICE_SHOCK_PCT:
             reasons.append(f"hliník {al_d:+.1f} % vs včerejší LME Official")
     critical = [h for h in headlines if int(h.get("impact") or 0) >= 3]
+    strong = [h for h in headlines if int(h.get("impact") or 0) >= 2]
     if critical:
         reasons.append("kritický titulek: " + critical[0]["title"])
     score = sum(int(h.get("impact") or 0) for h in headlines)
-    if score >= MIDDAY_IMPACT_MIN and not any("kritický titulek" in r for r in reasons):
-        reasons.append(f"dnešní zprávy váha {score} (práh {MIDDAY_IMPACT_MIN})")
+    if (
+        score >= MIDDAY_IMPACT_MIN
+        and strong
+        and not any("kritický titulek" in r for r in reasons)
+    ):
+        reasons.append(
+            f"dnešní zprávy váha {score} (práh {MIDDAY_IMPACT_MIN}, "
+            f"{len(strong)} silnějších titulků)"
+        )
     should = bool(reasons)
     log = "; ".join(reasons) if reasons else (
         f"klid (LME dnes={'ano' if lme_today else 'ne'}, "
@@ -1087,8 +1254,8 @@ def evaluate_midday(*, allow_lme_price: bool = False) -> dict:
 def _midday_payload(decision: dict | None = None) -> tuple[str, str]:
     d = decision or evaluate_midday()
     why = d["reasons"] or ["ruční spuštění"]
-    cu = metal_block("Měď", lme("copper"))
-    al = metal_block("Hliník", lme("aluminum"))
+    cu = metal_block("Měď", lme("copper"), metal="copper")
+    al = metal_block("Hliník", lme("aluminum"), metal="aluminum")
     items = d.get("headlines") or []
     news = format_news(items) if items else "Nový silný titulek od rána nemám — spouštěč je pohyb LME."
     text = "\n".join([
@@ -1124,7 +1291,7 @@ def send_morning(*, force: bool = False) -> bool:
         ok = True
         for chat in chats:
             print(f"Posílám ranní souhrn do {chat}")
-            ok = send_reply(chat, text, spoken) and ok
+            ok = send_reply(chat, text, spoken, voice=True) and ok
         if ok:
             _mark_daily_sent()
             _save_morning_urls([i.get("url") or "" for i in pick_news()])
@@ -1151,7 +1318,7 @@ def send_midday(*, force: bool = False) -> bool:
         ok = True
         for chat in chats:
             print(f"Posílám polední report do {chat}")
-            ok = send_reply(chat, text, spoken) and ok
+            ok = send_reply(chat, text, spoken, voice=True) and ok
         if ok:
             _mark_midday_sent()
         return ok
@@ -1185,7 +1352,7 @@ def send_lme_flash(*, force: bool = False) -> bool:
         ok = True
         for chat in chats:
             print(f"Posílám LME Official flash do {chat}")
-            ok = send_reply(chat, text, spoken) and ok
+            ok = send_reply(chat, text, spoken, voice=True) and ok
         if ok:
             _mark_lme_sent()
         return ok

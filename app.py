@@ -355,6 +355,34 @@ footer { visibility: hidden; }
 
 .dash-timestamp strong { color: #F2F5F9; }
 
+.dash-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 10px;
+}
+
+.henry-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border-radius: 100px;
+    text-decoration: none !important;
+    font-family: 'Syne', sans-serif;
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    color: #F2F5F9 !important;
+    background: linear-gradient(135deg, rgba(77,159,255,0.24), rgba(139,92,246,0.18));
+    border: 1px solid rgba(77, 159, 255, 0.38);
+    box-shadow: 0 6px 16px -10px rgba(77, 159, 255, 0.7);
+}
+.henry-chip:hover {
+    border-color: #4D9FFF;
+    background: linear-gradient(135deg, rgba(77,159,255,0.36), rgba(139,92,246,0.28));
+}
+
 .badge {
     display: inline-flex;
     align-items: center;
@@ -793,6 +821,8 @@ footer { visibility: hidden; }
     .stButton > button { min-height: 44px; }
     .currency-bar-hint { display: none; }
     .dash-header-content { flex-direction: column; align-items: flex-start; }
+    .dash-meta { align-items: flex-start; }
+    .henry-chip { min-height: 44px; }
     [data-testid="stMetric"] { width: 100%; }
     [data-testid="stDataFrame"],
     [data-testid="stDataEditor"] {
@@ -1131,6 +1161,20 @@ def _logo_data_uri() -> str | None:
         return "data:image/png;base64," + base64.b64encode(raw).decode("ascii")
     except Exception:
         return None
+
+
+def _henry_telegram_url() -> str:
+    """Odkaz na Henryho v Telegramu. Username jde nastavit ve Streamlit secrets."""
+    try:
+        full = st.secrets.get("HENRY_TELEGRAM_URL")
+        if full:
+            return str(full).strip()
+        name = st.secrets.get("HENRY_BOT_USERNAME")
+        if name:
+            return "https://t.me/" + str(name).strip().lstrip("@")
+    except Exception:
+        pass
+    return "https://t.me/pbcable_henry_bot"
 
 
 # ==============================================================================
@@ -3391,30 +3435,27 @@ def render_header() -> None:
         f'<div class="dash-logo"><img src="{logo_uri}" alt="pbcable s.r.o."></div>'
         if logo_uri else ""
     )
-    st.markdown(f"""
-    <div class="dash-header">
-        <div class="dash-header-content">
-            <div class="dash-brand">
-                {logo_html}
-                <div>
-                    <div class="dash-title">
-                        <span>⚡</span> {t("Kabelářský dashboard")}
-                    </div>
-                    <div class="dash-subtitle">
-                        Cable Industry Procurement Intelligence Platform
-                    </div>
-                </div>
-            </div>
-            <div class="dash-meta">
-                <div class="dash-timestamp">
-                    <strong>{t("Poslední aktualizace")}</strong> (CET)<br>
-                    {now.strftime("%d.%m.%Y %H:%M:%S")}<br>
-                    Cache TTL: <strong>1 hod</strong>
-                </div>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    show_henry = st.session_state.get(_SESSION_ROLE) != "supplier"
+    henry_url = html.escape(_henry_telegram_url(), quote=True)
+    henry_chip = (
+        f'<a class="henry-chip" href="{henry_url}" target="_blank" '
+        f'rel="noopener noreferrer">Henry · Telegram</a>'
+        if show_henry else ""
+    )
+    # Bez odsazení — Streamlit by z mezer udělal code block (hlavně bez loga).
+    header_html = (
+        '<div class="dash-header"><div class="dash-header-content">'
+        f'<div class="dash-brand">{logo_html}'
+        '<div>'
+        f'<div class="dash-title"><span>⚡</span> {t("Kabelářský dashboard")}</div>'
+        '<div class="dash-subtitle">Cable Industry Procurement Intelligence Platform</div>'
+        '</div></div>'
+        f'<div class="dash-meta">{henry_chip}'
+        f'<div class="dash-timestamp"><strong>{t("Poslední aktualizace")}</strong> (CET)<br>'
+        f'{now.strftime("%d.%m.%Y %H:%M:%S")}<br>'
+        "Cache TTL: <strong>1 hod</strong></div></div></div></div>"
+    )
+    st.markdown(header_html, unsafe_allow_html=True)
 
     # Refresh tlačítko
     c1, c2 = st.columns([1, 6])
