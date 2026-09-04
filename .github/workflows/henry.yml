@@ -32,7 +32,6 @@ jobs:
             .henry_midday_sent
             .henry_lme_sent
             .henry_morning_urls
-            .henry_voice
             .henry_kb_inline
           key: henry-tg-${{ github.run_id }}
           restore-keys: |
@@ -55,6 +54,5 @@ jobs:
             .henry_midday_sent
             .henry_lme_sent
             .henry_morning_urls
-            .henry_voice
             .henry_kb_inline
           key: henry-tg-${{ github.run_id }}
