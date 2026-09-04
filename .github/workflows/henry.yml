@@ -32,6 +32,7 @@ jobs:
             .henry_midday_sent
             .henry_lme_sent
             .henry_morning_urls
+            .henry_voice
           key: henry-tg-${{ github.run_id }}
           restore-keys: |
             henry-tg-
@@ -53,4 +54,5 @@ jobs:
             .henry_midday_sent
             .henry_lme_sent
             .henry_morning_urls
+            .henry_voice
           key: henry-tg-${{ github.run_id }}
