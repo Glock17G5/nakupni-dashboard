@@ -1,8 +1,9 @@
 """
-Henry — Telegram souhrn 2–3× denně (ne do dashboardu).
+Henry — Telegram souhrn (ne do dashboardu).
 
-Ráno (Po–Pá do 10:00 Praha) pošle krátký briefing. Na příkaz odpoví stejným
-stylem + hlasem. Čekání na odpověď ~10 minut (GitHub Actions).
+Běží pořád na GitHub Actions (long poll). Na zprávu odpoví během sekund.
+Ranní souhrn vždy v 7:00 (Po–Pá, Praha). Polední report 11:00–13:00 jen
+při velkém pohybu LME nebo silných dnešních titulcích.
 
 Příkazy: /henry, update, měď, hliník, zprávy, doprava, kurzy, /help
 """
@@ -12,8 +13,10 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import signal
 import sys
 import tempfile
+import time
 import traceback
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
@@ -109,8 +112,30 @@ NOISE_RE = re.compile(
     re.I,
 )
 GOLD_RE = re.compile(r"\bzlato\b|\bgold\b", re.I)
+# Polední alert: titulek, který typicky hýbe nákupem kabelů (kov, clo, trasa).
+CRITICAL_NEWS_RE = re.compile(
+    r"hormuz|suez|rudé moře|red sea|houthi|blokád|"
+    r"force majeure|sankc|embarg|\bcbam\b|"
+    r"zákaz vývoz|exportní zákaz|export ban|"
+    r"nedostatek fyzick|\bsqueeze\b|výpadek hut",
+    re.I,
+)
+HIGH_NEWS_RE = re.compile(
+    r"\bcla\b|\bclo\b|tarif|celní|"
+    r"zásob.{0,16}lme|lme.{0,16}zásob|"
+    r"výpadek|stávk|smelter|"
+    r"kontejner|fracht|námořn|"
+    r"čín.{0,24}(clo|cla|sankc|export|omezen)|"
+    r"tureck.{0,24}(clo|celní|vývoz|sankc)",
+    re.I,
+)
+PRICE_SHOCK_PCT = float(os.environ.get("HENRY_SHOCK_PCT") or "1.5")
+MIDDAY_IMPACT_MIN = int(os.environ.get("HENRY_IMPACT_MIN") or "3")
 OFFSET_PATH = ".henry_tg_offset"
 DAILY_MARK = ".henry_daily_sent"
+MIDDAY_MARK = ".henry_midday_sent"
+LME_MARK = ".henry_lme_sent"
+MORNING_URLS = ".henry_morning_urls"
 TG_LIMIT = 3500
 HELP_TEXT = (
     "Henry. Nic nepíšete — klikněte dole na tlačítko, nebo vlevo na lomítko /.\n"
@@ -122,7 +147,9 @@ HELP_TEXT = (
     "Kurzy — ČNB EUR, USD, CNY, TRY\n"
     "Souhrn — všechno naráz\n"
     "\n"
-    "Odpověď přijde do cca 10 minut. Kolegy přidejte do této skupiny."
+    "Ranní souhrn chodí v 7:00 (CCMN už bývá, LME ještě včerejší official).\n"
+    "Mezi 11. a 13. hodinou jen při velké zprávě. Dnešní LME Cash až po 14. hodině.\n"
+    "Kolegy přidejte do této skupiny."
 )
 BOT_COMMANDS = [
     {"command": "henry", "description": "Celý souhrn"},
@@ -162,6 +189,9 @@ INLINE_KEYBOARD = {
 
 _lme_cache: dict[str, pd.DataFrame | None] = {}
 _news_cache: list[dict] | None = None
+_news_pool: list[dict] = []
+_news_cache_at = 0.0
+NEWS_CACHE_SEC = 12 * 60
 
 
 def _now() -> datetime:
@@ -295,6 +325,29 @@ def week_pct(df: pd.DataFrame) -> float | None:
     return (b / a - 1.0) * 100.0
 
 
+def day_pct(df: pd.DataFrame | None) -> float | None:
+    if df is None or df.empty:
+        return None
+    s = pd.to_numeric(df["Close"], errors="coerce").dropna()
+    if len(s) < 2:
+        return None
+    a, b = float(s.iloc[-2]), float(s.iloc[-1])
+    if a == 0:
+        return None
+    return (b / a - 1.0) * 100.0
+
+
+def lme_asof(df: pd.DataFrame | None):
+    if df is None or df.empty or "Date" not in df.columns:
+        return None
+    return pd.to_datetime(df["Date"].iloc[-1]).date()
+
+
+def lme_is_today(df: pd.DataFrame | None) -> bool:
+    d = lme_asof(df)
+    return d is not None and d == _naive(_now()).date()
+
+
 def outlook(df: pd.DataFrame, horizon: int = 21) -> tuple[float, str] | None:
     """Lehký ensemble: OLS 45 dní + tah k SMA50. Ne věštba."""
     s = pd.to_numeric(df["Close"], errors="coerce").dropna()
@@ -344,8 +397,12 @@ def metal_block(name: str, df: pd.DataFrame | None) -> str:
         ens = f"Výhled ~21 dní: {direction} ({pct:+.1f} %, statistika)."
     else:
         ens = "Výhled: málo historie."
+    asof = lme_asof(df)
+    asof_s = asof.strftime("%d.%m.") if asof else "?"
+    today = asof is not None and asof == _naive(_now()).date()
+    stamp = "dnešní official" if today else f"official {asof_s} (dnešní až ~13:20 Praha)"
     return (
-        f"{name} LME Cash {_fmt(price, 0)} USD/t · {week}. {rsi_s}. "
+        f"{name} LME Cash {_fmt(price, 0)} USD/t ({stamp}) · {week}. {rsi_s}. "
         f"{vs(s20, 'SMA20')}, {vs(s50, 'SMA50')}. {ens}"
     )
 
@@ -498,8 +555,9 @@ def google_news(query: str) -> list[dict]:
 
 
 def pick_news(*, cats: tuple[str, ...] | None = None, limit: int = NEWS_LIMIT) -> list[dict]:
-    global _news_cache
-    if _news_cache is None:
+    global _news_cache, _news_cache_at, _news_pool
+    stale = _news_cache is None or (time.time() - _news_cache_at) > NEWS_CACHE_SEC
+    if stale:
         print("Kurzy.cz + BusinessInfo zprávy za 7 dní…")
         pooled: list[dict] = []
         for q in LIST_QUERIES:
@@ -536,6 +594,10 @@ def pick_news(*, cats: tuple[str, ...] | None = None, limit: int = NEWS_LIMIT) -
             picked.extend(buckets[cat][:n])
         picked.sort(key=lambda x: (CAT_ORDER.get(x["cat"], 9), -x["dt"].timestamp()))
         _news_cache = picked
+        _news_pool = []
+        for cat in buckets:
+            _news_pool.extend(buckets[cat])
+        _news_cache_at = time.time()
     items = list(_news_cache)
     if cats:
         items = [x for x in items if x.get("cat") in cats]
@@ -681,7 +743,9 @@ def build_payload(kind: str) -> tuple[str, str]:
         body = news_synthesis(items) + "\n\n" + format_news(items)
         text = greeting() + "\n\n" + body
         return text, greeting() + " " + spoken_news(items)
-    # full
+    if kind == "midday":
+        return _midday_payload()
+    # full / morning
     cu = metal_block("Měď", lme("copper"))
     al = metal_block("Hliník", lme("aluminum"))
     items = pick_news()
@@ -696,6 +760,8 @@ def build_payload(kind: str) -> tuple[str, str]:
         "",
         format_news(items),
         "",
+        "LME Official Settlement na Westmetallu: dnešní číslo bývá ~13:20–14:25 Praha. "
+        "CCMN Changjiang ráno ~10:30 čínského času (u nás okolo 4:30).",
         "Westmetall LME Cash, Kurzy.cz, BusinessInfo.cz, ČNB na příkaz kurzy.",
     ])
     spoken = " ".join([greeting(), cu, al, syn, "Odkazy jsou v textu."])
@@ -746,7 +812,7 @@ def allowed_chats() -> set[str]:
     return {x.strip() for x in raw.split(",") if x.strip()}
 
 
-def tg_api(method: str, payload: dict) -> dict | None:
+def tg_api(method: str, payload: dict, *, timeout: int = 30) -> dict | None:
     token = tg_token()
     if not token:
         print("Chybí TELEGRAM_BOT_TOKEN.")
@@ -755,7 +821,7 @@ def tg_api(method: str, payload: dict) -> dict | None:
         r = requests.post(
             f"https://api.telegram.org/bot{token}/{method}",
             json=payload,
-            timeout=30,
+            timeout=timeout,
         )
         data = r.json() if r.content else {}
         if r.status_code >= 300 or not data.get("ok"):
@@ -894,17 +960,259 @@ def _mark_daily_sent() -> None:
         f.write(_daily_stamp())
 
 
-def process_inbox(*, skip_full: bool = False) -> int:
+def _stamp_path_sent(path: str) -> bool:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return (f.read() or "").strip() == _daily_stamp()
+    except Exception:
+        return False
+
+
+def _mark_stamp(path: str) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(_daily_stamp())
+
+
+def _midday_already_sent() -> bool:
+    return _stamp_path_sent(MIDDAY_MARK)
+
+
+def _mark_midday_sent() -> None:
+    _mark_stamp(MIDDAY_MARK)
+
+
+def _lme_already_sent() -> bool:
+    return _stamp_path_sent(LME_MARK)
+
+
+def _mark_lme_sent() -> None:
+    _mark_stamp(LME_MARK)
+
+
+def _save_morning_urls(urls: list[str]) -> None:
+    with open(MORNING_URLS, "w", encoding="utf-8") as f:
+        f.write("\n".join(u for u in urls if u))
+
+
+def _load_morning_urls() -> set[str]:
+    try:
+        with open(MORNING_URLS, encoding="utf-8") as f:
+            return {ln.strip() for ln in f if ln.strip()}
+    except Exception:
+        return set()
+
+
+def _refresh_market() -> None:
+    global _news_cache, _news_cache_at, _news_pool
+    _lme_cache.clear()
+    _news_cache = None
+    _news_pool = []
+    _news_cache_at = 0.0
+
+
+def _headline_impact(title: str, url: str) -> int:
+    blob = f"{title} {url}"
+    if CRITICAL_NEWS_RE.search(blob):
+        return 3
+    if HIGH_NEWS_RE.search(blob):
+        return 2
+    cat = classify(title, url)
+    if cat in ("metal", "freight", "energy"):
+        return 1
+    return 0
+
+
+def _today_headlines() -> list[dict]:
+    today = _naive(_now()).date()
+    seen_morning = _load_morning_urls()
+    pick_news(limit=NEWS_LIMIT)
+    out = []
+    for row in _news_pool:
+        dt = row.get("dt")
+        url = row.get("url") or ""
+        if dt is None or _naive(dt).date() != today:
+            continue
+        if url and url in seen_morning:
+            continue
+        impact = _headline_impact(row.get("title") or "", url)
+        if impact <= 0:
+            continue
+        item = dict(row)
+        item["impact"] = impact
+        out.append(item)
+    out.sort(key=lambda x: (-int(x.get("impact") or 0), -x["dt"].timestamp()))
+    return out
+
+
+def evaluate_midday(*, allow_lme_price: bool = False) -> dict:
+    """
+    Extra report:
+    - 11–13 Praha: jen dnešní silné zprávy (LME Official ještě není).
+    - po 14:15: i skok dnešního LME Cash, až je na Westmetallu.
+    """
+    cu_df, al_df = lme("copper"), lme("aluminum")
+    cu_d, al_d = day_pct(cu_df), day_pct(al_df)
+    headlines = _today_headlines()
+    reasons: list[str] = []
+    lme_today = lme_is_today(cu_df) or lme_is_today(al_df)
+    if allow_lme_price and lme_today:
+        if cu_d is not None and abs(cu_d) >= PRICE_SHOCK_PCT:
+            reasons.append(f"měď {cu_d:+.1f} % vs včerejší LME Official")
+        if al_d is not None and abs(al_d) >= PRICE_SHOCK_PCT:
+            reasons.append(f"hliník {al_d:+.1f} % vs včerejší LME Official")
+    critical = [h for h in headlines if int(h.get("impact") or 0) >= 3]
+    if critical:
+        reasons.append("kritický titulek: " + critical[0]["title"])
+    score = sum(int(h.get("impact") or 0) for h in headlines)
+    if score >= MIDDAY_IMPACT_MIN and not any("kritický titulek" in r for r in reasons):
+        reasons.append(f"dnešní zprávy váha {score} (práh {MIDDAY_IMPACT_MIN})")
+    should = bool(reasons)
+    log = "; ".join(reasons) if reasons else (
+        f"klid (LME dnes={'ano' if lme_today else 'ne'}, "
+        f"Cu {cu_d:+.1f} % / Al {al_d:+.1f} %, titulky {len(headlines)}, váha {score})"
+        if cu_d is not None and al_d is not None
+        else f"klid (LME dnes={'ano' if lme_today else 'ne'}, titulky {len(headlines)}, váha {score})"
+    )
+    return {
+        "should": should,
+        "reasons": reasons,
+        "log": log,
+        "headlines": headlines[:6],
+        "cu_d": cu_d,
+        "al_d": al_d,
+        "lme_today": lme_today,
+    }
+
+
+def _midday_payload(decision: dict | None = None) -> tuple[str, str]:
+    d = decision or evaluate_midday()
+    why = d["reasons"] or ["ruční spuštění"]
+    cu = metal_block("Měď", lme("copper"))
+    al = metal_block("Hliník", lme("aluminum"))
+    items = d.get("headlines") or []
+    news = format_news(items) if items else "Nový silný titulek od rána nemám — spouštěč je pohyb LME."
+    text = "\n".join([
+        greeting(),
+        "",
+        "Polední report — jen protože se něco hnulo:",
+        " · ".join(why),
+        "",
+        cu,
+        al,
+        "",
+        news,
+    ])
+    spoken = (
+        "Polední report. " + " ".join(why) + " " + cu + " " + al
+        + " Odkazy jsou v textu."
+    )
+    return text, spoken
+
+
+def send_morning(*, force: bool = False) -> bool:
+    chats = allowed_chats()
+    if not chats:
+        print("Chybí TELEGRAM_CHAT_ID — ranní souhrn nemá kam poslat.")
+        return False
+    if _daily_already_sent() and not force:
+        return False
+    try:
+        _refresh_market()
+        text, spoken = build_payload("full")
+        text = "Ranní souhrn.\n\n" + text
+        spoken = "Ranní souhrn. " + spoken
+        ok = True
+        for chat in chats:
+            print(f"Posílám ranní souhrn do {chat}")
+            ok = send_reply(chat, text, spoken) and ok
+        if ok:
+            _mark_daily_sent()
+            _save_morning_urls([i.get("url") or "" for i in pick_news()])
+        return ok
+    except Exception:
+        traceback.print_exc()
+        return False
+
+
+def send_midday(*, force: bool = False) -> bool:
+    chats = allowed_chats()
+    if not chats:
+        print("Chybí TELEGRAM_CHAT_ID — polední report nemá kam poslat.")
+        return False
+    if _midday_already_sent() and not force:
+        return False
+    try:
+        _refresh_market()
+        decision = evaluate_midday(allow_lme_price=False)
+        print("Polední vyhodnocení: " + decision["log"])
+        if not force and not decision["should"]:
+            return False
+        text, spoken = _midday_payload(decision)
+        ok = True
+        for chat in chats:
+            print(f"Posílám polední report do {chat}")
+            ok = send_reply(chat, text, spoken) and ok
+        if ok:
+            _mark_midday_sent()
+        return ok
+    except Exception:
+        traceback.print_exc()
+        return False
+
+
+def send_lme_flash(*, force: bool = False) -> bool:
+    """Až Westmetall má dnešní Official Settlement (~14:15 Praha)."""
+    chats = allowed_chats()
+    if not chats:
+        return False
+    if _lme_already_sent() and not force:
+        return False
+    try:
+        _refresh_market()
+        cu_df, al_df = lme("copper"), lme("aluminum")
+        if not (lme_is_today(cu_df) or lme_is_today(al_df)):
+            print("Dnešní LME Official na Westmetallu ještě není.")
+            return False
+        decision = evaluate_midday(allow_lme_price=True)
+        print("LME Official vyhodnocení: " + decision["log"])
+        if not force and not decision["should"]:
+            print("Dnešní LME je venku, pohyb pod práh — bez extra reportu.")
+            _mark_lme_sent()
+            return False
+        text, spoken = _midday_payload(decision)
+        text = text.replace("Polední report — jen protože se něco hnulo:", "Dnešní LME Official je na Westmetallu:")
+        spoken = "Dnešní LME Official. " + spoken
+        ok = True
+        for chat in chats:
+            print(f"Posílám LME Official flash do {chat}")
+            ok = send_reply(chat, text, spoken) and ok
+        if ok:
+            _mark_lme_sent()
+        return ok
+    except Exception:
+        traceback.print_exc()
+        return False
+
+
+def send_daily(*, force: bool = False) -> bool:
+    return send_morning(force=force)
+
+
+def process_inbox(*, skip_full: bool = False, poll_timeout: int = 0) -> int:
     allowed = allowed_chats()
     if not tg_token() or not allowed:
         if not allowed:
             print("TELEGRAM_CHAT_ID není nastavené — inbox ignoruji.")
         return 0
     offset = _read_offset()
-    payload = {"timeout": 0, "limit": 50, "allowed_updates": ["message", "edited_message", "callback_query"]}
+    payload = {
+        "timeout": max(0, int(poll_timeout)),
+        "limit": 50,
+        "allowed_updates": ["message", "edited_message", "callback_query"],
+    }
     if offset:
         payload["offset"] = offset
-    data = tg_api("getUpdates", payload)
+    data = tg_api("getUpdates", payload, timeout=max(30, int(poll_timeout) + 20))
     if not data:
         return 0
     replied = 0
@@ -948,6 +1256,61 @@ def process_inbox(*, skip_full: bool = False) -> int:
     return replied
 
 
+def _morning_window() -> bool:
+    now = _now()
+    return now.weekday() < 5 and 7 <= now.hour < 9
+
+
+def _midday_window() -> bool:
+    now = _now()
+    return now.weekday() < 5 and 11 <= now.hour < 13
+
+
+def _lme_window() -> bool:
+    now = _now()
+    return now.weekday() < 5 and 14 <= now.hour < 16
+
+
+def listen() -> int:
+    """Long poll Telegram, dokud GitHub Actions job běží."""
+    if not tg_token():
+        print("Nastavte GitHub Actions secret TELEGRAM_BOT_TOKEN (a TELEGRAM_CHAT_ID).")
+        return 1
+    try:
+        seconds = int((os.environ.get("HENRY_LISTEN_SEC") or "20700").strip())
+    except ValueError:
+        seconds = 20700
+    seconds = max(60, seconds)
+    stop = {"v": False}
+
+    def _stop(*_args) -> None:
+        stop["v"] = True
+        print("Henry končí (signal) — příští job ho zase zvedne.")
+
+    signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGINT, _stop)
+    register_commands()
+    end = time.time() + seconds
+    print(f"Henry poslouchá Telegram (až {seconds}s).")
+    while not stop["v"] and time.time() < end:
+        sent_brief = False
+        if _morning_window():
+            sent_brief = send_morning(force=False)
+        elif _midday_window():
+            sent_brief = send_midday(force=False)
+        elif _lme_window():
+            sent_brief = send_lme_flash(force=False)
+        remaining = end - time.time()
+        if remaining <= 1:
+            break
+        poll = min(50, max(1, int(remaining)))
+        n = process_inbox(skip_full=sent_brief, poll_timeout=poll)
+        if n:
+            print(f"Inbox: {n} odpovědí.")
+    print("Henry listen hotovo.")
+    return 0
+
+
 def run(*, daily: bool, inbox: bool) -> int:
     if not tg_token():
         print("Nastavte GitHub Actions secret TELEGRAM_BOT_TOKEN (a TELEGRAM_CHAT_ID).")
@@ -955,24 +1318,9 @@ def run(*, daily: bool, inbox: bool) -> int:
     register_commands()
     sent_daily = False
     if daily:
-        chats = allowed_chats()
-        if not chats:
-            print("Chybí TELEGRAM_CHAT_ID — ranní souhrn nemá kam poslat.")
-        elif _daily_already_sent() and "--daily" not in sys.argv:
-            print("Denní souhrn už dnes šel — přeskočeno.")
-        else:
-            try:
-                text, spoken = build_payload("full")
-                ok = True
-                for chat in chats:
-                    print(f"Posílám denní souhrn do {chat}")
-                    ok = send_reply(chat, text, spoken) and ok
-                if ok:
-                    _mark_daily_sent()
-                sent_daily = ok
-            except Exception:
-                traceback.print_exc()
-                sent_daily = False
+        sent_daily = send_morning(force="--daily" in sys.argv)
+    if "--midday" in sys.argv:
+        sent_daily = send_midday(force=True) or sent_daily
     if inbox:
         n = process_inbox(skip_full=sent_daily)
         print(f"Inbox: {n} odpovědí.")
@@ -987,11 +1335,13 @@ def _want_daily(argv: list[str]) -> bool:
         return True
     if flag in ("0", "false", "no"):
         return False
-    return _now().hour < 10 and _now().weekday() < 5
+    return _morning_window()
 
 
 if __name__ == "__main__":
     args = sys.argv[1:]
+    if "--listen" in args:
+        sys.exit(listen())
     inbox = "--inbox" in args or "--daily" not in args
     daily = _want_daily(args)
     if "--inbox" in args:
