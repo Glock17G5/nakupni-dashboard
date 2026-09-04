@@ -73,22 +73,57 @@ GNEWS_WORLD = (
 )
 CAT_ORDER = {"metal": 0, "freight": 1, "energy": 2, "geo": 3, "macro": 4}
 CAT_LABEL = {
-    "metal": "Kov (měď / hliník)",
-    "freight": "Doprava / trasy",
-    "energy": "Energetika",
-    "geo": "Politika / Čína / Turecko / cla",
-    "macro": "Makro / FX",
+    "metal": "• Kov — měď / hliník",
+    "freight": "• Doprava / trasy",
+    "energy": "• Energetika",
+    "geo": "• Politika / Čína / Turecko / cla",
+    "macro": "• Makro / FX",
 }
 CAT_QUOTA = {"metal": 4, "freight": 2, "energy": 2, "geo": 2, "macro": 2}
 CNB_URL = (
     "https://www.cnb.cz/cs/financni-trhy/devizovy-trh/"
     "kurzy-devizoveho-trhu/kurzy-devizoveho-trhu/denni_kurz.txt"
 )
-TTS_VOICES = {
-    "muz": "cs-CZ-AntoninNeural",
-    "zena": "cs-CZ-VlastaNeural",
-}
+TTS_PRESETS = (
+    {
+        "id": "antonin",
+        "voice": "cs-CZ-AntoninNeural",
+        "rate": "+0%",
+        "pitch": "+0Hz",
+        "label": "Antonín",
+    },
+    {
+        "id": "klidny",
+        "voice": "cs-CZ-AntoninNeural",
+        "rate": "-18%",
+        "pitch": "-8Hz",
+        "label": "Antonín klidný",
+    },
+    {
+        "id": "hluboky",
+        "voice": "cs-CZ-AntoninNeural",
+        "rate": "-12%",
+        "pitch": "-20Hz",
+        "label": "Antonín hluboký",
+    },
+    {
+        "id": "vlasta",
+        "voice": "cs-CZ-VlastaNeural",
+        "rate": "+0%",
+        "pitch": "+0Hz",
+        "label": "Vlasta (žena)",
+    },
+)
+TTS_BY_ID = {p["id"]: p for p in TTS_PRESETS}
 VOICE_PATH = ".henry_voice"
+KB_MARK = ".henry_kb_inline"
+TR_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json,text/plain,*/*",
+}
 METAL_RE = re.compile(
     r"měď|mědi|měděn|\bcopper\b|hliník|hliníku|hliniku|aluminium|aluminum|"
     r"\blme\b|-medi-|_medi_|/medi-|nedostatek fyzick|\bbhp\b|zambi",
@@ -156,7 +191,8 @@ LME_MARK = ".henry_lme_sent"
 MORNING_URLS = ".henry_morning_urls"
 TG_LIMIT = 3500
 HELP_TEXT = (
-    "Henry. Nic nepíšete — klikněte dole na tlačítko, nebo vlevo na lomítko /.\n"
+    "Henry. Klikněte na tlačítka pod touhle zprávou (ne na text v bublině).\n"
+    "Nebo vlevo lomítko /.\n"
     "\n"
     "Měď — LME + Čína CCMN vs LME + zprávy o mědi za 7 dní\n"
     "Hliník — to samé pro hliník\n"
@@ -164,7 +200,7 @@ HELP_TEXT = (
     "Doprava — kontejnery, trasy, cla, energie\n"
     "Kurzy — ČNB EUR, USD, CNY, TRY\n"
     "Souhrn — všechno naráz (s hlasem)\n"
-    "Hlas — přepne muž (Antonín) / žena (Vlasta)\n"
+    "Hlas — další hlas (Antonín, klidný, hluboký, Vlasta)\n"
     "\n"
     "Ranní souhrn v 7:00 (Po–Pá) a víkendový v 8:00 jsou s hlasem, stejně jako Souhrn.\n"
     "O víkendu LME neobchoduje — číslo zůstane páteční official, zprávy jedou dál.\n"
@@ -179,21 +215,12 @@ BOT_COMMANDS = [
     {"command": "zpravy", "description": "Zprávy za 7 dní"},
     {"command": "doprava", "description": "Doprava, Čína, Turecko"},
     {"command": "kurzy", "description": "ČNB EUR USD CNY TRY"},
-    {"command": "hlas", "description": "Přepnout hlas muž / žena"},
+    {"command": "hlas", "description": "Další hlas (klidný / hluboký / žena)"},
     {"command": "help", "description": "Tlačítka a nápověda"},
 ]
 KINDS = {"help", "fx", "copper", "aluminum", "freight", "news", "full", "voice"}
 CU_NEWS_RE = re.compile(r"měď|mědi|měděn|\bcopper\b|-medi-|_medi_|/medi-", re.I)
 AL_NEWS_RE = re.compile(r"hliník|hliníku|hliniku|aluminium|aluminum", re.I)
-REPLY_KEYBOARD = {
-    "keyboard": [
-        [{"text": "Měď"}, {"text": "Hliník"}, {"text": "Zprávy"}],
-        [{"text": "Doprava"}, {"text": "Kurzy"}, {"text": "Souhrn"}],
-        [{"text": "Nápověda"}, {"text": "Hlas"}],
-    ],
-    "resize_keyboard": True,
-    "is_persistent": True,
-}
 INLINE_KEYBOARD = {
     "inline_keyboard": [
         [
@@ -205,6 +232,10 @@ INLINE_KEYBOARD = {
             {"text": "Doprava", "callback_data": "freight"},
             {"text": "Kurzy", "callback_data": "fx"},
             {"text": "Souhrn", "callback_data": "full"},
+        ],
+        [
+            {"text": "Nápověda", "callback_data": "help"},
+            {"text": "Hlas", "callback_data": "voice"},
         ],
     ],
 }
@@ -228,29 +259,30 @@ CCMN_UA = {
 _tr_cache: dict[str, str] = {}
 
 
-def _voice_key() -> str:
+def _voice_preset() -> dict:
+    key = "antonin"
     try:
         with open(VOICE_PATH, encoding="utf-8") as f:
-            key = (f.read() or "").strip().lower()
-        if key in TTS_VOICES:
-            return key
-        if "vlasta" in key:
-            return "zena"
-        if "antonin" in key:
-            return "muz"
+            raw = (f.read() or "").strip().lower()
+        if raw in ("muz", "antonin"):
+            key = "antonin"
+        elif raw in ("klidny", "klidný"):
+            key = "klidny"
+        elif raw in ("hluboky", "hluboký"):
+            key = "hluboky"
+        elif raw in ("zena", "vlasta"):
+            key = "vlasta"
+        elif raw in TTS_BY_ID:
+            key = raw
     except Exception:
-        pass
-    env = (os.environ.get("HENRY_VOICE") or "").strip().lower()
-    if "vlasta" in env or env == "zena":
-        return "zena"
-    return "muz"
-
-
-def active_voice() -> str:
-    env = (os.environ.get("HENRY_VOICE") or "").strip()
-    if env and env not in ("zena", "muz", "vlasta", "antonin") and "Neural" in env:
-        return env
-    return TTS_VOICES[_voice_key()]
+        env = (os.environ.get("HENRY_VOICE") or "").strip().lower()
+        if "vlasta" in env or env == "zena":
+            key = "vlasta"
+        elif "hlubok" in env:
+            key = "hluboky"
+        elif "klidn" in env:
+            key = "klidny"
+    return TTS_BY_ID.get(key) or TTS_PRESETS[0]
 
 
 def _write_voice(key: str) -> None:
@@ -258,41 +290,88 @@ def _write_voice(key: str) -> None:
         f.write(key)
 
 
-def _toggle_voice() -> str:
-    nxt = "zena" if _voice_key() == "muz" else "muz"
+def _toggle_voice() -> dict:
+    cur = _voice_preset()["id"]
+    ids = [p["id"] for p in TTS_PRESETS]
+    nxt = ids[(ids.index(cur) + 1) % len(ids)] if cur in ids else ids[0]
     _write_voice(nxt)
-    return nxt
+    return TTS_BY_ID[nxt]
 
 
 def _looks_czech(text: str) -> bool:
     return bool(re.search(r"[áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ]", text or ""))
 
 
+def _gtx_translate(text: str) -> str | None:
+    r = requests.get(
+        "https://translate.googleapis.com/translate_a/single",
+        params={"client": "gtx", "sl": "auto", "tl": "cs", "dt": "t", "q": text[:500]},
+        headers=TR_HEADERS,
+        timeout=12,
+    )
+    r.raise_for_status()
+    bits = []
+    for part in (r.json() or [None])[0] or []:
+        if part and part[0]:
+            bits.append(part[0])
+    out = "".join(bits).strip()
+    return out or None
+
+
+def _lingva_translate(text: str) -> str | None:
+    for base in (
+        "https://lingva.ml/api/v1/auto/cs/",
+        "https://lingva.garudalinux.org/api/v1/auto/cs/",
+    ):
+        try:
+            r = requests.get(
+                base + quote(text[:500], safe=""),
+                headers=TR_HEADERS,
+                timeout=12,
+            )
+            r.raise_for_status()
+            out = str((r.json() or {}).get("translation") or "").strip()
+            if out:
+                return out
+        except Exception:
+            continue
+    return None
+
+
+def _mymemory_translate(text: str) -> str | None:
+    r = requests.get(
+        "https://api.mymemory.translated.net/get",
+        params={"q": text[:500], "langpair": "en|cs"},
+        headers=TR_HEADERS,
+        timeout=12,
+    )
+    r.raise_for_status()
+    out = str(((r.json() or {}).get("responseData") or {}).get("translatedText") or "").strip()
+    if not out or "MYMEMORY" in out.upper():
+        return None
+    return out
+
+
 def to_czech(text: str) -> str:
-    """Titulek do češtiny. České nechá, cizí přeloží (bezplacený Google gtx)."""
+    """Cizí titulek do češtiny. gtx z GitHub Actions často spadne, proto zálohy."""
     raw = (text or "").strip()
     if not raw or _looks_czech(raw):
         return raw
     hit = _tr_cache.get(raw)
     if hit:
         return hit
-    try:
-        r = requests.get(
-            "https://translate.googleapis.com/translate_a/single",
-            params={"client": "gtx", "sl": "auto", "tl": "cs", "dt": "t", "q": raw[:500]},
-            headers=UA,
-            timeout=12,
-        )
-        r.raise_for_status()
-        data = r.json()
-        bits = []
-        for part in data[0] or []:
-            if part and part[0]:
-                bits.append(part[0])
-        out = "".join(bits).strip() or raw
-    except Exception as e:
-        print(f"překlad: {e}")
-        out = raw
+    out = raw
+    for fn in (_gtx_translate, _lingva_translate, _mymemory_translate):
+        try:
+            cand = fn(raw)
+        except Exception as e:
+            print(f"překlad {fn.__name__}: {e}")
+            continue
+        if cand and cand.strip() and cand.strip().lower() != raw.lower():
+            out = cand.strip()
+            break
+    if out == raw:
+        print(f"překlad selhal: {raw[:80]}")
     _tr_cache[raw] = out
     return out
 
@@ -846,7 +925,7 @@ def pick_news(*, cats: tuple[str, ...] | None = None, limit: int = NEWS_LIMIT) -
                 continue
             seen.add(url)
             row = {
-                "title": to_czech(title),
+                "title": title,
                 "url": url,
                 "dt": dt,
                 "cat": cat,
@@ -924,7 +1003,7 @@ def format_news(items: list[dict]) -> str:
             lines.append("")
             lines.append(CAT_LABEL.get(cat or "", cat or ""))
         n += 1
-        lines.append(f"{n}. {item['title']} ({item['when']})")
+        lines.append(f"{n}. {to_czech(item['title'])} ({item['when']})")
         lines.append(item["url"])
     return "\n".join(lines)
 
@@ -932,7 +1011,7 @@ def format_news(items: list[dict]) -> str:
 def spoken_news(items: list[dict]) -> str:
     if not items:
         return news_synthesis(items)
-    titles = ". ".join(i["title"] for i in items[:5])
+    titles = ". ".join(to_czech(i["title"]) for i in items[:5])
     return news_synthesis(items) + " Hlavní titulky: " + titles + "."
 
 
@@ -973,8 +1052,8 @@ def _metal_news(kind: str) -> list[dict]:
 def build_payload(kind: str) -> tuple[str, str]:
     """Text do chatu + kratší text k hlasu."""
     if kind == "voice":
-        key = _toggle_voice()
-        label = "Vlasta (žena)" if key == "zena" else "Antonín (muž)"
+        p = _toggle_voice()
+        label = p["label"]
         text = f"Hlas nastaven: {label}. Souhrn a ranní report budou tímhle hlasem."
         return text, f"Tady Henry. Nový hlas: {label}."
     if kind == "help":
@@ -1102,6 +1181,31 @@ def register_commands() -> None:
     tg_api("setMyCommands", {"commands": BOT_COMMANDS})
 
 
+def _strip_old_keyboard() -> None:
+    """Jednou schová starou dolní lištu, která v Desktopu spouštěla Reply."""
+    if os.path.isfile(KB_MARK):
+        return
+    for chat in allowed_chats():
+        tg_api(
+            "sendMessage",
+            {
+                "chat_id": chat,
+                "text": "Dolní lišta je pryč — v Telegramu spouštěla Odpovědět.",
+                "reply_markup": {"remove_keyboard": True},
+            },
+        )
+        send_text(
+            chat,
+            "Tlačítka jsou teď pod každou odpovědí (Měď, Souhrn, Hlas…). "
+            "Klikejte tam, ne do textu bubliny.",
+        )
+    try:
+        with open(KB_MARK, "w", encoding="utf-8") as f:
+            f.write("1")
+    except OSError:
+        pass
+
+
 def send_text(chat_id: str, text: str) -> bool:
     ok = True
     rest = text
@@ -1118,7 +1222,7 @@ def send_text(chat_id: str, text: str) -> bool:
             "disable_web_page_preview": True,
         }
         if not rest:
-            payload["reply_markup"] = REPLY_KEYBOARD
+            payload["reply_markup"] = INLINE_KEYBOARD
         sent = tg_api("sendMessage", payload)
         ok = bool(sent) and ok
     return ok
@@ -1141,7 +1245,16 @@ def speak_to_mp3(text: str, path: str) -> bool:
         return False
 
     async def _run() -> None:
-        comm = edge_tts.Communicate(spoken, active_voice())
+        p = _voice_preset()
+        try:
+            comm = edge_tts.Communicate(
+                spoken,
+                p["voice"],
+                rate=p.get("rate") or "+0%",
+                pitch=p.get("pitch") or "+0Hz",
+            )
+        except TypeError:
+            comm = edge_tts.Communicate(spoken, p["voice"])
         await comm.save(path)
 
     try:
@@ -1578,6 +1691,7 @@ def listen() -> int:
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
     register_commands()
+    _strip_old_keyboard()
     end = time.time() + seconds
     print(f"Henry poslouchá Telegram (až {seconds}s).")
     while not stop["v"] and time.time() < end:
