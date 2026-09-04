@@ -17,7 +17,7 @@ jobs:
         with:
           python-version: "3.10"
       - name: Restore Telegram offset
-        uses: actions/cache@v5
+        uses: actions/cache/restore@v5
         with:
           path: |
             .henry_tg_offset
@@ -36,3 +36,11 @@ jobs:
           else
             python henry.py --inbox
           fi
+      - name: Save Telegram offset
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            .henry_tg_offset
+            .henry_daily_sent
+          key: henry-tg-${{ github.run_id }}
