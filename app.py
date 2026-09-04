@@ -1163,18 +1163,21 @@ def _logo_data_uri() -> str | None:
         return None
 
 
-def _henry_telegram_url() -> str:
-    """Odkaz na Henryho v Telegramu. Username jde nastavit ve Streamlit secrets."""
+def _henry_telegram_link() -> tuple[str, str]:
+    """Odkaz z hlavičky: skupina (secret HENRY_TELEGRAM_URL), jinak 1:1 bot."""
     try:
         full = st.secrets.get("HENRY_TELEGRAM_URL")
         if full:
-            return str(full).strip()
+            return str(full).strip(), "Henry · skupina"
         name = st.secrets.get("HENRY_BOT_USERNAME")
         if name:
-            return "https://t.me/" + str(name).strip().lstrip("@")
+            return (
+                "https://t.me/" + str(name).strip().lstrip("@"),
+                "Henry · Telegram",
+            )
     except Exception:
         pass
-    return "https://t.me/pbcable_henry_bot"
+    return "https://t.me/pbcable_henry_bot", "Henry · Telegram"
 
 
 # ==============================================================================
@@ -3436,10 +3439,11 @@ def render_header() -> None:
         if logo_uri else ""
     )
     show_henry = st.session_state.get(_SESSION_ROLE) != "supplier"
-    henry_url = html.escape(_henry_telegram_url(), quote=True)
+    henry_href, henry_label = _henry_telegram_link()
+    henry_url = html.escape(henry_href, quote=True)
     henry_chip = (
         f'<a class="henry-chip" href="{henry_url}" target="_blank" '
-        f'rel="noopener noreferrer">Henry · Telegram</a>'
+        f'rel="noopener noreferrer">{html.escape(henry_label)}</a>'
         if show_henry else ""
     )
     # Bez odsazení — Streamlit by z mezer udělal code block (hlavně bez loga).

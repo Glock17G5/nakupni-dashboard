@@ -6,9 +6,10 @@ Ranní souhrn vždy v 7:00 (Po–Pá, Praha): LME Cash + CCMN vs LME.
 Polední report 11:00–13:00 jen při silných dnešních titulcích.
 LME flash 14:00–16:00, až je dnešní Official a |den| ≥ práh.
 
-Hlas jen u ranního souhrnu a extra reportů. Tlačítka = text.
+Hlas jen u ranního souhrnu, extra reportů a tlačítka Souhrn.
+Zprávy: CZ + svět (Google News), titulky do češtiny.
 
-Příkazy: /henry, update, měď, hliník, zprávy, doprava, kurzy, /help
+Příkazy: /henry, update, měď, hliník, zprávy, doprava, kurzy, hlas, /help
 """
 
 from __future__ import annotations
@@ -61,9 +62,14 @@ NEWS_DAYS = 7
 NEWS_LIMIT = 12
 LIST_QUERIES = ("měď", "hliník", "kontejner", "Turecko", "Čína", "clo", "energetika")
 RSS_COLS = ("ptKomodity", "wzMeny", "wzMakro", "ptEkonomika", "ptPolitika")
-GNEWS_QUERIES = (
+GNEWS_CZ = (
     "site:businessinfo.cz when:7d (energetika OR clo OR Čína OR doprava OR Turecko OR sankce)",
     "when:7d (hliník OR aluminium) (LME OR cena OR zásob)",
+)
+GNEWS_WORLD = (
+    "when:7d (copper OR aluminium OR aluminum) (LME OR SHFE OR smelter OR concentrate OR stocks)",
+    "when:7d (China OR Turkey) (copper OR aluminium OR aluminum) (tariff OR export OR quota OR CBAM)",
+    "when:7d (Red Sea OR Hormuz OR Suez OR \"container freight\" OR SCFI) (shipping OR port OR houthi)",
 )
 CAT_ORDER = {"metal": 0, "freight": 1, "energy": 2, "geo": 3, "macro": 4}
 CAT_LABEL = {
@@ -78,7 +84,11 @@ CNB_URL = (
     "https://www.cnb.cz/cs/financni-trhy/devizovy-trh/"
     "kurzy-devizoveho-trhu/kurzy-devizoveho-trhu/denni_kurz.txt"
 )
-TTS_VOICE = os.environ.get("HENRY_VOICE", "cs-CZ-AntoninNeural")
+TTS_VOICES = {
+    "muz": "cs-CZ-AntoninNeural",
+    "zena": "cs-CZ-VlastaNeural",
+}
+VOICE_PATH = ".henry_voice"
 METAL_RE = re.compile(
     r"měď|mědi|měděn|\bcopper\b|hliník|hliníku|hliniku|aluminium|aluminum|"
     r"\blme\b|-medi-|_medi_|/medi-|nedostatek fyzick|\bbhp\b|zambi",
@@ -111,7 +121,8 @@ MACRO_RE = re.compile(
 NOISE_RE = re.compile(
     r"bitcoin|nvidia|robinhood|hlídačkovn|průměrn[áa] mzda|kakao|pšenice|"
     r"nasdaq|marriott|airbnb|coinbase|hypoték|teplárn|"
-    r"plešat|ozempic|cistern|mapa globálních oborových",
+    r"plešat|ozempic|cistern|mapa globálních oborových|"
+    r"ceny a grafy|vývoj ceny mědi|vývoj ceny hlin",
     re.I,
 )
 GOLD_RE = re.compile(r"\bzlato\b|\bgold\b", re.I)
@@ -149,13 +160,15 @@ HELP_TEXT = (
     "\n"
     "Měď — LME + Čína CCMN vs LME + zprávy o mědi za 7 dní\n"
     "Hliník — to samé pro hliník\n"
-    "Zprávy — měď, hliník, doprava, energetika, politika\n"
+    "Zprávy — CZ i svět, titulky česky (měď, hliník, doprava, energetika, politika)\n"
     "Doprava — kontejnery, trasy, cla, energie\n"
     "Kurzy — ČNB EUR, USD, CNY, TRY\n"
-    "Souhrn — všechno naráz\n"
+    "Souhrn — všechno naráz (s hlasem)\n"
+    "Hlas — přepne muž (Antonín) / žena (Vlasta)\n"
     "\n"
-    "Ranní souhrn v 7:00 (hlas). Tlačítka odpovídají jen textem.\n"
-    "Mezi 11. a 13. hodinou jen při velké zprávě. Dnešní LME Cash až po 14. hodině.\n"
+    "Ranní souhrn v 7:00 (Po–Pá) a víkendový v 8:00 jsou s hlasem, stejně jako Souhrn.\n"
+    "O víkendu LME neobchoduje — číslo zůstane páteční official, zprávy jedou dál.\n"
+    "Po–Pá mezi 11. a 13. hodinou jen při velké zprávě. Dnešní LME Cash až po 14. hodině.\n"
     f"Dashboard: {DASHBOARD_URL}\n"
     "Kolegy přidejte do této skupiny."
 )
@@ -166,16 +179,17 @@ BOT_COMMANDS = [
     {"command": "zpravy", "description": "Zprávy za 7 dní"},
     {"command": "doprava", "description": "Doprava, Čína, Turecko"},
     {"command": "kurzy", "description": "ČNB EUR USD CNY TRY"},
+    {"command": "hlas", "description": "Přepnout hlas muž / žena"},
     {"command": "help", "description": "Tlačítka a nápověda"},
 ]
-KINDS = {"help", "fx", "copper", "aluminum", "freight", "news", "full"}
+KINDS = {"help", "fx", "copper", "aluminum", "freight", "news", "full", "voice"}
 CU_NEWS_RE = re.compile(r"měď|mědi|měděn|\bcopper\b|-medi-|_medi_|/medi-", re.I)
 AL_NEWS_RE = re.compile(r"hliník|hliníku|hliniku|aluminium|aluminum", re.I)
 REPLY_KEYBOARD = {
     "keyboard": [
         [{"text": "Měď"}, {"text": "Hliník"}, {"text": "Zprávy"}],
         [{"text": "Doprava"}, {"text": "Kurzy"}, {"text": "Souhrn"}],
-        [{"text": "Nápověda"}],
+        [{"text": "Nápověda"}, {"text": "Hlas"}],
     ],
     "resize_keyboard": True,
     "is_persistent": True,
@@ -211,6 +225,76 @@ CCMN_UA = {
         "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     ),
 }
+_tr_cache: dict[str, str] = {}
+
+
+def _voice_key() -> str:
+    try:
+        with open(VOICE_PATH, encoding="utf-8") as f:
+            key = (f.read() or "").strip().lower()
+        if key in TTS_VOICES:
+            return key
+        if "vlasta" in key:
+            return "zena"
+        if "antonin" in key:
+            return "muz"
+    except Exception:
+        pass
+    env = (os.environ.get("HENRY_VOICE") or "").strip().lower()
+    if "vlasta" in env or env == "zena":
+        return "zena"
+    return "muz"
+
+
+def active_voice() -> str:
+    env = (os.environ.get("HENRY_VOICE") or "").strip()
+    if env and env not in ("zena", "muz", "vlasta", "antonin") and "Neural" in env:
+        return env
+    return TTS_VOICES[_voice_key()]
+
+
+def _write_voice(key: str) -> None:
+    with open(VOICE_PATH, "w", encoding="utf-8") as f:
+        f.write(key)
+
+
+def _toggle_voice() -> str:
+    nxt = "zena" if _voice_key() == "muz" else "muz"
+    _write_voice(nxt)
+    return nxt
+
+
+def _looks_czech(text: str) -> bool:
+    return bool(re.search(r"[áčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ]", text or ""))
+
+
+def to_czech(text: str) -> str:
+    """Titulek do češtiny. České nechá, cizí přeloží (bezplacený Google gtx)."""
+    raw = (text or "").strip()
+    if not raw or _looks_czech(raw):
+        return raw
+    hit = _tr_cache.get(raw)
+    if hit:
+        return hit
+    try:
+        r = requests.get(
+            "https://translate.googleapis.com/translate_a/single",
+            params={"client": "gtx", "sl": "auto", "tl": "cs", "dt": "t", "q": raw[:500]},
+            headers=UA,
+            timeout=12,
+        )
+        r.raise_for_status()
+        data = r.json()
+        bits = []
+        for part in data[0] or []:
+            if part and part[0]:
+                bits.append(part[0])
+        out = "".join(bits).strip() or raw
+    except Exception as e:
+        print(f"překlad: {e}")
+        out = raw
+    _tr_cache[raw] = out
+    return out
 
 
 def _now() -> datetime:
@@ -534,6 +618,24 @@ def china_vs_lme(metal: str, lme_usd: float | None) -> str:
     )
 
 
+def _lme_closed() -> bool:
+    """LME o víkendu neobchoduje (Praha)."""
+    return _now().weekday() >= 5
+
+
+def _lme_stamp(asof) -> str:
+    asof_s = asof.strftime("%d.%m.") if asof else "?"
+    today = asof is not None and asof == _naive(_now()).date()
+    if today:
+        return "dnešní official"
+    if _lme_closed():
+        return (
+            f"poslední official {asof_s} — LME o víkendu neobchoduje, "
+            "číslo se nemění"
+        )
+    return f"official {asof_s} (dnešní až ~13:20 Praha)"
+
+
 def metal_block(name: str, df: pd.DataFrame | None, *, metal: str | None = None) -> str:
     if df is None or df.empty:
         lme_line = f"{name}: Westmetall teď neodpověděl."
@@ -559,9 +661,7 @@ def metal_block(name: str, df: pd.DataFrame | None, *, metal: str | None = None)
         else:
             ens = "Výhled: málo historie."
         asof = lme_asof(df)
-        asof_s = asof.strftime("%d.%m.") if asof else "?"
-        today = asof is not None and asof == _naive(_now()).date()
-        stamp = "dnešní official" if today else f"official {asof_s} (dnešní až ~13:20 Praha)"
+        stamp = _lme_stamp(asof)
         lme_line = (
             f"{name} LME Cash {_fmt(price, 0)} USD/t ({stamp}) · {week}. {rsi_s}. "
             f"{vs(s20, 'SMA20')}, {vs(s50, 'SMA50')}. {ens}"
@@ -688,11 +788,11 @@ def classify(title: str, url: str) -> str | None:
     return None
 
 
-def google_news(query: str) -> list[dict]:
+def google_news(query: str, *, hl: str = "cs", gl: str = "CZ", ceid: str = "CZ:cs") -> list[dict]:
     url = (
         "https://news.google.com/rss/search?q="
         + quote(query)
-        + "&hl=cs&gl=CZ&ceid=CZ:cs"
+        + f"&hl={hl}&gl={gl}&ceid={quote(ceid)}"
     )
     r = _get(url, timeout=25)
     if r is None:
@@ -722,14 +822,16 @@ def pick_news(*, cats: tuple[str, ...] | None = None, limit: int = NEWS_LIMIT) -
     global _news_cache, _news_cache_at, _news_pool
     stale = _news_cache is None or (time.time() - _news_cache_at) > NEWS_CACHE_SEC
     if stale:
-        print("Kurzy.cz + BusinessInfo zprávy za 7 dní…")
+        print("Kurzy.cz + Google News CZ/svět za 7 dní…")
         pooled: list[dict] = []
         for q in LIST_QUERIES:
             pooled.extend(listing(q))
         for col in RSS_COLS:
             pooled.extend(rss_col(col))
-        for q in GNEWS_QUERIES:
+        for q in GNEWS_CZ:
             pooled.extend(google_news(q))
+        for q in GNEWS_WORLD:
+            pooled.extend(google_news(q, hl="en-US", gl="US", ceid="US:en"))
         cutoff = _naive(_now()).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=NEWS_DAYS)
         buckets: dict[str, list[dict]] = {k: [] for k in CAT_ORDER}
         seen: set[str] = set()
@@ -744,7 +846,7 @@ def pick_news(*, cats: tuple[str, ...] | None = None, limit: int = NEWS_LIMIT) -
                 continue
             seen.add(url)
             row = {
-                "title": title,
+                "title": to_czech(title),
                 "url": url,
                 "dt": dt,
                 "cat": cat,
@@ -870,6 +972,11 @@ def _metal_news(kind: str) -> list[dict]:
 
 def build_payload(kind: str) -> tuple[str, str]:
     """Text do chatu + kratší text k hlasu."""
+    if kind == "voice":
+        key = _toggle_voice()
+        label = "Vlasta (žena)" if key == "zena" else "Antonín (muž)"
+        text = f"Hlas nastaven: {label}. Souhrn a ranní report budou tímhle hlasem."
+        return text, f"Tady Henry. Nový hlas: {label}."
     if kind == "help":
         return HELP_TEXT, "Napište update, měď, hliník, zprávy, doprava, nebo kurzy."
     if kind == "fx":
@@ -915,9 +1022,10 @@ def build_payload(kind: str) -> tuple[str, str]:
         format_news(items),
         "",
         "LME Official Settlement na Westmetallu: dnešní číslo bývá ~13:20–14:25 Praha. "
+        "O víkendu LME neobchoduje — zůstane páteční official. "
         "CCMN Changjiang ráno ~10:30 čínského času (u nás okolo 4:30).",
         f"Dashboard: {DASHBOARD_URL}",
-        "Westmetall LME Cash, ccmn.cn, Kurzy.cz, BusinessInfo.cz, ČNB na příkaz kurzy.",
+        "Westmetall LME Cash, ccmn.cn, Kurzy.cz, Google News (CZ i svět, titulky česky), ČNB na příkaz kurzy.",
     ])
     spoken = " ".join([greeting(), cu, al, syn, "Odkazy jsou v textu."])
     return text, spoken
@@ -926,6 +1034,8 @@ def build_payload(kind: str) -> tuple[str, str]:
 def intent(text: str) -> str | None:
     raw = re.sub(r"@[\w]+", "", text or "").strip()
     low = raw.lower()
+    if re.search(r"^/hlas\b|^hlas\b", low):
+        return "voice"
     if re.search(r"/med\b|/cu\b", low):
         return "copper"
     if re.search(r"/hlinik\b|/al\b", low):
@@ -1031,7 +1141,7 @@ def speak_to_mp3(text: str, path: str) -> bool:
         return False
 
     async def _run() -> None:
-        comm = edge_tts.Communicate(spoken, TTS_VOICE)
+        comm = edge_tts.Communicate(spoken, active_voice())
         await comm.save(path)
 
     try:
@@ -1286,8 +1396,17 @@ def send_morning(*, force: bool = False) -> bool:
     try:
         _refresh_market()
         text, spoken = build_payload("full")
-        text = "Ranní souhrn.\n\n" + text
-        spoken = "Ranní souhrn. " + spoken
+        if _lme_closed():
+            head = (
+                "Víkendový souhrn. LME neobchoduje — beru poslední official, "
+                "číslo se nemění. Zprávy jedou dál.\n\n"
+            )
+            spoken_head = "Víkendový souhrn. Burza kovů stojí, číslo je poslední official. "
+        else:
+            head = "Ranní souhrn.\n\n"
+            spoken_head = "Ranní souhrn. "
+        text = head + text
+        spoken = spoken_head + spoken
         ok = True
         for chat in chats:
             print(f"Posílám ranní souhrn do {chat}")
@@ -1413,7 +1532,7 @@ def process_inbox(*, skip_full: bool = False, poll_timeout: int = 0) -> int:
             if kind not in cache:
                 cache[kind] = build_payload(kind)
             body, spoken = cache[kind]
-            send_reply(chat_s, body, spoken)
+            send_reply(chat_s, body, spoken, voice=(kind in ("full", "voice")))
             replied += 1
         except Exception:
             print(f"Chyba při odpovědi ({kind}) do {chat_s}:")
@@ -1425,7 +1544,9 @@ def process_inbox(*, skip_full: bool = False, poll_timeout: int = 0) -> int:
 
 def _morning_window() -> bool:
     now = _now()
-    return now.weekday() < 5 and 7 <= now.hour < 9
+    if now.weekday() < 5:
+        return 7 <= now.hour < 9
+    return 8 <= now.hour < 10
 
 
 def _midday_window() -> bool:
