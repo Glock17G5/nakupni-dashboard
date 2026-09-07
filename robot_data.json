@@ -23,16 +23,16 @@
       "delta_pct": 0.0
     },
     "EURUSD=X": {
-      "price": 1.162656,
+      "price": 1.162791,
       "prev": 1.162831,
-      "delta": -0.000176,
-      "delta_pct": -0.015
+      "delta": -4.1e-05,
+      "delta_pct": -0.003
     },
     "EURCZK=X": {
-      "price": 24.196301,
+      "price": 24.1901,
       "prev": 24.161301,
-      "delta": 0.035,
-      "delta_pct": 0.145
+      "delta": 0.028799,
+      "delta_pct": 0.119
     },
     "HG=F": {
       "price": 6.6825,
@@ -47,7 +47,7 @@
       "delta_pct": 0.989
     }
   },
-  "_ts": "2026-09-07 10:10",
+  "_ts": "2026-09-07 18:14",
   "_health": {
     "ccmn_copper": true,
     "ccmn_aluminum": true,
