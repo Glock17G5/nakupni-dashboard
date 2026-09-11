@@ -6,7 +6,8 @@
     "description": "26VO00238",
     "added": "2026-08-17",
     "first_signal": "2026-07-23 09:53:32",
-    "arrived": "2026-09-01"
+    "arrived": "2026-09-01",
+    "updated": ""
   },
   {
     "provider": "jagich",
@@ -15,7 +16,8 @@
     "description": "26VO00279",
     "added": "2026-08-21",
     "first_signal": "2026-08-15 16:43:49",
-    "arrived": ""
+    "arrived": "",
+    "updated": ""
   },
   {
     "provider": "link4future",
@@ -24,6 +26,17 @@
     "description": "26VO00238 · Link4Future",
     "added": "24.08.2026",
     "first_signal": "2026-07-17 09:59:56",
-    "arrived": "2026-08-21"
+    "arrived": "2026-08-21",
+    "updated": ""
+  },
+  {
+    "provider": "jagich",
+    "imei": "HNKU6311274",
+    "container": "HNKU6311274",
+    "description": "26VO00304 + 26VO00308",
+    "added": "11.09.2026",
+    "first_signal": "",
+    "arrived": "",
+    "updated": "2026-09-11 13:13:27"
   }
 ]
