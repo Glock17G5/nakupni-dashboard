@@ -705,7 +705,7 @@ footer { visibility: hidden; }
 
 .spread-label { font-size: 0.65rem; font-weight: 700; color: #8D99AB; text-transform: uppercase; }
 .spread-value { font-family: 'IBM Plex Mono', monospace; font-size: 1.2rem; font-weight: 700; color: #F7FAFD; }
-.spread-details { font-size: 0.68rem; color: #9AA6B8; }
+.spread-details { font-family: 'IBM Plex Mono', monospace; font-size: 0.68rem; color: #9AA6B8; }
 
 .chart-wrap {
     background: rgba(30, 36, 46, 0.92);
@@ -862,12 +862,13 @@ footer { visibility: hidden; }
 }
 .gps-track-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
     gap: 10px;
     margin: 8px 0 4px;
 }
-@media (min-width: 1100px) {
-    .gps-track-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.gps-track-grid .spread-card {
+    margin-bottom: 0;
+    min-width: 0;
 }
 
 .info-box {
@@ -1185,6 +1186,13 @@ def _henry_telegram_link() -> tuple[str, str]:
 #  POMOCNÉ FUNKCE UI
 # ─────────────────────────────────────────────────────────────────────────────
 # ==============================================================================
+
+def _unsafe_html(fragment: str) -> None:
+    """HTML přes markdown bez odsazení — jinak Streamlit ukáže kód místo karet."""
+    cleaned = "\n".join(line.lstrip() for line in (fragment or "").splitlines()).strip()
+    if cleaned:
+        st.markdown(cleaned, unsafe_allow_html=True)
+
 
 def badge_html(is_live: bool, source: str = "", model: bool = False) -> str:
     """Vrátí HTML pro status badge (LIVE / OFFLINE / MODEL)."""
@@ -5994,8 +6002,8 @@ def _new_osm_map(lats: list[float], lons: list[float], height: int = 520) -> go.
         hoverlabel=_HOVER_LABEL,
         legend=dict(
             orientation="h",
-            yanchor="bottom",
-            y=0.01,
+            yanchor="top",
+            y=0.98,
             x=0.01,
             bgcolor="rgba(30,36,46,0.82)",
             font=dict(family="IBM Plex Mono, monospace", size=10, color="#E9EDF3"),
@@ -6388,6 +6396,7 @@ def render_container_tracking() -> None:
                 mode="lines",
                 line=dict(width=3, color=color),
                 name=f"{name} · stopa",
+                showlegend=False,
                 hoverinfo="skip",
             ))
             fig.add_trace(go.Scattermap(
@@ -6412,7 +6421,7 @@ def render_container_tracking() -> None:
                 text=[name],
                 textposition="top right",
                 textfont=dict(size=12, color="#111827"),
-                name=f"{name} · teď",
+                name=name,
                 hovertext=(
                     f"<b>{hover_name}</b><br>{last['t']}<br>{_fix_label(last['fix'])}<br>"
                     f"{last['loc'] or '—'}"
@@ -6451,24 +6460,21 @@ def render_container_tracking() -> None:
                 )
             extra_html = f"{html.escape(str(extra))}<br>" if extra else ""
             cards_html.append(
-                f"""
-                <div class="spread-card">
-                    <div class="spread-label">{html.escape(str(tr['container']))}</div>
-                    <div class="spread-value" style="color:#3b82f6;font-size:1.0rem;">
-                        {html.escape(last_s)}
-                    </div>
-                    <div style="font-family:'IBM Plex Mono',monospace;font-size:0.68rem;
-                                color:#B8C2D0;margin-top:6px;line-height:1.35;">
-                        {extra_html}
-                        {html.escape(t("Expedice (1. signál): "))}{html.escape(exped)}<br>
-                        {meta}<br>
-                        {html.escape(loc)}
-                    </div>
-                </div>
-                """
+                "<div class='spread-card'>"
+                f"<div class='spread-label'>{html.escape(str(tr['container']))}</div>"
+                "<div class='spread-value' style='color:#3b82f6;font-size:1.0rem;'>"
+                f"{html.escape(last_s)}"
+                "</div>"
+                "<div class='spread-details' style='margin-top:6px;line-height:1.35;color:#B8C2D0;'>"
+                f"{extra_html}"
+                f"{html.escape(t('Expedice (1. signál): '))}{html.escape(exped)}<br>"
+                f"{meta}<br>"
+                f"{html.escape(loc)}"
+                "</div>"
+                "</div>"
             )
         cards_html.append("</div>")
-        st.markdown("".join(cards_html), unsafe_allow_html=True)
+        _unsafe_html("".join(cards_html))
     elif active_rows:
         st.markdown(
             f'<div class="error-box">{t("Živá poloha teď není dostupná (GPS API neodpovědělo).")}</div>',
