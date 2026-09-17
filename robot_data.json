@@ -5,49 +5,49 @@
   },
   "yf_spot": {
     "HRC=F": {
-      "price": 1237.0,
-      "prev": 1232.0,
-      "delta": 5.0,
-      "delta_pct": 0.406
+      "price": 1276.0,
+      "prev": 1237.0,
+      "delta": 39.0,
+      "delta_pct": 3.153
     },
     "BZ=F": {
-      "price": 99.900002,
+      "price": 104.660004,
       "prev": 105.830002,
-      "delta": -5.93,
-      "delta_pct": -5.603
+      "delta": -1.169998,
+      "delta_pct": -1.106
     },
     "CL=F": {
-      "price": 101.269997,
+      "price": 102.129997,
       "prev": 102.43,
-      "delta": -1.160004,
-      "delta_pct": -1.132
+      "delta": -0.300003,
+      "delta_pct": -0.293
     },
     "EURUSD=X": {
-      "price": 1.14771,
+      "price": 1.148106,
       "prev": 1.153762,
-      "delta": -0.006052,
-      "delta_pct": -0.525
+      "delta": -0.005656,
+      "delta_pct": -0.49
     },
     "EURCZK=X": {
-      "price": 24.3253,
+      "price": 24.3211,
       "prev": 24.285,
-      "delta": 0.0403,
-      "delta_pct": 0.166
+      "delta": 0.0361,
+      "delta_pct": 0.149
     },
     "HG=F": {
-      "price": 6.5915,
+      "price": 6.6585,
       "prev": 6.4315,
-      "delta": 0.16,
-      "delta_pct": 2.488
+      "delta": 0.227,
+      "delta_pct": 3.53
     },
     "ALI=F": {
-      "price": 3438.75,
+      "price": 3460.5,
       "prev": 3421.5,
-      "delta": 17.25,
-      "delta_pct": 0.504
+      "delta": 39.0,
+      "delta_pct": 1.14
     }
   },
-  "_ts": "2026-09-17 09:56",
+  "_ts": "2026-09-17 17:36",
   "_health": {
     "ccmn_copper": true,
     "ccmn_aluminum": true,
@@ -55,5 +55,5 @@
     "eurusd": true,
     "history": true
   },
-  "_alert_sig": "2026-09-17|Brent den: -5.6 % (pr\u00e1h \u00b13.0 %) \u00b7 $99.90"
+  "_alert_sig": "2026-09-17|M\u011b\u010f COMEX (HG=F) den: +3.5 % (pr\u00e1h \u00b13.0 %) \u00b7 6.6585 USD/lb"
 }
