@@ -38,14 +38,14 @@ jobs:
             henry-tg-
       - run: pip install -r requirements-henry.txt
       - name: Run Henry
-        timeout-minutes: 355
+        timeout-minutes: 350
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           HENRY_LISTEN_SEC: "20700"
         run: python henry.py --listen
       - name: Save Telegram offset
-        if: always()
+        if: ${{ always() }}
         uses: actions/cache/save@v5
         with:
           path: |
