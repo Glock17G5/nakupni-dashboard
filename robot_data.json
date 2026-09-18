@@ -1,53 +1,53 @@
 {
   "ccmn": {
-    "copper": 108580.0,
-    "aluminum": 24170.0
+    "copper": 110180.0,
+    "aluminum": 24370.0
   },
   "yf_spot": {
     "HRC=F": {
-      "price": 1276.0,
+      "price": 1279.0,
       "prev": 1237.0,
-      "delta": 39.0,
-      "delta_pct": 3.153
+      "delta": 42.0,
+      "delta_pct": 3.395
     },
     "BZ=F": {
-      "price": 104.660004,
-      "prev": 105.830002,
-      "delta": -1.169998,
-      "delta_pct": -1.106
+      "price": 98.470001,
+      "prev": 104.82,
+      "delta": -6.349998,
+      "delta_pct": -6.058
     },
     "CL=F": {
-      "price": 102.129997,
-      "prev": 102.43,
-      "delta": -0.300003,
-      "delta_pct": -0.293
+      "price": 95.68,
+      "prev": 101.910004,
+      "delta": -6.230003,
+      "delta_pct": -6.113
     },
     "EURUSD=X": {
-      "price": 1.148106,
-      "prev": 1.153762,
-      "delta": -0.005656,
-      "delta_pct": -0.49
+      "price": 1.148765,
+      "prev": 1.146986,
+      "delta": 0.001779,
+      "delta_pct": 0.155
     },
     "EURCZK=X": {
-      "price": 24.3211,
-      "prev": 24.285,
-      "delta": 0.0361,
-      "delta_pct": 0.149
+      "price": 24.3316,
+      "prev": 24.3046,
+      "delta": 0.027,
+      "delta_pct": 0.111
     },
     "HG=F": {
-      "price": 6.6585,
-      "prev": 6.4315,
-      "delta": 0.227,
-      "delta_pct": 3.53
+      "price": 6.6535,
+      "prev": 6.5865,
+      "delta": 0.067,
+      "delta_pct": 1.017
     },
     "ALI=F": {
-      "price": 3460.5,
-      "prev": 3421.5,
-      "delta": 39.0,
-      "delta_pct": 1.14
+      "price": 3469.25,
+      "prev": 3432.25,
+      "delta": 37.0,
+      "delta_pct": 1.078
     }
   },
-  "_ts": "2026-09-17 17:36",
+  "_ts": "2026-09-18 09:39",
   "_health": {
     "ccmn_copper": true,
     "ccmn_aluminum": true,
@@ -55,5 +55,5 @@
     "eurusd": true,
     "history": true
   },
-  "_alert_sig": "2026-09-17|M\u011b\u010f COMEX (HG=F) den: +3.5 % (pr\u00e1h \u00b13.0 %) \u00b7 6.6585 USD/lb"
+  "_alert_sig": "2026-09-18|Brent den: -6.1 % (pr\u00e1h \u00b13.0 %) \u00b7 $98.47"
 }
