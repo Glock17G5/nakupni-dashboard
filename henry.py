@@ -1843,11 +1843,11 @@ def listen() -> int:
     except ValueError:
         seconds = 20700
     seconds = max(60, seconds)
-    stop = {"v": False}
 
     def _stop(*_args) -> None:
-        stop["v"] = True
-        print("Henry končí (signal) — příští job ho zase zvedne.")
+        # Hned pryč — jinak čeká na getUpdates, GitHub ho usekne a job je failure.
+        print("Henry končí (signal) — příští job ho zase zvedne.", flush=True)
+        os._exit(0)
 
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
@@ -1855,21 +1855,29 @@ def listen() -> int:
     _strip_old_keyboard()
     end = time.time() + seconds
     print(f"Henry poslouchá Telegram (až {seconds}s).")
-    while not stop["v"] and time.time() < end:
-        sent_brief = False
-        if _morning_window():
-            sent_brief = send_morning(force=False)
-        elif _midday_window():
-            sent_brief = send_midday(force=False)
-        elif _lme_window():
-            sent_brief = send_lme_flash(force=False)
-        remaining = end - time.time()
-        if remaining <= 1:
-            break
-        poll = min(50, max(1, int(remaining)))
-        n = process_inbox(skip_full=sent_brief, poll_timeout=poll)
-        if n:
-            print(f"Inbox: {n} odpovědí.")
+    try:
+        while time.time() < end:
+            sent_brief = False
+            if _morning_window():
+                sent_brief = send_morning(force=False)
+            elif _midday_window():
+                sent_brief = send_midday(force=False)
+            elif _lme_window():
+                sent_brief = send_lme_flash(force=False)
+            remaining = end - time.time()
+            if remaining <= 1:
+                break
+            poll = min(25, max(1, int(remaining)))
+            try:
+                n = process_inbox(skip_full=sent_brief, poll_timeout=poll)
+            except (InterruptedError, KeyboardInterrupt):
+                print("Henry listen přerušen.")
+                return 0
+            if n:
+                print(f"Inbox: {n} odpovědí.")
+    except Exception:
+        traceback.print_exc()
+        return 1
     print("Henry listen hotovo.")
     return 0
 
