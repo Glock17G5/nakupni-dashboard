@@ -6638,7 +6638,7 @@ def _render_gps_archive(arrived_rows: list[dict]) -> None:
             _render_gps_delete_form(row_key, rec["Kontejner"])
 
 
-# ── Logistika ČR & SK (přeprava kamionem) ─────────────────────────────────────
+# ── Logistika silniční (ČR, SK, Turecko, EU) ─────────────────────────────────
 
 _DOMESTIC_ROAD_FACTOR = 1.3
 _DOMESTIC_LDM_PER_EUR_PALLET = 0.4
@@ -6712,23 +6712,61 @@ def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
     return r_earth_km * c
 
 
-def _resolve_cz_sk_country(country_code: str, country_name: str) -> str | None:
-    """Z ISO kódu nebo názvu země vrátí 'CZ'/'SK', jinak None (mimo ČR/SK)."""
+_LOGISTICS_CZSK = ("CZ", "SK")
+_LOGISTICS_INTL = (
+    "CZ", "SK", "TR", "DE", "AT", "HU", "PL", "RO", "BG",
+    "RS", "HR", "SI", "IT", "NL", "BE", "FR", "GB", "GR", "MK", "AL",
+)
+_LOGISTICS_COUNTRY_LABEL = {
+    "CZ": "ČR", "SK": "SK", "TR": "TR", "DE": "DE", "AT": "AT", "HU": "HU",
+    "PL": "PL", "RO": "RO", "BG": "BG", "RS": "RS", "HR": "HR", "SI": "SI",
+    "IT": "IT", "NL": "NL", "BE": "BE", "FR": "FR", "GB": "GB", "GR": "GR",
+    "MK": "MK", "AL": "AL",
+}
+_LOGISTICS_COUNTRY_ALIASES = (
+    ("CZ", ("czech", "česko", "czechia")),
+    ("SK", ("slovak", "slovensko")),
+    ("TR", ("turkey", "türkiye", "turkiye", "turecko")),
+    ("DE", ("germany", "deutschland", "německo", "nemecko")),
+    ("AT", ("austria", "österreich", "osterreich", "rakousko")),
+    ("HU", ("hungary", "magyar", "maďarsko", "madarsko")),
+    ("PL", ("poland", "polska", "polsko")),
+    ("RO", ("romania", "rumunsko")),
+    ("BG", ("bulgaria", "bulharsko")),
+    ("RS", ("serbia", "srbsko")),
+    ("HR", ("croatia", "chorvatsko")),
+    ("SI", ("slovenia", "slovinsko")),
+    ("IT", ("italy", "italia", "itálie", "italie")),
+    ("GR", ("greece", "hellas", "řecko", "recko")),
+)
+
+
+def _resolve_logistics_country(
+    country_code: str,
+    country_name: str,
+    allowed: tuple[str, ...],
+) -> str | None:
+    """ISO země, pokud je v povoleném seznamu."""
+    allowed_set = {str(x).upper() for x in allowed}
     cc = str(country_code or "").upper()
-    if cc in ("CZ", "SK"):
+    if cc in allowed_set:
         return cc
     name = str(country_name or "").lower()
-    if "slovak" in name or "slovensko" in name:
-        return "SK"
-    if "czech" in name or "česko" in name or "czechia" in name:
-        return "CZ"
+    for iso, words in _LOGISTICS_COUNTRY_ALIASES:
+        if iso in allowed_set and any(w in name for w in words):
+            return iso
     return None
 
 
-def _search_photon(q: str) -> list[dict]:
+def _resolve_cz_sk_country(country_code: str, country_name: str) -> str | None:
+    """Zpětná kompatibilita: jen ČR / SK."""
+    return _resolve_logistics_country(country_code, country_name, _LOGISTICS_CZSK)
+
+
+def _search_photon(q: str, allowed: tuple[str, ...]) -> list[dict]:
     """
     Geokódování přes Photon (Komoot, OSM data) — funguje i ze sdílených
-    cloudových IP, kde Nominatim blokuje. Filtruje pouze ČR a SK.
+    cloudových IP, kde Nominatim blokuje.
     """
     url = "https://photon.komoot.io/api/"
     params = {"q": q, "limit": 15, "lang": "default"}
@@ -6751,7 +6789,9 @@ def _search_photon(q: str) -> list[dict]:
         props = feat.get("properties") or {}
         geom = feat.get("geometry") or {}
         coords = geom.get("coordinates") or []
-        country = _resolve_cz_sk_country(props.get("countrycode", ""), props.get("country", ""))
+        country = _resolve_logistics_country(
+            props.get("countrycode", ""), props.get("country", ""), allowed
+        )
         if country is None:
             continue
         try:
@@ -6793,13 +6833,14 @@ def _search_photon(q: str) -> list[dict]:
     return results
 
 
-def _search_nominatim(q: str) -> list[dict]:
+def _search_nominatim(q: str, allowed: tuple[str, ...]) -> list[dict]:
     """Geokódování přes OSM Nominatim — záloha (funguje hlavně lokálně)."""
     time.sleep(1)
     url = "https://nominatim.openstreetmap.org/search"
+    codes = ",".join(c.lower() for c in allowed)
     params = {
         "q": q,
-        "countrycodes": "cz,sk",
+        "countrycodes": codes,
         "format": "json",
         "addressdetails": 1,
         "limit": 12,
@@ -6821,7 +6862,9 @@ def _search_nominatim(q: str) -> list[dict]:
         if not isinstance(item, dict):
             continue
         addr = item.get("address") or {}
-        country = _resolve_cz_sk_country(addr.get("country_code", ""), addr.get("country", ""))
+        country = _resolve_logistics_country(
+            addr.get("country_code", ""), addr.get("country", ""), allowed
+        )
         if country is None:
             continue
         postcode = addr.get("postcode") or addr.get("postal_code") or "N/A"
@@ -6839,25 +6882,25 @@ def _search_nominatim(q: str) -> list[dict]:
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def search_domestic_location(query: str) -> list[dict]:
-    """
-    Vyhledání míst v ČR a na Slovensku.
-    Primárně Photon (funguje i z cloudu), záloha Nominatim.
-    Vrací list {lat, lon, display_name, postcode, country}.
-    """
+def search_logistics_location(query: str, countries: tuple[str, ...]) -> list[dict]:
+    """Vyhledání míst v povolených zemích. Photon, záloha Nominatim."""
     q = (query or "").strip()
-    if len(q) < 2:
+    if len(q) < 2 or not countries:
         return []
-
-    hits = _search_photon(q)
+    hits = _search_photon(q, countries)
     if hits:
         return hits
-    return _search_nominatim(q)
+    return _search_nominatim(q, countries)
+
+
+def search_domestic_location(query: str) -> list[dict]:
+    """Zpětná kompatibilita — jen ČR a SK."""
+    return search_logistics_location(query, _LOGISTICS_CZSK)
 
 
 def _location_select_label(loc: dict) -> str:
-    country = loc.get("country", "CZ")
-    country_lbl = "SK" if country == "SK" else "ČR"
+    country = str(loc.get("country") or "CZ").upper()
+    country_lbl = _LOGISTICS_COUNTRY_LABEL.get(country, country)
     return f'{loc["display_name"]} ({country_lbl} · PSČ: {loc["postcode"]})'
 
 
@@ -6866,23 +6909,27 @@ def _render_location_search(
     input_key: str,
     select_key: str,
     default_query: str = "",
+    *,
+    countries: tuple[str, ...] = _LOGISTICS_CZSK,
+    placeholder: str = "např. Metylovice, Košice, Senec, Praha 1, 040 01",
+    spinner: str = "Vyhledávám…",
 ) -> dict | None:
-    """Vyhledání a výběr místa v ČR nebo na SK — text_input + selectbox pod ním."""
+    """Vyhledání a výběr místa — text_input + selectbox pod ním."""
     st.markdown(f"**{section_title}**")
     query = st.text_input(
-        "🔍 Vyhledat město, ulici nebo PSČ (ČR / SK)",
+        "🔍 Vyhledat město, ulici nebo PSČ",
         value=default_query,
         key=input_key,
-        placeholder="např. Metylovice, Košice, Senec, Praha 1, 040 01",
+        placeholder=placeholder,
     )
     if not query.strip():
         return None
 
-    with st.spinner("Vyhledávám (ČR & SK)…"):
-        hits = search_domestic_location(query.strip())
+    with st.spinner(spinner):
+        hits = search_logistics_location(query.strip(), countries)
 
     if not hits:
-        st.caption("Žádné výsledky — upřesněte dotaz.")
+        st.caption("Žádné výsledky — upřesněte město nebo zemi (např. Gebze Turecko).")
         return None
 
     idx = st.selectbox(
@@ -6912,7 +6959,7 @@ def get_driving_distance(
         f"{lon1},{lat1};{lon2},{lat2}?overview=false"
     )
     try:
-        resp = requests.get(url, timeout=20)
+        resp = requests.get(url, timeout=25)
         resp.raise_for_status()
         data = resp.json()
         if data.get("code") != "Ok":
@@ -6942,6 +6989,60 @@ def _format_drive_time(minutes: float | None) -> str:
         return "—"
     h, m = divmod(int(round(minutes)), 60)
     return f"{h} h {m:02d} min" if h else f"{m} min"
+
+
+def _transit_estimate(
+    drive_min: float | None,
+    *,
+    border_h: float = 0.0,
+) -> dict:
+    """
+    Orientační doba přepravy: čistá jízda + pauzy AETR + nakládka/vykládka + hranice.
+    Kalendářní dny: max 9 h jízdy / den, mezi dny 11 h odpočinek.
+    """
+    drive = max(0.0, float(drive_min or 0.0))
+    breaks_min = math.floor(drive / 270.0) * 45.0
+    handling_min = 120.0
+    border_min = max(0.0, float(border_h or 0.0)) * 60.0
+    drive_days = max(1, math.ceil(drive / (9.0 * 60.0))) if drive else 1
+    overnight_min = max(0, drive_days - 1) * 11.0 * 60.0
+    wheel_plus = handling_min + drive + breaks_min + border_min
+    total_min = wheel_plus + overnight_min
+
+    if border_min < 60 and wheel_plus <= 12 * 60:
+        calendar_days = 1
+        when = "stejný den (po nakládce)"
+    elif border_min < 60 and drive_days == 1 and wheel_plus <= 24 * 60:
+        calendar_days = 1
+        when = "do 24 hodin"
+    else:
+        calendar_days = max(
+            drive_days + (1 if border_min >= 180 else 0),
+            max(1, math.ceil(total_min / (24 * 60))),
+        )
+        if calendar_days <= 1:
+            calendar_days = 2
+        when = "druhý den" if calendar_days == 2 else f"za {_days_cs(calendar_days)}"
+
+    bits = [
+        f"jízda {_format_drive_time(drive)}" if drive else None,
+        f"pauzy {_format_drive_time(breaks_min)}" if breaks_min else None,
+        "nakládka/vykládka 2 h",
+        f"hranice {_format_drive_time(border_min)}" if border_min else None,
+        f"noční odpočinek {_format_drive_time(overnight_min)}" if overnight_min else None,
+    ]
+    detail = " · ".join(b for b in bits if b)
+    return {
+        "drive_min": drive,
+        "breaks_min": breaks_min,
+        "handling_min": handling_min,
+        "border_min": border_min,
+        "overnight_min": overnight_min,
+        "total_min": total_min,
+        "calendar_days": calendar_days,
+        "when": when,
+        "detail": detail,
+    }
 
 
 def _domestic_vehicle_key(v_type: str) -> str:
@@ -7342,8 +7443,12 @@ def _format_domestic_transport_request(
     road_km: float,
     used_osrm: bool,
     shipment: dict,
+    drive_min: float | None = None,
+    transit: dict | None = None,
 ) -> str:
     """Sestaví text poptávky dopravy k odeslání dopravci (bez interní kalkulace)."""
+    start_cc = start_loc.get("country", "CZ")
+    dest_cc = dest_loc.get("country", "CZ")
     lines = [
         "POPTÁVKA DOPRAVY — pbcable s.r.o.",
         f"Vygenerováno: {now_prague().strftime('%d.%m.%Y %H:%M')}",
@@ -7353,17 +7458,28 @@ def _format_domestic_transport_request(
         "a potvrzení volné kapacity vozidla.",
         "",
         "── Trasa ──",
-        f"Nakládka: {start_loc['display_name']} ({start_loc.get('country', 'CZ')})",
-        f"Vykládka: {dest_loc['display_name']} ({dest_loc.get('country', 'CZ')})",
+        f"Nakládka: {start_loc['display_name']} ({start_cc})",
+        f"Vykládka: {dest_loc['display_name']} ({dest_cc})",
         f"Vzdálenost: cca {format_num(road_km, 0)} km"
         + (" (OSRM)" if used_osrm else " (odhad)"),
+    ]
+    if drive_min:
+        lines.append(f"Čistá jízda: {_format_drive_time(drive_min)}")
+    if transit:
+        lines.append(
+            f"Orientační doba na cestě: {_format_drive_time(transit.get('total_min'))} "
+            f"— {transit.get('when')}"
+        )
+        if transit.get("detail"):
+            lines.append(f"Skladba času: {transit['detail']}")
+    lines.extend([
         "",
         "── Náklad ──",
         f"Požadovaný typ vozidla: {v_type}",
         f"Zboží: {shipment['cargo_desc']}",
         f"Hmotnost: {format_num(weight_kg, 0)} kg",
         f"Ložné metry: {ldm:.1f} LDM",
-    ]
+    ])
     if eur_pallets > 0:
         lines.append(f"EUR palety: {eur_pallets} ks")
     lines.extend([
@@ -7395,37 +7511,77 @@ def _format_domestic_transport_request(
 
 
 def render_domestic_logistics() -> None:
-    """Kalkulačka přepravy ČR & SK — start a cíl z Nominatim, trasa přes OSRM."""
-    section_header("🚛", t("Logistika ČR & SK — Kalkulačka přepravy"))
+    """Kalkulačka silniční přepravy — ČR/SK i zahraničí (Turecko, EU)."""
+    section_header("🚛", t("Logistika — kalkulačka přepravy"))
 
     st.markdown(
         '<div class="info-box">'
         + t(
-            "Vyhledejte <strong>start</strong> a <strong>cíl</strong> v <strong>ČR nebo na Slovensku</strong> "
-            "(Košice, Senec, Bratislava, …) · silniční trasa OSRM včetně přeshraniční · "
-            "záloha vzdálenosti: vzdušná × 1,3 · cena v CZK i EUR (ČNB) · "
-            "poptávka pro dopravce ke stažení · na telefonu je formulář nad výsledkem"
+            "Trasa <strong>ČR/SK</strong> nebo <strong>zahraničí</strong> (Turecko, EU). "
+            "Silniční km a čistá jízda z OSRM · <strong>doba na cestě</strong> včetně pauz, "
+            "nakládky a hranice · cena v CZK i EUR (ČNB) je k jednání · "
+            "poptávku pro dopravce stáhnete jako text."
         )
         + "</div>",
         unsafe_allow_html=True,
     )
+
+    scope = st.radio(
+        "Oblast trasy",
+        ("czsk", "intl"),
+        format_func=lambda v: (
+            "ČR a Slovensko" if v == "czsk" else "Zahraničí — Turecko, EU…"
+        ),
+        horizontal=True,
+        key="logistics_scope",
+    )
+    countries = _LOGISTICS_CZSK if scope == "czsk" else _LOGISTICS_INTL
+    if scope == "czsk":
+        start_default, dest_default = "Metylovice", ""
+        place_hint = "např. Metylovice, Košice, Senec, Praha 1, 040 01"
+    else:
+        start_default, dest_default = "Gebze", "Metylovice"
+        place_hint = "např. Gebze, Istanbul, Denizli, Bursa, Wien, Budapest"
 
     col_form, col_result = st.columns([1, 1])
 
     with col_form:
         start_loc = _render_location_search(
             t("Odkud (Start)"),
-            "domestic_start_query",
-            "domestic_start_select",
-            default_query="Metylovice",
+            f"log_start_q_{scope}",
+            f"log_start_s_{scope}",
+            default_query=start_default,
+            countries=countries,
+            placeholder=place_hint,
         )
         st.markdown("<br>", unsafe_allow_html=True)
         dest_loc = _render_location_search(
             t("Kam (Cíl)"),
-            "domestic_dest_query",
-            "domestic_dest_select",
+            f"log_dest_q_{scope}",
+            f"log_dest_s_{scope}",
+            default_query=dest_default,
+            countries=countries,
+            placeholder=place_hint,
         )
         st.markdown("<br>", unsafe_allow_html=True)
+
+        start_cc = str((start_loc or {}).get("country") or "")
+        dest_cc = str((dest_loc or {}).get("country") or "")
+        involves_tr = "TR" in {start_cc.upper(), dest_cc.upper()}
+        border_h = 0.0
+        if involves_tr:
+            border_h = float(st.number_input(
+                "Čekání na hranici TR (hodin)",
+                min_value=0.0,
+                max_value=48.0,
+                value=8.0,
+                step=1.0,
+                key="logistics_tr_border_h",
+                help="Kapıkule / Kapitan Andreevo — podle fronty 4–24 h. Nula = bez čekání.",
+            ))
+            st.caption("U TR→CZ počítejte 3–5 dní včetně hranice. Sazbu v CZK/km si upravte podle nabídky FTL v eurech.")
+        elif scope == "intl":
+            st.caption("Zahraniční sazba je k jednání (často FTL v EUR). Výchozí CZK/km je orientační.")
 
         st.markdown("#### Parametry nákladu a vozidla")
         v_type_raw = st.selectbox(
@@ -7537,13 +7693,14 @@ def render_domestic_logistics() -> None:
                 else "Záložní odhad: vzdušná vzdálenost × 1,3 (OSRM nedostupné)"
             )
             if drive_min is not None:
-                eta_help = "Čas jízdy dle OSRM (bez přestávek a nakládky)"
+                eta_help = "Čistá jízda dle OSRM (bez pauz, nakládky a hranice)"
             else:
                 drive_min = road_km / _DOMESTIC_AVG_SPEED_KMH * 60.0
                 eta_help = (
-                    f"Záložní odhad: {format_num(road_km, 0)} km ÷ "
+                    f"Záložní odhad jízdy: {format_num(road_km, 0)} km ÷ "
                     f"{_DOMESTIC_AVG_SPEED_KMH:.0f} km/h (OSRM čas nedostupný)"
                 )
+            transit = _transit_estimate(drive_min, border_h=border_h)
             dist = road_km
             quote = _domestic_compute_quote(
                 dist, waha, ldm, profile, sazba, vehicle_key
@@ -7551,18 +7708,22 @@ def render_domestic_logistics() -> None:
 
             start_short = start_loc["display_name"].split(",")[0].strip()
             dest_short = dest_loc["display_name"].split(",")[0].strip()
+            start_cc = str(start_loc.get("country") or "CZ").upper()
+            dest_cc = str(dest_loc.get("country") or "CZ").upper()
+            start_lbl = _LOGISTICS_COUNTRY_LABEL.get(start_cc, start_cc)
+            dest_lbl = _LOGISTICS_COUNTRY_LABEL.get(dest_cc, dest_cc)
             st.markdown(
                 "<div style='background:rgba(77,159,255,0.10); padding:12px; border-radius:10px; "
                 "border:1px solid rgba(77,159,255,0.28); border-left:4px solid #4D9FFF; margin-bottom:16px;'>"
                 "<span style='font-family:Syne, sans-serif; font-size:1.1rem; "
                 "font-weight:700; color:#F7FAFD;'>"
-                f"📍 {start_short} "
+                f"📍 {html.escape(start_short)} "
                 f"<span style='font-size:0.85rem; color:#8D99AB;'>"
-                f"(PSČ: {start_loc.get('postcode', 'N/A')})</span> "
+                f"({html.escape(start_lbl)} · PSČ: {html.escape(str(start_loc.get('postcode', 'N/A')))})</span> "
                 f"&nbsp;➡️&nbsp; "
-                f"{dest_short} "
+                f"{html.escape(dest_short)} "
                 f"<span style='font-size:0.85rem; color:#8D99AB;'>"
-                f"(PSČ: {dest_loc.get('postcode', 'N/A')})</span>"
+                f"({html.escape(dest_lbl)} · PSČ: {html.escape(str(dest_loc.get('postcode', 'N/A')))})</span>"
                 "</span></div>",
                 unsafe_allow_html=True,
             )
@@ -7599,22 +7760,31 @@ def render_domestic_logistics() -> None:
             cap_pct = quote["cap_pct"]
             price_czk = quote["price_czk"]
 
-            m1, m2, m3 = st.columns(3)
-            m1.metric(
+            t1, t2, t3, t4 = st.columns(4)
+            t1.metric(
                 "Vzdálenost silniční",
                 f"{format_num(road_km, 0)} km",
                 help=dist_help,
             )
-            m2.metric(
-                "Odhadovaný čas jízdy",
+            t2.metric(
+                "Čistá jízda",
                 _format_drive_time(drive_min),
                 help=eta_help,
             )
-            m3.metric(
-                "Využití kapacity",
-                f"{cap_pct:.1f} %",
-                help=f"Limituje {quote['binding']} · LTL koef. {ltl_koef:.2f}",
+            t3.metric(
+                "Doba na cestě",
+                _format_drive_time(transit["total_min"]),
+                help=transit["detail"],
             )
+            t4.metric(
+                "Na místě orientačně",
+                transit["when"],
+                help=(
+                    "Nakládka + jízda + pauzy řidiče (AETR 45 min / 4,5 h) "
+                    "+ případná hranice TR. Není slib dopravce."
+                ),
+            )
+            st.caption(transit["detail"])
 
             price_eur, eur_czk = _domestic_price_eur(price_czk)
             p_czk, p_eur = st.columns(2)
@@ -7652,6 +7822,8 @@ def render_domestic_logistics() -> None:
                 road_km=road_km,
                 used_osrm=used_osrm,
                 shipment=shipment_form,
+                drive_min=drive_min,
+                transit=transit,
             )
             st.markdown("---")
             st.markdown("**📋 Text poptávky pro dopravce (generováno automaticky)**")
@@ -7669,13 +7841,17 @@ def render_domestic_logistics() -> None:
                 if used_osrm
                 else "záložní odhad (vzdušná × 1,3)"
             )
-            start_cc = start_loc.get("country", "CZ")
-            dest_cc = dest_loc.get("country", "CZ")
+            start_cc = str(start_loc.get("country") or "CZ").upper()
+            dest_cc = str(dest_loc.get("country") or "CZ").upper()
             cross_border = start_cc != dest_cc
-            border_note = " · přeshraniční trasa CZ↔SK" if cross_border else ""
+            if {start_cc, dest_cc} <= {"CZ", "SK"}:
+                border_note = " · přeshraniční trasa CZ↔SK" if cross_border else ""
+            else:
+                border_note = f" · mezinárodní {start_cc}→{dest_cc}"
             st.caption(
                 f"{v_type} · max {format_num(max_w, 0)} kg / {max_l} LDM · "
                 f"vzdálenost: {route_note}{border_note} · sazba {sazba:.1f} CZK/km · "
+                f"na místě {transit['when']} · "
                 f"start ({start_cc}): {start_loc['display_name']} · "
                 f"cíl ({dest_cc}): {dest_loc['display_name']}"
             )
@@ -8658,7 +8834,7 @@ def main() -> None:
         t("🔩 Kovy & Trh"),
         t("💱 Měnové kurzy"),
         t("🛢️ Plasty & Ropa"),
-        t("🚛 Logistika ČR & SK"),
+        t("🚛 Logistika"),
         t("🧰 Nástroje & tipy"),
     ]
     if not is_supplier:
