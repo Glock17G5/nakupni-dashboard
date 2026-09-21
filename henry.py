@@ -604,18 +604,8 @@ def _scrape_ccmn_url(url: str, target: str, metal: str) -> float | None:
     except Exception as e:
         print(f"CCMN {url[:60]}: {e}")
         return None
-    cell = soup.find(
-        lambda tag: tag.name in ["td", "a", "span"] and tag.get_text(strip=True) == target
-    )
-    if cell:
-        parent_tr = cell.find_parent("tr")
-        if parent_tr:
-            cols = parent_tr.find_all("td")
-            if len(cols) >= 3:
-                price = _ccmn_price_from_text(cols[2].get_text(" ", strip=True), metal)
-                if price:
-                    return price
-    picked = None
+    best = None
+    best_rank = 99
     for block in soup.select("div.content1-text-div"):
         right = block.find("span", class_="right")
         if not right or right.get_text(strip=True) != target:
@@ -623,16 +613,30 @@ def _scrape_ccmn_url(url: str, target: str, metal: str) -> float | None:
         region_el = block.find("span", class_="left")
         region = region_el.get_text(strip=True) if region_el else ""
         span = block.select_one("span.up_down_span")
-        if not span:
-            continue
-        price = _ccmn_price_from_text(span.get_text(), metal)
+        price = _ccmn_price_from_text(span.get_text(" ", strip=True) if span else "", metal)
         if not price:
             continue
-        if "长江综合" in region:
-            return price
-        if picked is None or "上海地区" in region:
-            picked = price
-    return picked
+        rank = 50
+        for i, name in enumerate(("长江现货", "长江综合", "上海地区")):
+            if name in region:
+                rank = i
+                break
+        if rank < best_rank:
+            best = price
+            best_rank = rank
+    if best:
+        return best
+    cell = soup.find(
+        lambda tag: tag.name in ["td", "a", "span"] and tag.get_text(strip=True) == target
+    )
+    if cell:
+        parent_tr = cell.find_parent("tr")
+        if parent_tr:
+            for col in parent_tr.find_all("td"):
+                price = _ccmn_price_from_text(col.get_text(" ", strip=True), metal)
+                if price:
+                    return price
+    return None
 
 
 def fetch_ccmn_cny(metal: str) -> float | None:
@@ -640,9 +644,9 @@ def fetch_ccmn_cny(metal: str) -> float | None:
     if hit and (time.time() - hit[0]) < CCMN_CACHE_SEC:
         return hit[1]
     target = "1#铜" if metal == "copper" else "A00铝"
-    fallback = "https://copper.ccmn.cn/" if metal == "copper" else "https://alu.ccmn.cn/"
+    home = "https://copper.ccmn.cn/" if metal == "copper" else "https://alu.ccmn.cn/"
     price = None
-    for url in ("https://www.ccmn.cn/", fallback):
+    for url in (home, "https://www.ccmn.cn/"):
         price = _scrape_ccmn_url(url, target, metal)
         if price:
             break

@@ -5,19 +5,33 @@ import yfinance as yf
 import pandas as pd
 from datetime import datetime
 
-def _scrape_ccmn_url(url, target):
-    res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+CCMN_RANGE = {"copper": (30_000, 180_000), "aluminum": (8_000, 50_000)}
+# Homepage ccmn.cn má u 1#铜 poptávkový formulář (slitina „T2“) — bez rozsahu z toho padne cena 2.
+CCMN_REGION_RANK = ("长江现货", "长江综合", "上海地区")
+CCMN_UA = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+}
+
+
+def _ccmn_price_from_text(text, metal):
+    lo, hi = CCMN_RANGE[metal]
+    for pat in (r"\d{1,3}(?:,\d{3})+(?:\.\d+)?", r"\d{4,6}(?:\.\d+)?"):
+        for m in re.finditer(pat, text or ""):
+            val = float(m.group(0).replace(",", ""))
+            if lo <= val <= hi:
+                return val
+    return None
+
+
+def _scrape_ccmn_url(url, target, metal):
+    res = requests.get(url, headers=CCMN_UA, timeout=15)
     res.encoding = "utf-8"
     soup = BeautifulSoup(res.text, "lxml")
-    cell = soup.find(lambda tag: tag.name in ["td", "a", "span"] and tag.get_text(strip=True) == target)
-    if cell:
-        parent_tr = cell.find_parent("tr")
-        if parent_tr:
-            cols = parent_tr.find_all("td")
-            if len(cols) >= 3:
-                price = float(re.sub(r"[^\d.]", "", cols[2].get_text(strip=True)))
-                if price > 0: return price
-    picked = None
+    best = None
+    best_rank = 99
     for block in soup.select("div.content1-text-div"):
         right = block.find("span", class_="right")
         if not right or right.get_text(strip=True) != target:
@@ -25,27 +39,37 @@ def _scrape_ccmn_url(url, target):
         region_el = block.find("span", class_="left")
         region = region_el.get_text(strip=True) if region_el else ""
         span = block.select_one("span.up_down_span")
-        if not span:
+        price = _ccmn_price_from_text(span.get_text(" ", strip=True) if span else "", metal)
+        if not price:
             continue
-        m = re.search(r"([\d,]+(?:\.\d+)?)", span.get_text())
-        if not m:
-            continue
-        price = float(m.group(1).replace(",", ""))
-        if price <= 0:
-            continue
-        if "长江综合" in region:
-            return price
-        if picked is None or "上海地区" in region:
-            picked = price
-    return picked
+        rank = 50
+        for i, name in enumerate(CCMN_REGION_RANK):
+            if name in region:
+                rank = i
+                break
+        if rank < best_rank:
+            best = price
+            best_rank = rank
+    if best:
+        return best
+    cell = soup.find(lambda tag: tag.name in ["td", "a", "span"] and tag.get_text(strip=True) == target)
+    if cell:
+        parent_tr = cell.find_parent("tr")
+        if parent_tr:
+            for col in parent_tr.find_all("td"):
+                price = _ccmn_price_from_text(col.get_text(" ", strip=True), metal)
+                if price:
+                    return price
+    return None
+
 
 def fetch_ccmn_price(metal):
     target = "1#铜" if metal == "copper" else "A00铝"
-    fallback = "https://copper.ccmn.cn/" if metal == "copper" else "https://alu.ccmn.cn/"
-    for url in ["https://www.ccmn.cn/", fallback]:
+    home = "https://copper.ccmn.cn/" if metal == "copper" else "https://alu.ccmn.cn/"
+    for url in (home, "https://www.ccmn.cn/"):
         try:
-            price = _scrape_ccmn_url(url, target)
-            if price and price > 0:
+            price = _scrape_ccmn_url(url, target, metal)
+            if price:
                 return price
         except Exception as e:
             print(f"CCMN chyba {metal} ({url}): {e}")
@@ -112,10 +136,19 @@ def _collect_alerts(data, ccmn_prev):
     cu = (data.get("ccmn") or {}).get("copper")
     al = (data.get("ccmn") or {}).get("aluminum")
     prev = ccmn_prev or {}
+
+    def _sane_prev(metal, old):
+        lo, hi = CCMN_RANGE[metal]
+        try:
+            val = float(old)
+        except (TypeError, ValueError):
+            return None
+        return val if lo <= val <= hi else None
+
     extra_cu = f"{cu:.0f} CNY/t" if isinstance(cu, (int, float)) else ""
     extra_al = f"{al:.0f} CNY/t" if isinstance(al, (int, float)) else ""
-    _move("CCMN měď vs včera", _pct_change(cu, prev.get("copper")), _ALERT_CCMN_DAY_PCT, extra_cu)
-    _move("CCMN hliník vs včera", _pct_change(al, prev.get("aluminum")), _ALERT_CCMN_DAY_PCT, extra_al)
+    _move("CCMN měď vs včera", _pct_change(cu, _sane_prev("copper", prev.get("copper"))), _ALERT_CCMN_DAY_PCT, extra_cu)
+    _move("CCMN hliník vs včera", _pct_change(al, _sane_prev("aluminum", prev.get("aluminum"))), _ALERT_CCMN_DAY_PCT, extra_al)
     hg = (data.get("yf_spot") or {}).get("HG=F") or {}
     hg_extra = f"{hg.get('price')} USD/lb" if hg.get("price") is not None else ""
     _move("Měď COMEX (HG=F) den", _yf_pct(data, "HG=F"), _ALERT_METAL_DAY_PCT, hg_extra)
