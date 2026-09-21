@@ -8926,31 +8926,36 @@ def main() -> None:
         tabs_list.insert(3, t("🚢 Nákup a landed costs"))
         tabs_list.insert(4, t("📍 Kontejnery na cestě"))
 
-    tabs = st.tabs(tabs_list)
-
-    with tabs[0]:
-        render_metals()
-
-    with tabs[1]:
-        render_fx()
-
-    with tabs[2]:
-        render_oil_plastics()
-
-    if not is_supplier:
-        with tabs[3]:
-            render_landed_cost_pricing()
-        with tabs[4]:
-            render_container_tracking()
-        with tabs[5]:
-            render_domestic_logistics()
-        with tabs[6]:
-            render_tools_and_tips()
+    # st.tabs spouští obsah všech záložek při každém překreslení.
+    # GPS kontejnerů (Jagich umí čekat desítky sekund) by jinak jelo i na Logistice.
+    renderers = {
+        t("🔩 Kovy & Trh"): render_metals,
+        t("💱 Měnové kurzy"): render_fx,
+        t("🛢️ Plasty & Ropa"): render_oil_plastics,
+        t("🚢 Nákup a landed costs"): render_landed_cost_pricing,
+        t("📍 Kontejnery na cestě"): render_container_tracking,
+        t("🚛 Logistika"): render_domestic_logistics,
+        t("🧰 Nástroje & tipy"): render_tools_and_tips,
+    }
+    picker = getattr(st, "segmented_control", None)
+    page_key = "dash_page_supplier" if is_supplier else "dash_page_admin"
+    if picker is not None:
+        page = picker(
+            "Sekce",
+            tabs_list,
+            default=tabs_list[0],
+            key=page_key,
+            label_visibility="collapsed",
+        )
     else:
-        with tabs[3]:
-            render_domestic_logistics()
-        with tabs[4]:
-            render_tools_and_tips()
+        page = st.radio(
+            "Sekce",
+            tabs_list,
+            horizontal=True,
+            key=page_key,
+            label_visibility="collapsed",
+        )
+    renderers.get(page, renderers[tabs_list[0]])()
 
     render_footer()
 
