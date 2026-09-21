@@ -1,53 +1,53 @@
 {
   "ccmn": {
-    "copper": 110180.0,
-    "aluminum": 24370.0
+    "copper": 2.0,
+    "aluminum": 24310.0
   },
   "yf_spot": {
     "HRC=F": {
-      "price": 1283.0,
+      "price": 1281.0,
       "prev": 1237.0,
-      "delta": 46.0,
-      "delta_pct": 3.719
+      "delta": 44.0,
+      "delta_pct": 3.557
     },
     "BZ=F": {
-      "price": 99.18,
-      "prev": 104.82,
-      "delta": -5.639999,
-      "delta_pct": -5.381
+      "price": 96.779999,
+      "prev": 103.870003,
+      "delta": -7.090004,
+      "delta_pct": -6.826
     },
     "CL=F": {
-      "price": 96.099998,
-      "prev": 101.910004,
-      "delta": -5.810005,
-      "delta_pct": -5.701
+      "price": 93.150002,
+      "prev": 100.300003,
+      "delta": -7.150002,
+      "delta_pct": -7.129
     },
     "EURUSD=X": {
-      "price": 1.147974,
-      "prev": 1.146986,
-      "delta": 0.000988,
-      "delta_pct": 0.086
+      "price": 1.148501,
+      "prev": 1.147605,
+      "delta": 0.000896,
+      "delta_pct": 0.078
     },
     "EURCZK=X": {
-      "price": 24.357201,
-      "prev": 24.3046,
-      "delta": 0.052601,
-      "delta_pct": 0.216
+      "price": 24.339001,
+      "prev": 24.306,
+      "delta": 0.033001,
+      "delta_pct": 0.136
     },
     "HG=F": {
-      "price": 6.6945,
-      "prev": 6.5865,
-      "delta": 0.108,
-      "delta_pct": 1.64
+      "price": 6.789,
+      "prev": 6.615,
+      "delta": 0.174,
+      "delta_pct": 2.63
     },
     "ALI=F": {
-      "price": 3466.75,
-      "prev": 3432.25,
-      "delta": 34.5,
-      "delta_pct": 1.005
+      "price": 3473.25,
+      "prev": 3446.75,
+      "delta": 26.5,
+      "delta_pct": 0.769
     }
   },
-  "_ts": "2026-09-18 17:03",
+  "_ts": "2026-09-21 10:38",
   "_health": {
     "ccmn_copper": true,
     "ccmn_aluminum": true,
@@ -55,5 +55,5 @@
     "eurusd": true,
     "history": true
   },
-  "_alert_sig": "2026-09-18|Brent den: -5.4 % (pr\u00e1h \u00b13.0 %) \u00b7 $99.18"
+  "_alert_sig": "2026-09-21|Brent den: -6.8 % (pr\u00e1h \u00b13.0 %) \u00b7 $96.78|CCMN m\u011b\u010f vs v\u010dera: -100.0 % (pr\u00e1h \u00b13.0 %) \u00b7 2 CNY/t"
 }
