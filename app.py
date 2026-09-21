@@ -6669,6 +6669,7 @@ _DOMESTIC_VEHICLE_PROFILES: dict[str, dict[str, float]] = {
         "ltl_exp": 0.55,
         "ltl_floor": 0.48,
         "min_price": 1200.0,
+        "l_per_100": 32.0,
     },
     _DOMESTIC_SOLO_LABEL: {
         "max_w": _DOMESTIC_SOLO_MAX_KG,
@@ -6681,6 +6682,7 @@ _DOMESTIC_VEHICLE_PROFILES: dict[str, dict[str, float]] = {
         "ltl_exp": 0.42,
         "ltl_floor": 0.55,
         "min_price": 1200.0,
+        "l_per_100": 18.0,
     },
     "Plachtová dodávka (do 1,6 t)": {
         "max_w": 1600.0,
@@ -6692,8 +6694,69 @@ _DOMESTIC_VEHICLE_PROFILES: dict[str, dict[str, float]] = {
         "default_l": 0.8,
         "ltl_floor": 0.88,
         "min_price": 900.0,
+        "l_per_100": 11.0,
     },
 }
+
+# Výchozí sazby 45 / 30 / 20 platí při této naftě. Dál se hýbe jen palivo.
+_DIESEL_BASE_CZK = 40.0
+_MBENZIN_DIESEL_URL = "https://www.mbenzin.cz/Prumerne-ceny-benzinu"
+
+
+def _diesel_adjusted_rate(base_rate: float, l_per_100: float, diesel_czk: float) -> float:
+    """Sazba = základ + (l/100 km) × (nafta teď − nafta v základu)."""
+    return round(base_rate + (l_per_100 / 100.0) * (diesel_czk - _DIESEL_BASE_CZK), 1)
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def fetch_mbenzin_diesel() -> dict | None:
+    """Celostátní průměr nafty z mBenzin (Kč/l). Stránka pustí dál až po cookie z JS výzvy."""
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "cs",
+    }
+    try:
+        session = requests.Session()
+        res = session.get(_MBENZIN_DIESEL_URL, headers=headers, timeout=20)
+        token = re.search(r"mb_vratna=([a-f0-9]+)", res.text or "")
+        if token:
+            session.cookies.set("mb_vratna", token.group(1), domain="www.mbenzin.cz", path="/")
+            res = session.get(_MBENZIN_DIESEL_URL, headers=headers, timeout=20)
+        res.encoding = "utf-8"
+        soup = BeautifulSoup(res.text, "lxml")
+    except Exception:
+        return None
+    price = None
+    stations = None
+    for tile in soup.select("div.tile"):
+        label_el = tile.select_one(".tile-label")
+        value_el = tile.select_one(".tile-value")
+        if not label_el or not value_el:
+            continue
+        if "naft" not in label_el.get_text(strip=True).lower():
+            continue
+        match = re.search(r"(\d+[.,]\d+)", value_el.get_text())
+        if not match:
+            continue
+        price = float(match.group(1).replace(",", "."))
+        sub_el = tile.select_one(".tile-sub")
+        if sub_el:
+            stations_match = re.search(r"(\d[\d\s]*)\s*cen", sub_el.get_text())
+            if stations_match:
+                stations = int(re.sub(r"\s+", "", stations_match.group(1)))
+        break
+    if price is None or not (20.0 <= price <= 80.0):
+        return None
+    day = None
+    for cell in soup.find_all("td"):
+        text = cell.get_text(strip=True)
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+            day = text
+            break
+    return {"czk": price, "date": day, "stations": stations}
 
 _NOMINATIM_HEADERS = {"User-Agent": "pbcable-dashboard"}
 
@@ -7639,14 +7702,36 @@ def render_domestic_logistics() -> None:
                 key=f"domestic_ldm_{v_idx}",
             )
 
+        diesel = fetch_mbenzin_diesel()
+        l_per_100 = float(profile["l_per_100"])
+        if diesel:
+            suggested_rate = _diesel_adjusted_rate(def_rate, l_per_100, float(diesel["czk"]))
+            sazba_key = f"domestic_sazba_{v_idx}_{diesel.get('date') or round(diesel['czk'], 2)}"
+        else:
+            suggested_rate = float(def_rate)
+            sazba_key = f"domestic_sazba_{v_idx}_base"
         sazba = st.number_input(
             "Sazba za celé auto (CZK/km)",
             min_value=0.0,
-            value=float(def_rate),
-            step=0.5,
+            value=float(suggested_rate),
+            step=0.1,
             format="%.1f",
-            key=f"domestic_sazba_{v_idx}",
+            key=sazba_key,
         )
+        if diesel:
+            day_label = str(diesel.get("date") or "")
+            day_match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", day_label)
+            if day_match:
+                day_label = f"{int(day_match.group(3))}. {int(day_match.group(2))}. {day_match.group(1)}"
+            stations = diesel.get("stations")
+            sample = f", {stations} stanic" if stations else ""
+            st.caption(
+                f"Nafta {format_num(diesel['czk'], 2)} Kč/l (mBenzin{', ' + day_label if day_label else ''}, "
+                f"průměr ČR{sample}). Výchozí {def_rate:.0f} Kč/km platí při {_DIESEL_BASE_CZK:.0f} Kč/l. "
+                f"Spotřeba {l_per_100:.0f} l/100 km → {format_num(suggested_rate, 1)} Kč/km. Číslo jde přepsat."
+            )
+        else:
+            st.caption("Cenu nafty z mBenzin se nepodařilo stáhnout. Sazba je výchozí, bez palivové přirážky.")
 
         fix_preview = _domestic_compute_fix_fee(profile, sazba)
         st.caption(
