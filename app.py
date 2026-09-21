@@ -7009,17 +7009,18 @@ _DOMESTIC_AVG_SPEED_KMH = 65.0
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
+@st.cache_data(ttl=86400, show_spinner=False)
 def get_driving_distance(
     lat1: float, lon1: float, lat2: float, lon2: float
-) -> tuple[float, bool, float | None]:
+) -> tuple[float, bool, float | None, list[tuple[float, float]]]:
     """
-    Silniční vzdálenost v km + doba jízdy v minutách (OSRM).
-    Vrací (km, použito_osrm, minuty | None).
-    Při selhání API: haversine × 1,3, čas None a druhá hodnota False.
+    Silniční vzdálenost v km, doba jízdy v minutách a body trasy (OSRM).
+    Vrací (km, použito_osrm, minuty | None, [(lat, lon), ...]).
+    Při selhání API: haversine × 1,3, čas None a úsečka mezi konci.
     """
     url = (
         "https://router.project-osrm.org/route/v1/driving/"
-        f"{lon1},{lat1};{lon2},{lat2}?overview=false"
+        f"{lon1},{lat1};{lon2},{lat2}?overview=simplified&geometries=geojson"
     )
     try:
         resp = requests.get(url, timeout=25)
@@ -7040,10 +7041,16 @@ def get_driving_distance(
                 duration_min = None
         except (KeyError, TypeError, ValueError):
             duration_min = None
-        return dist_km, True, duration_min
+        coords: list[tuple[float, float]] = []
+        for point in (routes[0].get("geometry") or {}).get("coordinates") or []:
+            if isinstance(point, (list, tuple)) and len(point) >= 2:
+                coords.append((float(point[1]), float(point[0])))
+        if len(coords) < 2:
+            coords = [(lat1, lon1), (lat2, lon2)]
+        return dist_km, True, duration_min, coords
     except (requests.RequestException, ValueError, KeyError, TypeError, IndexError):
         fallback_km = haversine_distance(lat1, lon1, lat2, lon2) * _DOMESTIC_ROAD_FACTOR
-        return fallback_km, False, None
+        return fallback_km, False, None, [(lat1, lon1), (lat2, lon2)]
 
 
 def _format_drive_time(minutes: float | None) -> str:
@@ -7308,8 +7315,10 @@ def _domestic_compute_quote(
     min_price = profile.get("min_price", _DOMESTIC_MIN_PRICE_CZK)
 
     price_czk: float | None = None
+    ftl_price: float | None = None
     if not overload:
         price_czk = max(min_price, km_part + fix_fee)
+        ftl_price = max(min_price, dist_km * rate_czk_km + fix_fee)
 
     return {
         **cap,
@@ -7317,6 +7326,7 @@ def _domestic_compute_quote(
         "km_part": km_part,
         **fix_parts,
         "price_czk": price_czk,
+        "ftl_price_czk": ftl_price,
         "price_valid": not overload,
     }
 
@@ -7332,31 +7342,8 @@ def _render_domestic_pallet_cheat_sheet() -> None:
             "výška cca 2,7 m · **max 7,5 t / 7,2 LDM** · cca 18 EUR palet<br>"
             "• **Plachtová dodávka (do 1,6 t):** délka 4,2–4,8 m · šířka 2,2 m · "
             "výška 2,0–2,3 m · **max 1,6 t / 4,0 LDM** · 8–10 EUR palet<br><br>"
-            "Vzorec: **`1 EUR paleta = 0,4 LDM`**. "
-            "Návěs 2,48 m pojme **34 nestohovatelných palet** (1,2 × 0,8 m) = **13,6 LDM**.<br><br>"
-            "**Fixní složka ceny:** manipulace (nakládka/vykládka) + "
-            "**dojezd k regionálnímu městu** (km × sazba/km). "
-            "Kamion: 600 Kč + 30 km × sazba (např. 30×45 = 1 350 Kč → fix ~1 950 Kč).",
+            "Počet EUR palet se sám přepočte na ložné metry: **1 paleta = 0,4 LDM**.",
             unsafe_allow_html=True,
-        )
-
-        pallets = list(range(1, 35))
-        ldms = [round(p * _DOMESTIC_LDM_PER_EUR_PALLET, 1) for p in pallets]
-        tc1, tc2, tc3 = st.columns(3)
-        tc1.dataframe(
-            pd.DataFrame({"Počet palet": pallets[:12], "LDM": ldms[:12]}),
-            hide_index=True,
-            use_container_width=True,
-        )
-        tc2.dataframe(
-            pd.DataFrame({"Počet palet": pallets[12:24], "LDM": ldms[12:24]}),
-            hide_index=True,
-            use_container_width=True,
-        )
-        tc3.dataframe(
-            pd.DataFrame({"Počet palet": pallets[24:], "LDM": ldms[24:]}),
-            hide_index=True,
-            use_container_width=True,
         )
 
 
@@ -7705,18 +7692,29 @@ def render_domestic_logistics() -> None:
         diesel = fetch_mbenzin_diesel()
         l_per_100 = float(profile["l_per_100"])
         if diesel:
-            suggested_rate = _diesel_adjusted_rate(def_rate, l_per_100, float(diesel["czk"]))
-            sazba_key = f"domestic_sazba_{v_idx}_{diesel.get('date') or round(diesel['czk'], 2)}"
+            diesel_seed = f"{diesel.get('date') or 'd'}_{float(diesel['czk']):.2f}"
+            diesel_prefill = float(diesel["czk"])
         else:
-            suggested_rate = float(def_rate)
-            sazba_key = f"domestic_sazba_{v_idx}_base"
+            diesel_seed = "rucne"
+            diesel_prefill = float(_DIESEL_BASE_CZK)
+        nafta_czk = st.number_input(
+            "Cena nafty (Kč/l)",
+            min_value=15.0,
+            max_value=120.0,
+            value=diesel_prefill,
+            step=0.1,
+            format="%.2f",
+            key=f"log_diesel_{v_idx}_{diesel_seed}",
+            help="Předvyplněno z mBenzin. Když se nenačte, napiš cenu ručně — sazba se přepočítá.",
+        )
+        suggested_rate = _diesel_adjusted_rate(def_rate, l_per_100, float(nafta_czk))
         sazba = st.number_input(
             "Sazba za celé auto (CZK/km)",
             min_value=0.0,
             value=float(suggested_rate),
             step=0.1,
             format="%.1f",
-            key=sazba_key,
+            key=f"domestic_sazba_{v_idx}_{float(nafta_czk):.2f}",
         )
         if diesel:
             day_label = str(diesel.get("date") or "")
@@ -7725,26 +7723,23 @@ def render_domestic_logistics() -> None:
                 day_label = f"{int(day_match.group(3))}. {int(day_match.group(2))}. {day_match.group(1)}"
             stations = diesel.get("stations")
             sample = f", {stations} stanic" if stations else ""
-            st.caption(
-                f"Nafta {format_num(diesel['czk'], 2)} Kč/l (mBenzin{', ' + day_label if day_label else ''}, "
-                f"průměr ČR{sample}). Výchozí {def_rate:.0f} Kč/km platí při {_DIESEL_BASE_CZK:.0f} Kč/l. "
-                f"Spotřeba {l_per_100:.0f} l/100 km → {format_num(suggested_rate, 1)} Kč/km. Číslo jde přepsat."
+            typed = abs(float(nafta_czk) - float(diesel["czk"])) >= 0.05
+            source = (
+                f"ručně {format_num(nafta_czk, 2)} Kč/l (mBenzin měl {format_num(diesel['czk'], 2)})"
+                if typed
+                else (
+                    f"mBenzin {format_num(diesel['czk'], 2)} Kč/l"
+                    f"{', ' + day_label if day_label else ''}{sample}"
+                )
             )
         else:
-            st.caption("Cenu nafty z mBenzin se nepodařilo stáhnout. Sazba je výchozí, bez palivové přirážky.")
-
-        fix_preview = _domestic_compute_fix_fee(profile, sazba)
+            source = f"mBenzin se nenačetl, počítám z {format_num(nafta_czk, 2)} Kč/l"
         st.caption(
-            f"Fixní složka (orientačně): **{format_num(fix_preview['fix_fee'], 0)} CZK** · "
-            f"manipulace {format_num(fix_preview['fix_handling'], 0)} + "
-            f"dojezd {fix_preview['fix_hub_km']:.0f} km × {sazba:.1f} = "
-            f"{format_num(fix_preview['fix_positioning'], 0)} CZK"
+            f"Nafta: {source}. Výchozí {def_rate:.0f} Kč/km platí při {_DIESEL_BASE_CZK:.0f} Kč/l. "
+            f"Spotřeba {l_per_100:.0f} l/100 km → {format_num(suggested_rate, 1)} Kč/km. "
+            "Obě čísla jdou přepsat."
         )
 
-        st.markdown("**Vytížení vozidla (náklad)**")
-        _render_domestic_capacity_bar(
-            _domestic_capacity_info(waha, ldm, profile)
-        )
         suggested_v = _domestic_suggest_vehicle(waha, ldm)
         if suggested_v != v_type:
             st.info(
@@ -7768,7 +7763,7 @@ def render_domestic_logistics() -> None:
             dest_lat, dest_lon = dest_loc["lat"], dest_loc["lon"]
 
             with st.spinner("Počítám silniční trasu (OSRM)…"):
-                road_km, used_osrm, drive_min = get_driving_distance(
+                road_km, used_osrm, drive_min, route_coords = get_driving_distance(
                     start_lat, start_lon, dest_lat, dest_lon
                 )
 
@@ -7813,24 +7808,33 @@ def render_domestic_logistics() -> None:
                 unsafe_allow_html=True,
             )
 
-            # Mapa trasy — nakládka (modrá) a vykládka (červená)
-            map_df = pd.DataFrame([
-                {"lat": float(start_lat), "lon": float(start_lon),
-                 "color": "#0D6EFD", "size": 2500.0},
-                {"lat": float(dest_lat), "lon": float(dest_lon),
-                 "color": "#EF4444", "size": 2500.0},
-            ])
-            st.map(
-                map_df,
-                latitude="lat",
-                longitude="lon",
-                color="color",
-                size="size",
-                height=280,
-            )
-            st.caption("🔵 Nakládka · 🔴 Vykládka")
+            route_lats = [c[0] for c in route_coords]
+            route_lons = [c[1] for c in route_coords]
+            route_fig = _new_osm_map(route_lats, route_lons, height=320)
+            route_fig.add_trace(go.Scattermap(
+                lat=route_lats,
+                lon=route_lons,
+                mode="lines",
+                line=dict(width=4, color="#4D9FFF"),
+                name="Trasa",
+                showlegend=False,
+                hoverinfo="skip",
+            ))
+            route_fig.add_trace(go.Scattermap(
+                lat=[route_lats[0], route_lats[-1]],
+                lon=[route_lons[0], route_lons[-1]],
+                mode="markers",
+                marker=dict(size=14, color=["#0D6EFD", "#EF4444"]),
+                hovertext=[start_short, dest_short],
+                hoverinfo="text",
+                name="Místa",
+                showlegend=False,
+            ))
+            _show_plotly_map(route_fig)
+            map_note = "silnice OSRM" if used_osrm else "úsečka, OSRM nedostupné"
+            st.caption(f"Modrá nakládka · červená vykládka · {map_note}")
 
-            st.markdown("**Vytížení vozidla (trasa + náklad)**")
+            st.markdown("**Vytížení vozidla**")
             _render_domestic_capacity_bar(quote)
 
             if quote["overload"]:
@@ -7872,29 +7876,45 @@ def render_domestic_logistics() -> None:
             st.caption(transit["detail"])
 
             price_eur, eur_czk = _domestic_price_eur(price_czk)
-            p_czk, p_eur = st.columns(2)
+            ftl_price = quote.get("ftl_price_czk")
+            p_czk, p_ftl, p_eur = st.columns(3)
             if quote["price_valid"] and price_czk is not None:
                 p_czk.metric(
-                    "Odhadovaná cena k jednání",
+                    "LTL — tahle zásilka",
                     f"{format_num(price_czk, 0)} CZK",
-                    help="Model: kilometrová LTL složka + fixní poplatky (min. cena)",
+                    help="Dokládka: z kilometrů se platí víc než samotný podíl nákladu. K tomu nakládka a dojezd.",
+                )
+                p_ftl.metric(
+                    "FTL — celé auto",
+                    f"{format_num(ftl_price, 0)} CZK" if ftl_price else "—",
+                    help="Stejná trasa, vůz naplněný. Srovnání, jestli se LTL ještě vyplatí.",
                 )
                 if price_eur is not None and eur_czk:
                     p_eur.metric(
-                        "Odhadovaná cena v EUR",
+                        "LTL v EUR",
                         f"{format_num(price_eur, 0)} EUR",
                         help=f"Kurz ČNB {eur_czk:.4f} CZK/EUR",
                     )
                 else:
                     p_eur.metric(
-                        "Odhadovaná cena v EUR",
+                        "LTL v EUR",
                         "—",
                         help="Kurz ČNB EUR/CZK není k dispozici",
                     )
+                if ftl_price and float(cap_pct) < 98:
+                    share = float(price_czk) / float(ftl_price) * 100.0
+                    st.caption(
+                        f"Vytížení {float(cap_pct):.0f} % (limituje {quote['binding']}). "
+                        f"LTL z kilometrů bere {float(ltl_koef) * 100:.0f} %, ne jen podíl nákladu. "
+                        f"Tahle zásilka je {share:.0f} % ceny celého auta na stejné trase."
+                    )
+                else:
+                    st.caption(f"Vytížení {float(cap_pct):.0f} %. Cena je za celé auto.")
                 _render_domestic_price_breakdown(quote)
             else:
-                p_czk.metric("Odhadovaná cena k jednání", "—")
-                p_eur.metric("Odhadovaná cena v EUR", "—")
+                p_czk.metric("LTL — tahle zásilka", "—")
+                p_ftl.metric("FTL — celé auto", "—")
+                p_eur.metric("LTL v EUR", "—")
                 st.caption("Cena není k dispozici — přetížení vozidla.")
 
             request_text = _format_domestic_transport_request(
@@ -7919,26 +7939,6 @@ def render_domestic_logistics() -> None:
                 file_name=f"poptavka_dopravy_{now_prague().strftime('%Y-%m-%d')}.txt",
                 mime="text/plain",
                 use_container_width=True,
-            )
-
-            route_note = (
-                "reálná silniční trasa (OSRM)"
-                if used_osrm
-                else "záložní odhad (vzdušná × 1,3)"
-            )
-            start_cc = str(start_loc.get("country") or "CZ").upper()
-            dest_cc = str(dest_loc.get("country") or "CZ").upper()
-            cross_border = start_cc != dest_cc
-            if {start_cc, dest_cc} <= {"CZ", "SK"}:
-                border_note = " · přeshraniční trasa CZ↔SK" if cross_border else ""
-            else:
-                border_note = f" · mezinárodní {start_cc}→{dest_cc}"
-            st.caption(
-                f"{v_type} · max {format_num(max_w, 0)} kg / {max_l} LDM · "
-                f"vzdálenost: {route_note}{border_note} · sazba {sazba:.1f} CZK/km · "
-                f"na místě {transit['when']} · "
-                f"start ({start_cc}): {start_loc['display_name']} · "
-                f"cíl ({dest_cc}): {dest_loc['display_name']}"
             )
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
