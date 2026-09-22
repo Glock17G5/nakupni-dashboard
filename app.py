@@ -1563,54 +1563,98 @@ def _parse_wm_table_date(text: str) -> datetime | None:
     return None
 
 
-@st.cache_data(ttl=CACHE_TTL)
-def fetch_westmetall_history(url: str) -> pd.DataFrame | None:
-    """
-    Stáhne historii z westmetall tabulky (action=table&field=LME_*_cash).
-    Sloupce: Date, Close (USD/t LME Cash), Stock (tuny skladu).
-    """
+def _westmetall_field_from_url(url: str) -> str | None:
+    match = re.search(r"field=(LME_[A-Za-z0-9_]+)", url or "")
+    return match.group(1) if match else None
+
+
+def _westmetall_history_from_xml(field: str) -> pd.DataFrame | None:
+    """Grafová řada Westmetallu. HTML tabulka bývá o pár dní pozadu."""
+    api = f"https://www.westmetall.com/api/marketdata/en/{field}/"
+    resp = requests.get(api, headers=_WM_HTTP_HEADERS, timeout=25)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "xml")
+    price_by_date: dict[datetime, float] = {}
+    stock_by_date: dict[datetime, float] = {}
+    for series in soup.find_all("lineSeries"):
+        name = (series.get("name") or "").lower()
+        bucket = stock_by_date if "stock" in name else price_by_date
+        for node in series.find_all("val"):
+            raw_x = node.get("x") or ""
+            raw_y = node.get("y")
+            if not raw_x or raw_y is None:
+                continue
+            try:
+                day = datetime.strptime(raw_x, "%Y/%m/%d")
+                bucket[day] = float(raw_y)
+            except ValueError:
+                continue
+    if not price_by_date:
+        return None
+    rows = []
+    for day, price in price_by_date.items():
+        stock = stock_by_date.get(day)
+        rows.append({
+            "Date": day,
+            "Close": price,
+            "Stock": int(round(stock)) if stock is not None else None,
+        })
+    df = pd.DataFrame(rows)
+    return df.drop_duplicates(subset=["Date"], keep="last").sort_values("Date").reset_index(drop=True)
+
+
+def _westmetall_history_from_html(url: str) -> pd.DataFrame | None:
+    """Záloha, když XML API neodpoví. Tabulka na webu končí dřív než graf."""
     is_aluminum = "LME_Al" in url
     price_lo, price_hi = (1_500, 8_000) if is_aluminum else (4_000, 25_000)
     stock_lo, stock_hi = 1_000, 2_000_000
+    resp = requests.get(url, headers=_WM_HTTP_HEADERS, timeout=25)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "lxml")
+    rows: list[dict] = []
+    for table in soup.find_all("table"):
+        for row in table.find_all("tr"):
+            cells = row.find_all(["td", "th"])
+            if len(cells) < 2:
+                continue
+            date_txt = cells[0].get_text(strip=True)
+            if not date_txt or date_txt.lower() == "date":
+                continue
+            dt = _parse_wm_table_date(date_txt)
+            if dt is None:
+                continue
+            price = _parse_westmetall_price(cells[1].get_text(strip=True))
+            if price is None or not (price_lo <= price <= price_hi):
+                continue
+            stock = None
+            if len(cells) >= 4:
+                stock_raw = _parse_westmetall_price(cells[3].get_text(strip=True))
+                if stock_raw is not None and stock_lo <= stock_raw <= stock_hi:
+                    stock = int(round(stock_raw))
+            rows.append({"Date": dt, "Close": price, "Stock": stock})
+    if not rows:
+        return None
+    df = pd.DataFrame(rows)
+    return df.drop_duplicates(subset=["Date"], keep="first").sort_values("Date").reset_index(drop=True)
 
+
+@st.cache_data(ttl=CACHE_TTL)
+def fetch_westmetall_history(url: str) -> pd.DataFrame | None:
+    """
+    Historie LME Cash z Westmetallu.
+    Primárně XML grafu (aktuální den), tabulka na stránce je záloha.
+    Sloupce: Date, Close (USD/t), Stock (tuny).
+    """
+    field = _westmetall_field_from_url(url)
+    if field:
+        try:
+            df = _westmetall_history_from_xml(field)
+            if df is not None and not df.empty:
+                return df
+        except Exception:
+            pass
     try:
-        resp = requests.get(url, headers=_WM_HTTP_HEADERS, timeout=25)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "lxml")
-        rows: list[dict] = []
-
-        for table in soup.find_all("table"):
-            for row in table.find_all("tr"):
-                cells = row.find_all(["td", "th"])
-                if len(cells) < 2:
-                    continue
-                date_txt = cells[0].get_text(strip=True)
-                if not date_txt or date_txt.lower() == "date":
-                    continue
-                dt = _parse_wm_table_date(date_txt)
-                if dt is None:
-                    continue
-
-                price = _parse_westmetall_price(cells[1].get_text(strip=True))
-                if price is None or not (price_lo <= price <= price_hi):
-                    continue
-
-                stock = None
-                if len(cells) >= 4:
-                    stock_raw = _parse_westmetall_price(cells[3].get_text(strip=True))
-                    if stock_raw is not None and stock_lo <= stock_raw <= stock_hi:
-                        stock = int(round(stock_raw))
-
-                rows.append({"Date": dt, "Close": price, "Stock": stock})
-
-        if not rows:
-            return None
-
-        df = pd.DataFrame(rows)
-        df = df.drop_duplicates(subset=["Date"], keep="first")
-        df = df.sort_values("Date").reset_index(drop=True)
-        return df
-
+        return _westmetall_history_from_html(url)
     except Exception:
         return None
 
@@ -1675,6 +1719,19 @@ def fetch_westmetall() -> dict | None:
     Když denní tabulka nemá čísla (svátek LME), doplní poslední Cash z historie.
     """
     result: dict = {}
+    for metal in _WESTMETALL_LME_FIELDS:
+        hist = _westmetall_last_settlement(metal)
+        if not hist:
+            continue
+        fresh = {key: val for key, val in hist.items() if key != "stale"}
+        result[metal] = fresh
+        if hist.get("stock_tons"):
+            result[f"{metal}_stock"] = {"tons": hist["stock_tons"], "unit": "t"}
+    if "copper" in result or "aluminum" in result:
+        result["_source"] = "westmetall.com"
+        result["_ts"] = now_prague().strftime("%Y-%m-%d %H:%M")
+        return result
+
     url = "https://www.westmetall.com/en/markdaten.php"
     try:
         resp = requests.get(url, headers=_WM_HTTP_HEADERS, timeout=18)
@@ -6664,7 +6721,7 @@ _DOMESTIC_VEHICLE_PROFILES: dict[str, dict[str, float]] = {
         "def_rate": 45.0,
         "fix_handling": 600.0,
         "fix_hub_km": 30.0,
-        "default_w": 15000.0,
+        "default_w": 24000.0,
         "default_l": 6.0,
         "ltl_exp": 0.55,
         "ltl_floor": 0.48,
@@ -7009,7 +7066,6 @@ _DOMESTIC_AVG_SPEED_KMH = 65.0
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-@st.cache_data(ttl=86400, show_spinner=False)
 def get_driving_distance(
     lat1: float, lon1: float, lat2: float, lon2: float
 ) -> tuple[float, bool, float | None, list[tuple[float, float]]]:
@@ -7151,6 +7207,34 @@ def _domestic_suggest_vehicle(weight_kg: float, ldm: float) -> str:
         if weight_kg <= profile["max_w"] and ldm <= profile["max_l"]:
             return v_type
     return _DOMESTIC_VEHICLE_ORDER[0]
+
+
+def _logistics_vehicle_prices(
+    weight_kg: float,
+    ldm: float,
+    dist_km: float | None,
+    nafta_czk: float,
+) -> dict[str, float]:
+    """Cena zásilky na každém voze, který ji uveze. Bez trasy prázdné."""
+    if dist_km is None or dist_km <= 0:
+        return {}
+    prices: dict[str, float] = {}
+    for v_type in _DOMESTIC_VEHICLE_ORDER:
+        profile = _DOMESTIC_VEHICLE_PROFILES[v_type]
+        if weight_kg > profile["max_w"] or ldm > profile["max_l"]:
+            continue
+        rate = _diesel_adjusted_rate(profile["def_rate"], profile["l_per_100"], nafta_czk)
+        quote = _domestic_compute_quote(
+            dist_km, weight_kg, ldm, profile, rate, _domestic_vehicle_key(v_type),
+        )
+        price = quote.get("price_czk")
+        if price is not None:
+            prices[v_type] = float(price)
+    return prices
+
+
+def _pin_logistics_vehicle() -> None:
+    st.session_state["log_vehicle_pinned"] = True
 
 
 def _domestic_capacity_info(
@@ -7634,29 +7718,70 @@ def render_domestic_logistics() -> None:
             st.caption("Zahraniční sazba je k jednání (často FTL v EUR). Výchozí CZK/km je orientační.")
 
         st.markdown("#### Parametry nákladu a vozidla")
+        cargo_kg = float(st.session_state.get("log_cargo_kg", 24000.0))
+        cargo_pallets = int(st.session_state.get("log_cargo_pallets", 0))
+        if cargo_pallets > 0:
+            cargo_ldm = cargo_pallets * _DOMESTIC_LDM_PER_EUR_PALLET
+        else:
+            cargo_ldm = float(st.session_state.get("log_cargo_ldm", 6.0))
+        pick_km = None
+        if start_loc and dest_loc:
+            pick_km, _, _, _ = get_driving_distance(
+                start_loc["lat"], start_loc["lon"], dest_loc["lat"], dest_loc["lon"],
+            )
+        diesel_now = fetch_mbenzin_diesel()
+        nafta_for_pick = float(diesel_now["czk"]) if diesel_now else float(_DIESEL_BASE_CZK)
+        vehicle_prices = _logistics_vehicle_prices(cargo_kg, cargo_ldm, pick_km, nafta_for_pick)
+        if vehicle_prices:
+            recommended_v = min(vehicle_prices, key=vehicle_prices.get)
+        else:
+            recommended_v = _domestic_suggest_vehicle(cargo_kg, cargo_ldm)
+        cargo_sig = (round(cargo_kg), round(cargo_ldm, 1), None if pick_km is None else round(pick_km))
+        if st.session_state.get("log_vehicle_sig") != cargo_sig:
+            st.session_state["log_vehicle_sig"] = cargo_sig
+            st.session_state["log_vehicle_pinned"] = False
+        if (
+            not st.session_state.get("log_vehicle_pinned")
+            and recommended_v in _DOMESTIC_VEHICLE_ORDER
+        ):
+            st.session_state["domestic_v_type_selector_v75"] = recommended_v
         v_type_raw = st.selectbox(
             "Druh vozidla",
             _DOMESTIC_VEHICLE_ORDER,
             format_func=_domestic_vehicle_option_label,
             key="domestic_v_type_selector_v75",
-            help=f"Sólo: pevný limit {_DOMESTIC_SOLO_MAX_KG:.0f} kg (7,5 t).",
+            on_change=_pin_logistics_vehicle,
+            help=f"Sólo: pevný limit {_DOMESTIC_SOLO_MAX_KG:.0f} kg (7,5 t). "
+            "Při změně váhy se vybere nejlevnější vůz, který náklad uveze.",
         )
         v_type = _domestic_normalize_vehicle_type(v_type_raw)
         profile = _DOMESTIC_VEHICLE_PROFILES[v_type]
         max_w = profile["max_w"]
         max_l = profile["max_l"]
         def_rate = profile["def_rate"]
-        default_w = profile["default_w"]
-        default_l = profile["default_l"]
         vehicle_key = _domestic_vehicle_key(v_type)
         v_idx = _DOMESTIC_VEHICLE_ORDER.index(v_type)
+        if vehicle_prices and recommended_v in vehicle_prices:
+            bits = [
+                f"{name.split('(')[0].strip()} {format_num(price, 0)} Kč"
+                for name, price in sorted(vehicle_prices.items(), key=lambda item: item[1])
+            ]
+            if v_type == recommended_v:
+                st.caption("Nejlevnější vůz pro tuhle váhu a trasu: " + " · ".join(bits))
+            else:
+                st.info(
+                    f"Levněji vychází **{recommended_v}** "
+                    f"({format_num(vehicle_prices[recommended_v], 0)} Kč). "
+                    "Nechávám vámi vybraný vůz. Změňte váhu a výběr se přepne sám. "
+                    + " · ".join(bits)
+                )
 
         waha = st.number_input(
             "Váha (kg)",
             min_value=1.0,
-            value=float(default_w),
+            value=24000.0,
             step=50.0,
-            key=f"domestic_weight_{v_idx}",
+            key="log_cargo_kg",
         )
 
         eur_pallets = st.number_input(
@@ -7665,28 +7790,29 @@ def render_domestic_logistics() -> None:
             max_value=34,
             value=0,
             step=1,
-            key=f"domestic_pallets_{v_idx}",
+            key="log_cargo_pallets",
         )
         if eur_pallets > 0:
             ldm_auto = float(eur_pallets) * _DOMESTIC_LDM_PER_EUR_PALLET
-            ldm = st.number_input(
+            ldm = ldm_auto
+            st.number_input(
                 "Ložné metry (LDM)",
                 min_value=0.1,
                 value=ldm_auto,
                 step=0.1,
                 format="%.1f",
                 disabled=True,
-                key=f"domestic_ldm_pallet_{v_idx}",
+                key=f"log_cargo_ldm_pallet_{eur_pallets}",
                 help=f"Automaticky: {eur_pallets} palet × 0,4 LDM = {ldm_auto:.1f} LDM",
             )
         else:
             ldm = st.number_input(
                 "Ložné metry (LDM)",
                 min_value=0.1,
-                value=float(default_l),
+                value=6.0,
                 step=0.1,
                 format="%.1f",
-                key=f"domestic_ldm_{v_idx}",
+                key="log_cargo_ldm",
             )
 
         diesel = fetch_mbenzin_diesel()
@@ -7739,13 +7865,6 @@ def render_domestic_logistics() -> None:
             f"Spotřeba {l_per_100:.0f} l/100 km → {format_num(suggested_rate, 1)} Kč/km. "
             "Obě čísla jdou přepsat."
         )
-
-        suggested_v = _domestic_suggest_vehicle(waha, ldm)
-        if suggested_v != v_type:
-            st.info(
-                f"Dle hmotnosti ({format_num(waha, 0)} kg) a LDM ({ldm:.1f}) "
-                f"doporučujeme vozidlo: **{suggested_v}**."
-            )
 
         _render_domestic_pallet_cheat_sheet()
         shipment_form = _render_domestic_shipment_form()
