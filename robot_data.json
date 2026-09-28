@@ -1,53 +1,53 @@
 {
   "ccmn": {
-    "copper": 112050.0,
-    "aluminum": 24500.0
+    "copper": 111570.0,
+    "aluminum": 24165.0
   },
   "yf_spot": {
     "HRC=F": {
-      "price": 1330.0,
+      "price": 1328.0,
       "prev": 1237.0,
-      "delta": 93.0,
-      "delta_pct": 7.518
+      "delta": 91.0,
+      "delta_pct": 7.357
     },
     "BZ=F": {
-      "price": 97.190002,
-      "prev": 106.599998,
-      "delta": -9.409996,
-      "delta_pct": -8.827
+      "price": 100.529999,
+      "prev": 104.32,
+      "delta": -3.790001,
+      "delta_pct": -3.633
     },
     "CL=F": {
-      "price": 92.220001,
-      "prev": 94.610001,
-      "delta": -2.389999,
-      "delta_pct": -2.526
+      "price": 95.790001,
+      "prev": 92.410004,
+      "delta": 3.379997,
+      "delta_pct": 3.658
     },
     "EURUSD=X": {
-      "price": 1.139471,
-      "prev": 1.138187,
-      "delta": 0.001284,
-      "delta_pct": 0.113
+      "price": 1.137915,
+      "prev": 1.137475,
+      "delta": 0.00044,
+      "delta_pct": 0.039
     },
     "EURCZK=X": {
-      "price": 24.315001,
-      "prev": 24.4,
-      "delta": -0.084999,
-      "delta_pct": -0.348
+      "price": 24.399099,
+      "prev": 24.3943,
+      "delta": 0.004799,
+      "delta_pct": 0.02
     },
     "HG=F": {
-      "price": 6.7675,
-      "prev": 6.7185,
-      "delta": 0.049,
-      "delta_pct": 0.729
+      "price": 6.631,
+      "prev": 6.6955,
+      "delta": -0.0645,
+      "delta_pct": -0.963
     },
     "ALI=F": {
-      "price": 3470.5,
-      "prev": 3426.75,
-      "delta": 43.75,
-      "delta_pct": 1.277
+      "price": 3436.0,
+      "prev": 3435.0,
+      "delta": 1.0,
+      "delta_pct": 0.029
     }
   },
-  "_ts": "2026-09-25 17:55",
+  "_ts": "2026-09-28 11:38",
   "_health": {
     "ccmn_copper": true,
     "ccmn_aluminum": true,
@@ -55,5 +55,5 @@
     "eurusd": true,
     "history": true
   },
-  "_alert_sig": "2026-09-25|Brent den: -8.8 % (pr\u00e1h \u00b13.0 %) \u00b7 $97.19"
+  "_alert_sig": "2026-09-28|Brent den: -3.6 % (pr\u00e1h \u00b13.0 %) \u00b7 $100.53"
 }
