@@ -1,53 +1,53 @@
 {
   "ccmn": {
-    "copper": 111000.0,
-    "aluminum": 24105.0
+    "copper": 111540.0,
+    "aluminum": 24030.0
   },
   "yf_spot": {
     "HRC=F": {
-      "price": 1319.0,
+      "price": 1235.0,
       "prev": 1235.0,
-      "delta": 84.0,
-      "delta_pct": 6.802
+      "delta": 0.0,
+      "delta_pct": 0.0
     },
     "BZ=F": {
-      "price": 96.300003,
-      "prev": 105.279999,
-      "delta": -8.979996,
-      "delta_pct": -8.53
+      "price": 97.449997,
+      "prev": 102.589996,
+      "delta": -5.139999,
+      "delta_pct": -5.01
     },
     "CL=F": {
-      "price": 89.669998,
-      "prev": 92.599998,
-      "delta": -2.93,
-      "delta_pct": -3.164
+      "price": 90.419998,
+      "prev": 89.379997,
+      "delta": 1.040001,
+      "delta_pct": 1.164
     },
     "EURUSD=X": {
-      "price": 1.133787,
-      "prev": 1.137799,
-      "delta": -0.004012,
-      "delta_pct": -0.353
+      "price": 1.136105,
+      "prev": 1.137268,
+      "delta": -0.001163,
+      "delta_pct": -0.102
     },
     "EURCZK=X": {
-      "price": 24.385,
-      "prev": 24.362,
-      "delta": 0.023001,
-      "delta_pct": 0.094
+      "price": 24.435499,
+      "prev": 24.382601,
+      "delta": 0.052898,
+      "delta_pct": 0.217
     },
     "HG=F": {
-      "price": 6.632,
-      "prev": 6.566,
-      "delta": 0.066,
-      "delta_pct": 1.005
+      "price": 6.637,
+      "prev": 6.5435,
+      "delta": 0.0935,
+      "delta_pct": 1.429
     },
     "ALI=F": {
-      "price": 3340.75,
-      "prev": 3385.75,
-      "delta": -45.0,
-      "delta_pct": -1.329
+      "price": 3343.75,
+      "prev": 3320.5,
+      "delta": 23.25,
+      "delta_pct": 0.7
     }
   },
-  "_ts": "2026-09-29 18:35",
+  "_ts": "2026-09-30 11:07",
   "_health": {
     "ccmn_copper": true,
     "ccmn_aluminum": true,
@@ -55,5 +55,5 @@
     "eurusd": true,
     "history": true
   },
-  "_alert_sig": "2026-09-29|Brent den: -8.5 % (pr\u00e1h \u00b13.0 %) \u00b7 $96.30"
+  "_alert_sig": "2026-09-30|Brent den: -5.0 % (pr\u00e1h \u00b13.0 %) \u00b7 $97.45"
 }
