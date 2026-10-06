@@ -9023,16 +9023,54 @@ def render_footer() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 # ==============================================================================
 
+def _fragment_only_run() -> bool:
+    """True jen když běží samostatný fragment, ne celá aplikace."""
+    from streamlit.runtime.scriptrunner_utils.script_run_context import (
+        get_script_run_ctx,
+    )
+
+    ctx = get_script_run_ctx()
+    return bool(ctx and getattr(ctx, "fragment_ids_this_run", None))
+
+
+@st.fragment(run_every=0.4)
+def _kick_section_paint() -> None:
+    """Po úspěšném krátkém běhu spustí vykreslení nové sekce.
+
+    Samotný st.rerun() starý obsah nesmaže. Nejdřív musí doběhnout celý skript,
+    Streamlit pak sundá grafy předchozí stránky a teprve potom se sekce kreslí.
+    """
+    if not _fragment_only_run():
+        return
+    if not st.session_state.get("_dash_hold"):
+        return
+    st.session_state["_dash_hold"] = False
+    page = st.session_state.get("_dash_defer_page")
+    if isinstance(page, str):
+        st.session_state["_dash_painted_page"] = page
+    st.rerun()
+
+
 def main() -> None:
     """Hlavní funkce – sestaví celý dashboard voláním dílčích render funkcí."""
+    is_supplier = st.session_state.get(_SESSION_ROLE) == "supplier"
+    page_key = "dash_page_supplier" if is_supplier else "dash_page_admin"
+    # Přepnutí sekce: jeden krátký úspěšný běh bez těla stránky.
+    # Jinak na telefonu zůstanou grafy kovů pod novou sekcí, dokud doběhne GPS.
+    pending = st.session_state.get(page_key)
+    painted = st.session_state.get("_dash_painted_page")
+    if isinstance(pending, str) and isinstance(painted, str) and pending != painted:
+        st.session_state["_dash_hold"] = True
+        st.session_state["_dash_defer_page"] = pending
+    else:
+        st.session_state["_dash_hold"] = False
+
     _render_app_branding()
     render_data_export()
     render_header()
     render_global_controls()
 
     render_morning_briefing()
-
-    is_supplier = st.session_state.get(_SESSION_ROLE) == "supplier"
 
     tabs_list = [
         t("🔩 Kovy & Trh"),
@@ -9057,7 +9095,6 @@ def main() -> None:
         t("🧰 Nástroje & tipy"): render_tools_and_tips,
     }
     picker = getattr(st, "segmented_control", None)
-    page_key = "dash_page_supplier" if is_supplier else "dash_page_admin"
     if picker is not None:
         page = picker(
             "Sekce",
@@ -9074,7 +9111,14 @@ def main() -> None:
             key=page_key,
             label_visibility="collapsed",
         )
-    renderers.get(page, renderers[tabs_list[0]])()
+    if not isinstance(page, str):
+        page = tabs_list[0]
+    if st.session_state.get("_dash_hold"):
+        _kick_section_paint()
+    else:
+        if isinstance(page, str):
+            st.session_state["_dash_painted_page"] = page
+        renderers.get(page, renderers[tabs_list[0]])()
 
     render_footer()
 
