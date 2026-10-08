@@ -1,53 +1,53 @@
 {
   "ccmn": {
-    "copper": 111540.0,
-    "aluminum": 24030.0
+    "copper": 112700.0,
+    "aluminum": 23760.0
   },
   "yf_spot": {
     "HRC=F": {
-      "price": 1297.0,
-      "prev": 1276.0,
-      "delta": 21.0,
-      "delta_pct": 1.646
+      "price": 1316.0,
+      "prev": 1275.0,
+      "delta": 41.0,
+      "delta_pct": 3.216
     },
     "BZ=F": {
-      "price": 101.050003,
-      "prev": 100.580002,
-      "delta": 0.470001,
-      "delta_pct": 0.467
+      "price": 104.550003,
+      "prev": 100.199997,
+      "delta": 4.350006,
+      "delta_pct": 4.341
     },
     "CL=F": {
-      "price": 89.050003,
-      "prev": 89.440002,
-      "delta": -0.389999,
-      "delta_pct": -0.436
+      "price": 92.190002,
+      "prev": 88.279999,
+      "delta": 3.910004,
+      "delta_pct": 4.429
     },
     "EURUSD=X": {
-      "price": 1.120072,
-      "prev": 1.121705,
-      "delta": -0.001633,
-      "delta_pct": -0.146
+      "price": 1.118068,
+      "prev": 1.125353,
+      "delta": -0.007285,
+      "delta_pct": -0.647
     },
     "EURCZK=X": {
-      "price": 24.405399,
-      "prev": 24.431801,
-      "delta": -0.026402,
-      "delta_pct": -0.108
+      "price": 24.404499,
+      "prev": 24.389099,
+      "delta": 0.0154,
+      "delta_pct": 0.063
     },
     "HG=F": {
-      "price": 6.64,
-      "prev": 6.5945,
-      "delta": 0.0455,
-      "delta_pct": 0.69
+      "price": 6.63,
+      "prev": 6.5965,
+      "delta": 0.0335,
+      "delta_pct": 0.508
     },
     "ALI=F": {
-      "price": 3231.0,
-      "prev": 3238.0,
-      "delta": -7.0,
-      "delta_pct": -0.216
+      "price": 3190.0,
+      "prev": 3214.25,
+      "delta": -24.25,
+      "delta_pct": -0.754
     }
   },
-  "_ts": "2026-10-07 19:19",
+  "_ts": "2026-10-08 11:58",
   "_health": {
     "ccmn_copper": true,
     "ccmn_aluminum": true,
@@ -55,5 +55,5 @@
     "eurusd": true,
     "history": true
   },
-  "_alert_sig": "2026-10-07|"
+  "_alert_sig": "2026-10-08|Brent den: +4.3 % (pr\u00e1h \u00b13.0 %) \u00b7 $104.55"
 }
