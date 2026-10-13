@@ -829,6 +829,23 @@ footer { visibility: hidden; }
         overflow-x: auto;
     }
     [data-testid="stRadio"] > div { flex-wrap: wrap !important; }
+    /* Sekce (Kovy, Kontejnery, …) v jednom řádku, zbytek se posune do strany. */
+    [data-testid="stButtonGroup"] {
+        max-width: 100%;
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+    [data-testid="stButtonGroup"] [role="radiogroup"] {
+        flex-wrap: nowrap !important;
+        width: max-content;
+        max-width: none !important;
+    }
+    [data-testid="stButtonGroup"] button {
+        white-space: nowrap !important;
+        flex: 0 0 auto !important;
+        font-size: 0.82rem !important;
+        padding: 6px 10px !important;
+    }
     input, textarea, select { font-size: 16px !important; }
     div[data-testid="column"] {
         padding-left: 0 !important;
@@ -6223,6 +6240,29 @@ def _fetch_gps_track(provider: str, device: str) -> dict | None:
     return fetch_link4future_track(device)
 
 
+_GPS_LAST_SEEN_KEY = "gps_last_seen"
+
+
+def _gps_last_seen(row_key: str) -> dict:
+    seen = st.session_state.get(_GPS_LAST_SEEN_KEY) or {}
+    item = seen.get(row_key) if isinstance(seen, dict) else None
+    return item if isinstance(item, dict) else {}
+
+
+def _gps_store_last_seen(tracks: list[dict]) -> None:
+    seen = dict(st.session_state.get(_GPS_LAST_SEEN_KEY) or {})
+    for tr in tracks:
+        key = str(tr.get("row_key") or "")
+        last = tr.get("last") or {}
+        if not key or not isinstance(last, dict):
+            continue
+        seen[key] = {
+            "t": str(last.get("t") or ""),
+            "loc": str(last.get("loc") or ""),
+        }
+    st.session_state[_GPS_LAST_SEEN_KEY] = seen
+
+
 def _fix_label(fix: str) -> str:
     u = (fix or "").upper()
     if "LBS" in u:
@@ -6232,102 +6272,8 @@ def _fix_label(fix: str) -> str:
     return fix or "—"
 
 
-def render_container_tracking() -> None:
-    """Kontejnery na cestě — živé GPS (Link4Future + Jagich), admin."""
-    section_header(
-        "📍", t("Kontejnery na cestě (GPS tracking)"),
-        badge_html(True, "Link4Future + Jagich"),
-    )
-    st.caption(
-        t(
-            "Přidejte zásilku (jméno kontejneru, číslo vydané objednávky, odkaz GPS). "
-            "Funguje Link4Future (?devNo= / IMEI) i Jagich (?val= / číslo kontejneru). "
-            "Až kontejner dorazí, zadejte datum příjezdu — zmizí z mapy, ale zůstane v archivu "
-            "s dobou cesty (expedice → příjezd). "
-            "Expedice = první GPS signál. "
-            "Smazání vyžaduje heslo k dashboardu. "
-            "Stav se sdílí mezi PC a telefonem — na druhém zařízení stiskněte Obnovit GPS. "
-        )
-        + t(
-            "Živá poloha se obnovuje max. jednou za {mins} min.",
-            mins=_LINK4FUTURE_TTL // 60,
-        )
-    )
-
-    with st.form("add_gps_tracker", clear_on_submit=True):
-        c_name, c_desc, c_url = st.columns([1.1, 1.4, 1.8])
-        with c_name:
-            new_name = st.text_input(t("Jméno kontejneru"), placeholder="HNKU6426761")
-        with c_desc:
-            new_desc = st.text_input(
-                t("Číslo vydané objednávky"),
-                placeholder=t("např. 26VO00238"),
-            )
-        with c_url:
-            new_url = st.text_input(
-                t("Odkaz GPS / IMEI / číslo kontejneru"),
-                placeholder="http://gps.jagich.com/yz-en/#/Main?val=…",
-                help=t("Link4Future: ?devNo= / IMEI. Jagich: ?val= nebo číslo kontejneru."),
-            )
-        added = st.form_submit_button(t("Přidat GPS"), type="primary")
-    if added:
-        err = _add_gps_tracker(new_name, new_desc, new_url)
-        if err:
-            st.error(err)
-        else:
-            st.success(t("Kontejner je v seznamu. Na jiném zařízení stiskněte Obnovit GPS."))
-            st.rerun()
-
-    col_btn, col_hint = st.columns([1.1, 3.2])
-    with col_btn:
-        if st.button(t("Obnovit GPS"), use_container_width=True):
-            fetch_link4future_track.clear()
-            fetch_jagich_track.clear()
-            st.session_state[_GPS_HYDRATED_KEY] = False
-            st.session_state[_GPS_HYDRATE_AT_KEY] = 0
-            st.rerun()
-    with col_hint:
-        st.caption(t("Načte seznam z cloudu (Dorazilo z PC / telefonu) a znovu stáhne polohu."))
-
-    all_rows = _gps_trackers()
-    active_rows = [row for row in all_rows if not _gps_is_arrived(row)]
-    arrived_rows = [row for row in all_rows if _gps_is_arrived(row)]
-    tracks: list[dict] = []
-    failed: list[str] = []
-    first_by_key: dict[str, str] = {}
-    if active_rows:
-        with st.spinner(t("Stahuji polohu GPS…")):
-            for trk in active_rows:
-                provider = trk.get("provider") or "link4future"
-                got = _fetch_gps_track(provider, trk["imei"])
-                if got is None:
-                    failed.append(trk["container"])
-                    continue
-                first_t = str((got.get("first") or {}).get("t") or "")
-                row_key = _gps_row_key(trk)
-                if first_t:
-                    first_by_key[row_key] = first_t
-                label = trk["container"]
-                if trk.get("description"):
-                    label = f"{trk['container']} · {trk['description']}"
-                tracks.append({
-                    **got,
-                    "provider": provider,
-                    "label": label,
-                    "container": trk["container"],
-                    "description": trk.get("description") or "",
-                    "first_signal": trk.get("first_signal") or first_t,
-                    "row_key": row_key,
-                })
-        if first_by_key:
-            _remember_first_signals(first_by_key)
-            all_rows = _gps_trackers()
-            active_rows = [row for row in all_rows if not _gps_is_arrived(row)]
-            arrived_rows = [row for row in all_rows if _gps_is_arrived(row)]
-
-    if failed:
-        st.warning(t("Nepodařilo se načíst: ") + ", ".join(failed))
-
+def _render_gps_on_the_way(active_rows: list[dict], arrived_rows: list[dict]) -> None:
+    """Seznam zásilek hned. Živá poloha se kreslí až potom."""
     if active_rows:
         st.markdown(f"**{t('Na cestě')}**")
         editing = st.session_state.get("gps_edit_key")
@@ -6336,7 +6282,18 @@ def render_container_tracking() -> None:
         for row in active_rows:
             row_key = _gps_row_key(row)
             provider = row.get("provider") or "link4future"
-            first_t = row.get("first_signal") or first_by_key.get(row_key) or ""
+            first_t = row.get("first_signal") or ""
+            seen = _gps_last_seen(row_key)
+            where = ""
+            if seen.get("loc") or seen.get("t"):
+                loc = str(seen.get("loc") or "—")
+                if len(loc) > 80:
+                    loc = loc[:77] + "…"
+                where = (
+                    "<br>" + html.escape(t("Poslední poloha")) + ": "
+                    + html.escape(_format_gps_dt(seen.get("t"), with_time=True))
+                    + " · " + html.escape(loc)
+                )
             source = _gps_provider_label(provider)
             kind = "jagich" if provider == "jagich" else "link4"
             st.markdown(
@@ -6345,7 +6302,7 @@ def render_container_tracking() -> None:
                     <div class="gps-shipment-name">{html.escape(str(row['container']))}</div>
                     <div class="gps-shipment-meta">
                         {html.escape(str(row.get('description') or '—'))} · {html.escape(source)}<br>
-                        {html.escape(t('Expedice'))} {html.escape(_format_gps_dt(first_t))}
+                        {html.escape(t('Expedice'))} {html.escape(_format_gps_dt(first_t))}{where}
                     </div>
                 </div>
                 """,
@@ -6436,6 +6393,106 @@ def render_container_tracking() -> None:
         st.info(t("Seznam je prázdný. Přidejte první kontejner formulářem výše."))
     else:
         st.info(t("Žádný kontejner teď není na cestě."))
+
+
+def render_container_tracking() -> None:
+    """Kontejnery na cestě — živé GPS (Link4Future + Jagich), admin."""
+    section_header(
+        "📍", t("Kontejnery na cestě (GPS tracking)"),
+        badge_html(True, "Link4Future + Jagich"),
+    )
+    st.caption(
+        t(
+            "Přidejte zásilku (jméno kontejneru, číslo vydané objednávky, odkaz GPS). "
+            "Funguje Link4Future (?devNo= / IMEI) i Jagich (?val= / číslo kontejneru). "
+            "Až kontejner dorazí, zadejte datum příjezdu — zmizí z mapy, ale zůstane v archivu "
+            "s dobou cesty (expedice → příjezd). "
+            "Expedice = první GPS signál. "
+            "Smazání vyžaduje heslo k dashboardu. "
+            "Stav se sdílí mezi PC a telefonem — na druhém zařízení stiskněte Obnovit GPS. "
+        )
+        + t(
+            "Živá poloha se obnovuje max. jednou za {mins} min.",
+            mins=_LINK4FUTURE_TTL // 60,
+        )
+    )
+
+    with st.form("add_gps_tracker", clear_on_submit=True):
+        c_name, c_desc, c_url = st.columns([1.1, 1.4, 1.8])
+        with c_name:
+            new_name = st.text_input(t("Jméno kontejneru"), placeholder="HNKU6426761")
+        with c_desc:
+            new_desc = st.text_input(
+                t("Číslo vydané objednávky"),
+                placeholder=t("např. 26VO00238"),
+            )
+        with c_url:
+            new_url = st.text_input(
+                t("Odkaz GPS / IMEI / číslo kontejneru"),
+                placeholder="http://gps.jagich.com/yz-en/#/Main?val=…",
+                help=t("Link4Future: ?devNo= / IMEI. Jagich: ?val= nebo číslo kontejneru."),
+            )
+        added = st.form_submit_button(t("Přidat GPS"), type="primary")
+    if added:
+        err = _add_gps_tracker(new_name, new_desc, new_url)
+        if err:
+            st.error(err)
+        else:
+            st.success(t("Kontejner je v seznamu. Na jiném zařízení stiskněte Obnovit GPS."))
+            st.rerun()
+
+    col_btn, col_hint = st.columns([1.1, 3.2])
+    with col_btn:
+        if st.button(t("Obnovit GPS"), use_container_width=True):
+            fetch_link4future_track.clear()
+            fetch_jagich_track.clear()
+            st.session_state[_GPS_HYDRATED_KEY] = False
+            st.session_state[_GPS_HYDRATE_AT_KEY] = 0
+            st.rerun()
+    with col_hint:
+        st.caption(t("Načte seznam z cloudu (Dorazilo z PC / telefonu) a znovu stáhne polohu."))
+
+    all_rows = _gps_trackers()
+    active_rows = [row for row in all_rows if not _gps_is_arrived(row)]
+    arrived_rows = [row for row in all_rows if _gps_is_arrived(row)]
+    _render_gps_on_the_way(active_rows, arrived_rows)
+
+    tracks: list[dict] = []
+    failed: list[str] = []
+    first_by_key: dict[str, str] = {}
+    if active_rows:
+        with st.spinner(t("Stahuji polohu GPS…")):
+            for trk in active_rows:
+                provider = trk.get("provider") or "link4future"
+                got = _fetch_gps_track(provider, trk["imei"])
+                if got is None:
+                    failed.append(trk["container"])
+                    continue
+                first_t = str((got.get("first") or {}).get("t") or "")
+                row_key = _gps_row_key(trk)
+                if first_t:
+                    first_by_key[row_key] = first_t
+                label = trk["container"]
+                if trk.get("description"):
+                    label = f"{trk['container']} · {trk['description']}"
+                tracks.append({
+                    **got,
+                    "provider": provider,
+                    "label": label,
+                    "container": trk["container"],
+                    "description": trk.get("description") or "",
+                    "first_signal": trk.get("first_signal") or first_t,
+                    "row_key": row_key,
+                })
+        if first_by_key:
+            _remember_first_signals(first_by_key)
+            all_rows = _gps_trackers()
+            active_rows = [row for row in all_rows if not _gps_is_arrived(row)]
+            arrived_rows = [row for row in all_rows if _gps_is_arrived(row)]
+        _gps_store_last_seen(tracks)
+
+    if failed:
+        st.warning(t("Nepodařilo se načíst: ") + ", ".join(failed))
 
     if tracks:
         all_lats = [p["lat"] for tr in tracks for p in tr["points"]]
@@ -7042,11 +7099,19 @@ def _render_location_search(
         key=input_key,
         placeholder=placeholder,
     )
-    if not query.strip():
+    q = query.strip()
+    if not q:
         return None
 
-    with st.spinner(spinner):
-        hits = search_logistics_location(query.strip(), countries)
+    # Váha, nafta ani vozidlo adresu nemění. Síť jen při novém textu.
+    memo = st.session_state.setdefault("_log_geo_memo", {})
+    memo_key = (q, tuple(countries))
+    if memo_key in memo:
+        hits = memo[memo_key]
+    else:
+        with st.spinner(spinner):
+            hits = search_logistics_location(q, countries)
+        memo[memo_key] = hits
 
     if not hits:
         st.caption("Žádné výsledky — upřesněte město nebo zemi (např. Gebze Turecko).")
@@ -7648,18 +7713,6 @@ def render_domestic_logistics() -> None:
     """Kalkulačka silniční přepravy — ČR/SK i zahraničí (Turecko, EU)."""
     section_header("🚛", t("Logistika — kalkulačka přepravy"))
 
-    st.markdown(
-        '<div class="info-box">'
-        + t(
-            "Trasa <strong>ČR/SK</strong> nebo <strong>zahraničí</strong> (Turecko, EU). "
-            "Silniční km a čistá jízda z OSRM · <strong>doba na cestě</strong> včetně pauz, "
-            "nakládky a hranice · cena v CZK i EUR (ČNB) je k jednání · "
-            "poptávku pro dopravce stáhnete jako text."
-        )
-        + "</div>",
-        unsafe_allow_html=True,
-    )
-
     scope = st.radio(
         "Oblast trasy",
         ("czsk", "intl"),
@@ -8027,6 +8080,10 @@ def render_domestic_logistics() -> None:
                         f"LTL z kilometrů bere {float(ltl_koef) * 100:.0f} %, ne jen podíl nákladu. "
                         f"Tahle zásilka je {share:.0f} % ceny celého auta na stejné trase."
                     )
+                    if share >= 80:
+                        st.info(
+                            "Tahle zásilka vychází skoro jako celé auto. Vezměte celé auto."
+                        )
                 else:
                     st.caption(f"Vytížení {float(cap_pct):.0f} %. Cena je za celé auto.")
                 _render_domestic_price_breakdown(quote)
@@ -9072,28 +9129,20 @@ def main() -> None:
 
     render_morning_briefing()
 
-    tabs_list = [
-        t("🔩 Kovy & Trh"),
-        t("💱 Měnové kurzy"),
-        t("🛢️ Plasty & Ropa"),
-        t("🚛 Logistika"),
-        t("🧰 Nástroje & tipy"),
+    # Krátké názvy, ať na telefonu nezaberou půl obrazovky.
+    page_specs = [
+        ("Kovy", render_metals),
+        ("Kurzy", render_fx),
+        ("Ropa", render_oil_plastics),
+        ("Nákup", render_landed_cost_pricing),
+        ("Kontejnery", render_container_tracking),
+        ("Logistika", render_domestic_logistics),
+        ("Nástroje", render_tools_and_tips),
     ]
-    if not is_supplier:
-        tabs_list.insert(3, t("🚢 Nákup a landed costs"))
-        tabs_list.insert(4, t("📍 Kontejnery na cestě"))
-
-    # st.tabs spouští obsah všech záložek při každém překreslení.
-    # GPS kontejnerů (Jagich umí čekat desítky sekund) by jinak jelo i na Logistice.
-    renderers = {
-        t("🔩 Kovy & Trh"): render_metals,
-        t("💱 Měnové kurzy"): render_fx,
-        t("🛢️ Plasty & Ropa"): render_oil_plastics,
-        t("🚢 Nákup a landed costs"): render_landed_cost_pricing,
-        t("📍 Kontejnery na cestě"): render_container_tracking,
-        t("🚛 Logistika"): render_domestic_logistics,
-        t("🧰 Nástroje & tipy"): render_tools_and_tips,
-    }
+    if is_supplier:
+        page_specs = [item for item in page_specs if item[0] not in ("Nákup", "Kontejnery")]
+    tabs_list = [name for name, _fn in page_specs]
+    renderers = {name: fn for name, fn in page_specs}
     picker = getattr(st, "segmented_control", None)
     if picker is not None:
         page = picker(
