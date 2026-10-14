@@ -6789,7 +6789,6 @@ def _render_gps_on_the_way(active_rows: list[dict], arrived_rows: list[dict]) ->
         st.info(t("Žádný kontejner teď není na cestě."))
 
 
-@st.fragment
 def render_container_tracking() -> None:
     """Kontejnery na cestě — živé GPS (Link4Future + Jagich), admin."""
     section_header(
