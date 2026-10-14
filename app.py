@@ -197,19 +197,15 @@ require_app_authentication()
 # ==============================================================================
 CUSTOM_CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
 *, *::before, *::after { box-sizing: border-box; }
 
-/* ── Základ: grafitový (charcoal) gradient s barevnými zářemi ─────────── */
+/* ── Základ: plochá břidlice, bez září (rychlejší vykreslení) ─────────── */
 .stApp {
-    background:
-        radial-gradient(1100px 520px at 88% -8%, rgba(77,159,255,0.10), transparent 60%),
-        radial-gradient(900px 480px at -8% 28%, rgba(253,126,20,0.07), transparent 55%),
-        radial-gradient(1000px 640px at 108% 82%, rgba(52,201,142,0.06), transparent 60%),
-        linear-gradient(180deg, #171B22 0%, #14181F 55%, #191C22 100%) !important;
+    background: #0B0E14 !important;
     color: #E9EDF3 !important;
-    font-family: 'Syne', sans-serif !important;
+    font-family: 'Inter', system-ui, sans-serif !important;
 }
 
 [data-testid="stAppViewContainer"],
@@ -217,40 +213,30 @@ CUSTOM_CSS = """
 section[data-testid="stMain"] > div:first-child {
     background: transparent !important;
     color: #E9EDF3 !important;
-    font-family: 'Syne', sans-serif !important;
+    font-family: 'Inter', system-ui, sans-serif !important;
 }
 
 h1, h2, h3, h4, h5 { color: #F2F5F9 !important; }
 
-/* ── Dekorativní "kabelové svazky" po krajích obrazovky ───────────────── */
+/* Postranní kabelové čáry jsou vypnuté — na širokém monitoru jen zdržovaly kreslení. */
 .stApp::before,
-.stApp::after {
-    content: '';
-    position: fixed;
-    top: 0;
-    bottom: 0;
-    width: 300px;
-    z-index: 0;
-    pointer-events: none;
-    opacity: 0.5;
-    background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='300'%20height='900'%20viewBox='0%200%20300%20900'%20fill='none'%3E%3Cpath%20d='M70%200C150%20112%20-10%20338%2070%20450C150%20562%20-10%20788%2070%20900'%20stroke='%230D6EFD'%20stroke-width='5'%20stroke-linecap='round'%20opacity='0.5'/%3E%3Cpath%20d='M82%200C162%20112%202%20338%2082%20450C162%20562%202%20788%2082%20900'%20stroke='%230D6EFD'%20stroke-width='5'%20opacity='0.32'/%3E%3Cpath%20d='M150%200C70%20112%20230%20338%20150%20450C70%20562%20230%20788%20150%20900'%20stroke='%23FD7E14'%20stroke-width='4'%20opacity='0.45'/%3E%3Cpath%20d='M220%200C300%20112%20140%20338%20220%20450C300%20562%20140%20788%20220%20900'%20stroke='%23198754'%20stroke-width='4'%20opacity='0.40'/%3E%3Cpath%20d='M35%200C-45%20112%20115%20338%2035%20450C-45%20562%20115%20788%2035%20900'%20stroke='%23DC3545'%20stroke-width='3'%20opacity='0.35'/%3E%3Cpath%20d='M265%200C185%20112%20345%20338%20265%20450C185%20562%20345%20788%20265%20900'%20stroke='%236C757D'%20stroke-width='3'%20opacity='0.30'/%3E%3C/svg%3E");
-    background-repeat: repeat-y;
-    background-size: 300px 900px;
-}
-
-.stApp::before { left: -60px; }
-.stApp::after { right: -60px; transform: scaleX(-1); }
-
-@media (max-width: 1200px) {
-    .stApp::before, .stApp::after { display: none; }
-}
+.stApp::after { content: none; display: none; }
 
 /* Obsah nad dekorací + decentní vycentrování na velkých monitorech */
 [data-testid="stMain"] { position: relative; z-index: 1; }
 [data-testid="stMainBlockContainer"],
 .block-container {
-    max-width: 1680px;
+    max-width: min(1680px, 96%);
     margin: 0 auto;
+    padding-top: 1.1rem !important;
+    padding-bottom: 2rem !important;
+}
+
+.card-value, .card-unit, .spread-value, .dash-timestamp,
+[data-testid="stMetricValue"], [data-testid="stMetricDelta"],
+[data-testid="stDataFrame"] {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
 }
 
 p, span, label, .stMarkdown { color: #D6DDE7; }
@@ -273,14 +259,11 @@ footer { visibility: hidden; }
 
 /* ── Hlavička: tmavé sklo + gradientní linka ───────────────────────────── */
 .dash-header {
-    background: rgba(30, 36, 46, 0.82);
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
-    border: 1px solid rgba(77, 159, 255, 0.16);
-    border-radius: 20px;
-    padding: 24px 32px 20px;
-    margin-bottom: 20px;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25), 0 18px 40px -18px rgba(0, 0, 0, 0.5);
+    background: #121721;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 10px;
+    padding: 12px 18px 10px;
+    margin-bottom: 12px;
     position: relative;
     overflow: hidden;
 }
@@ -324,7 +307,7 @@ footer { visibility: hidden; }
 }
 
 .dash-title {
-    font-family: 'Syne', sans-serif;
+    font-family: 'Inter', system-ui, sans-serif;
     font-size: 2rem;
     font-weight: 800;
     color: #F2F5F9;
@@ -369,7 +352,7 @@ footer { visibility: hidden; }
     padding: 8px 14px;
     border-radius: 100px;
     text-decoration: none !important;
-    font-family: 'Syne', sans-serif;
+    font-family: 'Inter', system-ui, sans-serif;
     font-size: 0.82rem;
     font-weight: 700;
     letter-spacing: 0.2px;
@@ -421,7 +404,7 @@ footer { visibility: hidden; }
 }
 
 .section-title {
-    font-family: 'Syne', sans-serif;
+    font-family: 'Inter', system-ui, sans-serif;
     font-size: 1rem;
     font-weight: 700;
     color: #F2F5F9;
@@ -431,20 +414,19 @@ footer { visibility: hidden; }
 
 .metric-card {
     position: relative;
-    background: linear-gradient(160deg, rgba(35, 42, 54, 0.95), rgba(27, 32, 41, 0.95));
-    border: 1px solid #2C3442;
-    border-radius: 16px;
+    background: #121721;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 10px;
     padding: 16px 16px 16px 20px;
     margin-bottom: 10px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25), 0 14px 28px -16px rgba(0, 0, 0, 0.45);
-    transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+    min-height: 118px;
+    box-shadow: none;
+    transition: border-color 0.15s ease;
     overflow: hidden;
 }
 
 .metric-card:hover {
-    transform: translateY(-2px);
-    border-color: #3D4859;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3), 0 22px 40px -18px rgba(0, 0, 0, 0.6);
+    border-color: rgba(255, 255, 255, 0.18);
 }
 
 .metric-card::before {
@@ -456,8 +438,8 @@ footer { visibility: hidden; }
     border-radius: 16px 0 0 16px;
 }
 
-.card-copper::before { background: #FD7E14; }
-.card-aluminum::before { background: #A8B2C1; }
+.card-copper::before { background: #E07A5F; }
+.card-aluminum::before { background: #38BDF8; }
 .card-usd::before { background: #34C98E; }
 .card-eur::before { background: #4D9FFF; }
 .card-cny::before { background: #F0565E; }
@@ -547,7 +529,7 @@ footer { visibility: hidden; }
 }
 
 .metal-price-region {
-    font-family: 'Syne', sans-serif;
+    font-family: 'Inter', system-ui, sans-serif;
     font-size: 0.72rem;
     font-weight: 800;
     color: #F2F5F9;
@@ -628,7 +610,7 @@ footer { visibility: hidden; }
     margin: 0 auto 6px;
 }
 .fill-gallery-title {
-    font-family: 'Syne', sans-serif;
+    font-family: 'Inter', system-ui, sans-serif;
     font-size: 0.88rem;
     font-weight: 700;
     color: #F2F5F9;
@@ -732,12 +714,11 @@ footer { visibility: hidden; }
 .spread-details { font-family: 'IBM Plex Mono', monospace; font-size: 0.68rem; color: #9AA6B8; }
 
 .chart-wrap {
-    background: rgba(30, 36, 46, 0.92);
-    border: 1px solid #2C3442;
-    border-radius: 16px;
-    padding: 16px 12px;
+    background: #121721;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 10px;
+    padding: 12px 10px;
     margin-bottom: 12px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25), 0 12px 26px -16px rgba(0, 0, 0, 0.4);
 }
 
 /* ── Mobil & tablet: kompaktní rozvržení, posuvné taby ─────────────────── */
@@ -899,7 +880,7 @@ footer { visibility: hidden; }
 }
 .gps-shipment.jagich { border-left-color: #34C98E; }
 .gps-shipment-name {
-    font-family: 'Syne', sans-serif;
+    font-family: 'Inter', system-ui, sans-serif;
     font-weight: 700;
     font-size: 1.02rem;
     color: #F2F5F9;
@@ -997,7 +978,7 @@ footer { visibility: hidden; }
 .briefing-tile.warn { border-left-color: #FACC15; }
 .briefing-tile.bad { border-left-color: #F0565E; }
 .briefing-tile .bl {
-    font-family: 'Syne', sans-serif;
+    font-family: 'Inter', system-ui, sans-serif;
     font-size: 0.62rem;
     font-weight: 700;
     letter-spacing: 0.7px;
@@ -1005,7 +986,7 @@ footer { visibility: hidden; }
     color: #8D99AB;
 }
 .briefing-tile .bv {
-    font-family: 'Syne', sans-serif;
+    font-family: 'Inter', system-ui, sans-serif;
     font-size: 1.12rem;
     font-weight: 700;
     color: #E9EDF3;
@@ -1087,7 +1068,7 @@ button[kind="secondary"]:hover { background: rgba(77, 159, 255, 0.12) !important
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25), 0 18px 38px -20px rgba(0, 0, 0, 0.5);
 }
 [data-testid="stTabs"] button {
-    font-family: 'Syne', sans-serif !important;
+    font-family: 'Inter', system-ui, sans-serif !important;
     font-weight: 700 !important;
     font-size: 1.05rem !important;
     border-radius: 10px 10px 0 0 !important;
@@ -1106,7 +1087,7 @@ button[kind="secondary"]:hover { background: rgba(77, 159, 255, 0.12) !important
 }
 
 details summary {
-    font-family: 'Syne', sans-serif !important;
+    font-family: 'Inter', system-ui, sans-serif !important;
     font-weight: 700 !important;
     color: #F2F5F9 !important;
 }
@@ -1260,7 +1241,7 @@ LIGHT_CSS = """
         linear-gradient(180deg, #E6EBF2 0%, #DCE3EC 100%) !important;
     color: #121820 !important;
 }
-.stApp::before, .stApp::after { opacity: 0.16; }
+.stApp::before, .stApp::after { content: none; display: none; }
 [data-testid="stAppViewContainer"],
 [data-testid="stMain"],
 section[data-testid="stMain"] > div:first-child {
@@ -2027,7 +2008,7 @@ def _westmetall_history_from_html(url: str) -> pd.DataFrame | None:
     return df.drop_duplicates(subset=["Date"], keep="first").sort_values("Date").reset_index(drop=True)
 
 
-@st.cache_data(ttl=CACHE_TTL)
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def fetch_westmetall_history(url: str) -> pd.DataFrame | None:
     """
     Historie LME Cash z Westmetallu.
@@ -2100,7 +2081,7 @@ def filter_history_by_period(df: pd.DataFrame | None, date_col: str = "Date") ->
 filter_wm_history_by_period = filter_history_by_period
 
 
-@st.cache_data(ttl=CACHE_TTL)
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def fetch_westmetall() -> dict | None:
     """
     Scrapuje LME Cash (Settlement Kasse) z westmetall.com/en/markdaten.php.
@@ -2214,7 +2195,7 @@ def fetch_westmetall() -> dict | None:
     return result
 
 
-@st.cache_data(ttl=CACHE_TTL)
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def _yf_history(ticker: str) -> pd.DataFrame | None:
     try:
         import os
@@ -2235,7 +2216,7 @@ def _yf_history(ticker: str) -> pd.DataFrame | None:
 # ==============================================================================
 
 
-@st.cache_data(ttl=CACHE_TTL)
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def fetch_ccmn_spot(metal: str = "copper") -> dict | None:
     try:
         import json
@@ -2256,7 +2237,7 @@ def fetch_ccmn_spot(metal: str = "copper") -> dict | None:
 # ─────────────────────────────────────────────────────────────────────────────
 # ==============================================================================
 
-@st.cache_data(ttl=CACHE_TTL)
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def fetch_cnb_rates() -> dict | None:
     """
     Stahuje denní kurzovní lístek ČNB z URL:
@@ -2308,7 +2289,7 @@ def fetch_fx_history(ticker: str, period: str = "3mo") -> pd.DataFrame | None:
     return filter_history_by_period(_yf_history(ticker))
 
 
-@st.cache_data(ttl=CACHE_TTL)
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def _cny_czk_history_full() -> tuple[pd.DataFrame | None, bool]:
     """Plná historie CNY/CZK — cache nezávislá na přepínači období."""
     direct = _yf_history("CNYCZK=X")
@@ -2338,7 +2319,7 @@ def fetch_cny_czk_history(period: str = "3mo") -> tuple[pd.DataFrame | None, boo
     return filter_history_by_period(full), derived
 
 
-@st.cache_data(ttl=CACHE_TTL)
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def _eur_cny_history_full() -> tuple[pd.DataFrame | None, bool]:
     """Plná historie EUR/CNY — přímý ticker, jinak odvozeno EURUSD ÷ CNYUSD."""
     direct = _yf_history("EURCNY=X")
@@ -2452,7 +2433,7 @@ def _fx_sparkline_html(kind: str, card_class: str) -> str | None:
     return svg or None
 
 
-@st.cache_data(ttl=CACHE_TTL)
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def fetch_yf_spot(ticker: str) -> dict | None:
     try:
         import json
@@ -2780,7 +2761,7 @@ _OIL_TICKERS = {
 }
 
 
-@st.cache_data(ttl=CACHE_TTL)
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def fetch_oil_data() -> dict | None:
     """Ceny ropy Brent a WTI — sdílená cache s fetch_yf_spot."""
     result: dict = {}
@@ -2893,7 +2874,8 @@ def _use_plot_theme() -> None:
         hover_bg, hover_border, hover_font = "#FFFFFF", "#D5DCE6", "#121820"
     else:
         paper, bg, title, tick, grid, line = (
-            "#1E242E", "#1A1F28", "#E9EDF3", "#B8C2D0", "#2C3442", "#3A4454",
+            "rgba(0,0,0,0)", "rgba(0,0,0,0)", "#E9EDF3", "#B8C2D0",
+            "rgba(255,255,255,0.05)", "rgba(255,255,255,0.08)",
         )
         hover_bg, hover_border, hover_font = "#232A36", "#3D4859", "#E9EDF3"
     _PLOT_PAPER = paper
@@ -3061,11 +3043,11 @@ def metal_price_history_figure(
         separators=_PLOT_SEPARATORS,
         height=height,
         margin=dict(l=12, r=12, t=44, b=12),
-        paper_bgcolor=_PLOT_PAPER,
+        paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor=_PLOT_BG,
         title=dict(
             text=title,
-            font=dict(family="Syne, sans-serif", size=13, color=_PLOT_TITLE_COLOR),
+            font=dict(family="Inter, system-ui, sans-serif", size=13, color=_PLOT_TITLE_COLOR),
             x=0.02,
             xanchor="left",
         ),
@@ -3077,7 +3059,7 @@ def metal_price_history_figure(
             xanchor="right",
             x=1,
             font=dict(family="IBM Plex Mono, monospace", size=10, color=_PLOT_TICK_COLOR),
-            bgcolor=_PLOT_PAPER,
+            bgcolor="rgba(0,0,0,0)",
         ),
         hovermode="x unified",
         hoverlabel=_HOVER_LABEL,
@@ -3146,9 +3128,17 @@ def _render_metal_history_with_tabs(
     if source_note:
         graph_title += f" · {source_note}"
 
-    tab_chart, tab_table = st.tabs(["📈 Graf", "🗄️ Tabulka dat"])
+    view_key = "mh_" + "".join(ch.lower() if ch.isalnum() else "_" for ch in chart_title)[:40]
+    view = st.segmented_control(
+        "Zobrazení",
+        options=["📈 Graf", "🗄️ Tabulka dat"],
+        default="📈 Graf",
+        key=view_key,
+        label_visibility="collapsed",
+    )
+    show_table = view == "🗄️ Tabulka dat"
 
-    with tab_chart:
+    if not show_table:
         if is_dual:
             fig = interactive_metal_dual_chart(
                 df, graph_title, color, y_unit, extra_traces=extra_traces
@@ -3177,7 +3167,7 @@ def _render_metal_history_with_tabs(
         else:
             st.markdown('<div class="error-box">Graf nelze vykreslit</div>', unsafe_allow_html=True)
 
-    with tab_table:
+    else:
         table_df = _metal_history_table_df(df, price_col, y_unit)
         price_label = f"Cena ({y_unit})"
         col_config = {
@@ -3270,10 +3260,10 @@ def interactive_line_chart(
 
     fig.update_layout(
         separators=_PLOT_SEPARATORS,
-        title=dict(text=title, font=dict(family="Syne, sans-serif", size=13, color=_PLOT_TITLE_COLOR), y=0.97),
+        title=dict(text=title, font=dict(family="Inter, system-ui, sans-serif", size=13, color=_PLOT_TITLE_COLOR), y=0.97),
         height=height,
         margin=dict(l=10, r=10, t=42 if show_legend else 36, b=12),
-        paper_bgcolor=_PLOT_PAPER,
+        paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor=_PLOT_BG,
         showlegend=show_legend,
         legend=dict(
@@ -3283,7 +3273,7 @@ def interactive_line_chart(
             xanchor="right",
             x=1,
             font=dict(family="IBM Plex Mono, monospace", size=10, color=_PLOT_TICK_COLOR),
-            bgcolor=_PLOT_PAPER,
+            bgcolor="rgba(0,0,0,0)",
         ) if show_legend else None,
         xaxis=dict(**_TICK_AXIS, tickformat="%b %y"),
         yaxis=yaxis_layout,
@@ -3401,10 +3391,10 @@ def interactive_metal_dual_chart(
     # 4. Sestavení finálního layoutu s pevnými limity
     fig.update_layout(
         separators=_PLOT_SEPARATORS,
-        title=dict(text=title, font=dict(family="Syne, sans-serif", size=13, color=_PLOT_TITLE_COLOR), y=0.98),
+        title=dict(text=title, font=dict(family="Inter, system-ui, sans-serif", size=13, color=_PLOT_TITLE_COLOR), y=0.98),
         height=height,
         margin=dict(l=10, r=10, t=48, b=12),
-        paper_bgcolor=_PLOT_PAPER,
+        paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor=_PLOT_BG,
         showlegend=True,
         legend=dict(
@@ -3414,7 +3404,7 @@ def interactive_metal_dual_chart(
             xanchor="right",
             x=1,
             font=dict(family="IBM Plex Mono, monospace", size=10, color=_PLOT_TICK_COLOR),
-            bgcolor=_PLOT_PAPER,
+            bgcolor="rgba(0,0,0,0)",
         ),
         xaxis=dict(**_TICK_AXIS, tickformat="%b %y"),
         yaxis=dict(
@@ -3518,7 +3508,7 @@ _ALERT_BRENT_DAY_PCT = 3.0
 _ALERT_EURCZK_7D_PCT = 1.5
 
 
-@st.cache_data(ttl=CACHE_TTL)
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def _load_robot_payload() -> dict | None:
     """Načte robot_data.json (CCMN, Yahoo spot, _ts, volitelně _health)."""
     try:
@@ -3530,7 +3520,7 @@ def _load_robot_payload() -> dict | None:
         return None
 
 
-@st.cache_data(ttl=CACHE_TTL)
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def _robot_last_run() -> str | None:
     """Čas posledního běhu data robota (ISO string kvůli cache serializaci)."""
     data = _load_robot_payload()
@@ -3908,7 +3898,7 @@ def render_morning_briefing() -> None:
             status_bits.append(f"robot {pd.Timestamp(last_str).strftime('%d.%m. %H:%M')}")
 
     st.markdown(
-        "<div style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
+        "<div style='font-family:Inter, system-ui, sans-serif;font-size:0.75rem;font-weight:700;"
         "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;margin:8px 0 6px 0;'>"
         f"{t('Ranní briefing')} · {' · '.join(status_bits)}</div>"
         f'<div class="briefing-grid">{"".join(tiles)}</div>',
@@ -4147,7 +4137,7 @@ def _render_historical_correlation() -> None:
     """Historická korelace LME vs Čína (proxy) — měď a hliník pod sebou, USD/t."""
     period_lbl = get_chart_period_label()
     st.markdown(
-        "<div style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
+        "<div style='font-family:Inter, system-ui, sans-serif;font-size:0.75rem;font-weight:700;"
         "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
         f"Historická korelace — LME vs Čína ({period_lbl}, USD/t)</div>",
         unsafe_allow_html=True,
@@ -4412,16 +4402,16 @@ def _forecast_chart(
 
     fig.update_layout(
         separators=_PLOT_SEPARATORS,
-        title=dict(text=title, font=dict(family="Syne, sans-serif", size=13, color=_PLOT_TITLE_COLOR), y=0.97),
+        title=dict(text=title, font=dict(family="Inter, system-ui, sans-serif", size=13, color=_PLOT_TITLE_COLOR), y=0.97),
         height=height,
         margin=dict(l=10, r=10, t=46, b=12),
-        paper_bgcolor=_PLOT_PAPER,
+        paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor=_PLOT_BG,
         showlegend=True,
         legend=dict(
             orientation="h", yanchor="bottom", y=1.08, xanchor="right", x=1,
             font=dict(family="IBM Plex Mono, monospace", size=10, color=_PLOT_TICK_COLOR),
-            bgcolor=_PLOT_PAPER,
+            bgcolor="rgba(0,0,0,0)",
         ),
         xaxis=dict(**_TICK_AXIS, tickformat="%d.%m."),
         yaxis=dict(**_TICK_AXIS, tickformat=y_ticks, title=dict(text=y_label, standoff=8),
@@ -4546,7 +4536,7 @@ def _render_price_forecast_section() -> None:
     y_unit = f"{ccy}/t"
     st.markdown(
         "<div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;'>"
-        "<span style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
+        "<span style='font-family:Inter, system-ui, sans-serif;font-size:0.75rem;font-weight:700;"
         "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;'>"
         f"Predikce trendu — ~1 měsíc dopředu ({y_unit})</span>"
         f"{badge_html(False, 'statistická extrapolace', model=True)}</div>",
@@ -4613,7 +4603,7 @@ def render_metals() -> None:
 
     # ── Historické grafy — pod sebou na plnou šířku (mobil-friendly) ─────────
     st.markdown(
-        "<div style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
+        "<div style='font-family:Inter, system-ui, sans-serif;font-size:0.75rem;font-weight:700;"
         "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
         f"{t('Historické grafy — Měď & Hliník (Westmetall, {period})', period=period_lbl)}</div>",
         unsafe_allow_html=True,
@@ -4693,7 +4683,7 @@ def _render_ccmn_spreads(wm_data: dict | None) -> None:
     ccy = get_display_currency()
     st.markdown(
         f"<div style='margin-bottom:10px;'>"
-        f"<span style='font-family:Syne,sans-serif;font-size:0.7rem;font-weight:700;"
+        f"<span style='font-family:Inter, system-ui, sans-serif;font-size:0.7rem;font-weight:700;"
         f"color:#8D99AB;text-transform:uppercase;letter-spacing:1px;'>"
         f"CCMN (Čína) vs LME Spread ({ccy}/t)</span></div>",
         unsafe_allow_html=True,
@@ -4975,7 +4965,7 @@ def render_oil_plastics() -> None:
 
     period_lbl = get_chart_period_label()
     st.markdown(
-        "<div style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
+        "<div style='font-family:Inter, system-ui, sans-serif;font-size:0.75rem;font-weight:700;"
         "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
         f"Brent Crude (BZ=F) — historie &amp; SMA 20 / SMA 50 · {period_lbl}</div>",
         unsafe_allow_html=True,
@@ -5066,7 +5056,7 @@ def render_oil_plastics() -> None:
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown(
         "<div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;'>"
-        "<span style='font-family:Syne,sans-serif;font-size:0.75rem;font-weight:700;"
+        "<span style='font-family:Inter, system-ui, sans-serif;font-size:0.75rem;font-weight:700;"
         "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;'>"
         f"Predikce trendu Brent — ~1 měsíc dopředu ({oil_unit})</span>"
         f"{badge_html(False, 'statistická extrapolace', model=True)}</div>",
@@ -5316,6 +5306,25 @@ def _apply_sales_pricing(results: pd.DataFrame, margin_pct: float) -> pd.DataFra
     return out
 
 
+def _landed_column_config(frame: pd.DataFrame) -> dict:
+    """Měny a procenta ve sloupci, čísla pod sebou."""
+    cfg: dict = {}
+    for name in frame.columns:
+        label = str(name)
+        if label == "Podíl na faktuře":
+            cfg[label] = st.column_config.NumberColumn(label, format="percent")
+        elif "CZK" in label:
+            cfg[label] = st.column_config.NumberColumn(label, format="%.2f")
+        elif "EUR" in label:
+            cfg[label] = st.column_config.NumberColumn(label, format="euro")
+        elif "(%)" in label:
+            cfg[label] = st.column_config.NumberColumn(label, format="%.1f")
+        elif "Množství" in label:
+            cfg[label] = st.column_config.NumberColumn(label, format="%.0f")
+    return cfg
+
+
+@st.fragment
 def render_landed_cost_pricing() -> None:
     """Logistika a cenotvorba — faktura (více řádků), landed cost, prodejní ceny."""
     st.header(t("🚢 Logistika a Prodejní ceny"))
@@ -5608,6 +5617,7 @@ def render_landed_cost_pricing() -> None:
         show,
         use_container_width=True,
         hide_index=True,
+        column_config=_landed_column_config(show),
     )
 
     if margin_pct >= 100.0:
@@ -5623,10 +5633,12 @@ def render_landed_cost_pricing() -> None:
             "Clo (EUR)",
             "Deklarace přidělená (EUR)",
         ]
+        detail = results_sales[detail_cols].copy()
         st.dataframe(
-            results_sales[detail_cols].copy(),
+            detail,
             use_container_width=True,
             hide_index=True,
+            column_config=_landed_column_config(detail),
         )
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
@@ -5651,7 +5663,7 @@ _GPS_GH_BRANCH = "main"
 _GPS_GH_FILE = "gps_trackers.json"
 _GPS_GH_SHA_KEY = "gps_github_sha"
 _GPS_SYNC_ERR_KEY = "gps_sync_error"
-_LIVE_TRAIL_COLORS = ("#2563eb", "#dc2626", "#059669", "#d97706", "#7c3aed", "#db2777")
+_LIVE_TRAIL_COLORS = ("#38BDF8", "#F59E0B", "#10B981", "#E07A5F", "#A78BFA", "#F472B6")
 _ISO_CONTAINER_RE = re.compile(r"^[A-Z]{4}\d{6,7}$")
 _JAGICH_PORT_CS = {
     "西安": "Xi'an",
@@ -6431,7 +6443,7 @@ def _show_plotly_map(fig: go.Figure | None) -> None:
         fig,
         use_container_width=True,
         config={
-            "displayModeBar": True,
+            "displayModeBar": False,
             "displaylogo": False,
             "responsive": True,
             "scrollZoom": True,
@@ -6443,10 +6455,11 @@ def _show_plotly_map(fig: go.Figure | None) -> None:
 
 def _new_osm_map(lats: list[float], lons: list[float], height: int = 520) -> go.Figure:
     center_lat, center_lon, zoom = _mapbox_fit(lats, lons)
+    light = st.session_state.get("ui_theme") == "light"
     fig = go.Figure()
     fig.update_layout(
         separators=_PLOT_SEPARATORS,
-        paper_bgcolor=_PLOT_PAPER,
+        paper_bgcolor="rgba(0,0,0,0)",
         margin=dict(l=0, r=0, t=8, b=0),
         height=height,
         hoverlabel=_HOVER_LABEL,
@@ -6454,12 +6467,17 @@ def _new_osm_map(lats: list[float], lons: list[float], height: int = 520) -> go.
             orientation="h",
             yanchor="top",
             y=0.98,
-            x=0.01,
-            bgcolor="rgba(30,36,46,0.82)",
-            font=dict(family="IBM Plex Mono, monospace", size=10, color="#E9EDF3"),
+            x=1,
+            xanchor="right",
+            bgcolor="rgba(0,0,0,0)",
+            font=dict(
+                family="IBM Plex Mono, monospace",
+                size=10,
+                color="#121820" if light else "#E9EDF3",
+            ),
         ),
         map=dict(
-            style="open-street-map",
+            style="carto-positron" if light else "carto-darkmatter",
             center=dict(lat=center_lat, lon=center_lon),
             zoom=zoom,
         ),
@@ -6771,6 +6789,7 @@ def _render_gps_on_the_way(active_rows: list[dict], arrived_rows: list[dict]) ->
         st.info(t("Žádný kontejner teď není na cestě."))
 
 
+@st.fragment
 def render_container_tracking() -> None:
     """Kontejnery na cestě — živé GPS (Link4Future + Jagich), admin."""
     section_header(
@@ -6902,7 +6921,17 @@ def render_container_tracking() -> None:
                 lat=[p["lat"] for p in pts],
                 lon=[p["lon"] for p in pts],
                 mode="lines",
-                line=dict(width=3, color=color),
+                line=dict(width=9, color=color),
+                opacity=0.28,
+                name=f"{name} · záře",
+                showlegend=False,
+                hoverinfo="skip",
+            ))
+            fig.add_trace(go.Scattermap(
+                lat=[p["lat"] for p in pts],
+                lon=[p["lon"] for p in pts],
+                mode="lines",
+                line=dict(width=4, color=color),
                 name=f"{name} · stopa",
                 showlegend=False,
                 hoverinfo="skip",
@@ -7093,7 +7122,7 @@ def _render_gps_archive(arrived_rows: list[dict]) -> None:
         ))
         fig.update_layout(
             separators=_PLOT_SEPARATORS,
-            paper_bgcolor=_PLOT_PAPER,
+            paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor=_PLOT_BG,
             margin=dict(l=8, r=8, t=8, b=8),
             height=280,
@@ -7922,7 +7951,7 @@ def _render_domestic_price_breakdown(quote: dict) -> None:
         barmode="stack",
         height=120,
         margin=dict(l=10, r=10, t=10, b=10),
-        paper_bgcolor=_PLOT_PAPER,
+        paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor=_PLOT_BG,
         showlegend=True,
         legend=dict(
@@ -7932,7 +7961,7 @@ def _render_domestic_price_breakdown(quote: dict) -> None:
             xanchor="left",
             x=0,
             font=dict(family="IBM Plex Mono, monospace", size=10, color=_PLOT_TICK_COLOR),
-            bgcolor=_PLOT_PAPER,
+            bgcolor="rgba(0,0,0,0)",
         ),
         xaxis=dict(visible=False, range=[0, price]),
         yaxis=dict(visible=False),
@@ -8372,156 +8401,157 @@ def _logistics_quote_panel() -> None:
 
     col_form, col_result = st.columns([1, 1])
     with col_form:
-        start_cc = str((start_loc or {}).get("country") or "")
-        dest_cc = str((dest_loc or {}).get("country") or "")
-        involves_tr = "TR" in {start_cc.upper(), dest_cc.upper()}
-        border_days = 0
-        if involves_tr:
-            border_days = int(st.number_input(
-                "Čekání na hranici TR/EU (dny)",
-                min_value=0,
-                max_value=14,
-                value=3,
-                step=1,
-                key="logistics_tr_border_days",
-                help=(
-                    "Kapıkule / Kapitan Andreevo. Fronta se mění, často 2–5 dní. "
-                    "Tyhle dny se přičtou k jízdě. Nula = bez čekání."
-                ),
-            ))
-            st.caption(
-                "Odhad příjezdu = dny jízdy + tohle čekání. "
-                "Sazbu v CZK/km si upravte podle nabídky FTL."
-            )
-        elif scope == "intl":
-            st.caption("Zahraniční sazba je k jednání (často FTL v EUR). Výchozí CZK/km je orientační.")
+        with st.container(border=True):
+            start_cc = str((start_loc or {}).get("country") or "")
+            dest_cc = str((dest_loc or {}).get("country") or "")
+            involves_tr = "TR" in {start_cc.upper(), dest_cc.upper()}
+            border_days = 0
+            if involves_tr:
+                border_days = int(st.number_input(
+                    "Čekání na hranici TR/EU (dny)",
+                    min_value=0,
+                    max_value=14,
+                    value=3,
+                    step=1,
+                    key="logistics_tr_border_days",
+                    help=(
+                        "Kapıkule / Kapitan Andreevo. Fronta se mění, často 2–5 dní. "
+                        "Tyhle dny se přičtou k jízdě. Nula = bez čekání."
+                    ),
+                ))
+                st.caption(
+                    "Odhad příjezdu = dny jízdy + tohle čekání. "
+                    "Sazbu v CZK/km si upravte podle nabídky FTL."
+                )
+            elif scope == "intl":
+                st.caption("Zahraniční sazba je k jednání (často FTL v EUR). Výchozí CZK/km je orientační.")
 
-        st.markdown("#### Parametry nákladu a vozidla")
-        cargo_kg = float(st.session_state.get("log_cargo_kg", 24000.0))
-        cargo_pallets = int(st.session_state.get("log_cargo_pallets", 0))
-        if cargo_pallets > 0:
-            cargo_ldm = cargo_pallets * _DOMESTIC_LDM_PER_EUR_PALLET
-        else:
-            cargo_ldm = float(st.session_state.get("log_cargo_ldm", 6.0))
-        saved_route = _log_saved_route(start_loc, dest_loc)
-        pick_km = float(saved_route[0]) if saved_route else None
-        diesel_now = fetch_mbenzin_diesel()
-        nafta_for_pick = float(diesel_now["czk"]) if diesel_now else float(_DIESEL_BASE_CZK)
-        vehicle_prices = _logistics_vehicle_prices(cargo_kg, cargo_ldm, pick_km, nafta_for_pick)
-        if vehicle_prices:
-            recommended_v = min(vehicle_prices, key=vehicle_prices.get)
-        else:
-            recommended_v = _domestic_suggest_vehicle(cargo_kg, cargo_ldm)
-        cargo_sig = (round(cargo_kg), round(cargo_ldm, 1), None if pick_km is None else round(pick_km))
-        if st.session_state.get("log_vehicle_sig") != cargo_sig:
-            st.session_state["log_vehicle_sig"] = cargo_sig
-            st.session_state["log_vehicle_pinned"] = False
-        if (
-            not st.session_state.get("log_vehicle_pinned")
-            and recommended_v in _DOMESTIC_VEHICLE_ORDER
-        ):
-            st.session_state["domestic_v_type_selector_v75"] = recommended_v
-        v_type_raw = st.selectbox(
-            "Druh vozidla",
-            _DOMESTIC_VEHICLE_ORDER,
-            format_func=_domestic_vehicle_option_label,
-            key="domestic_v_type_selector_v75",
-            on_change=_pin_logistics_vehicle,
-            help=f"Sólo: pevný limit {_DOMESTIC_SOLO_MAX_KG:.0f} kg (7,5 t). "
-            "Při změně váhy se vybere nejlevnější vůz, který náklad uveze.",
-        )
-        v_type = _domestic_normalize_vehicle_type(v_type_raw)
-        profile = _DOMESTIC_VEHICLE_PROFILES[v_type]
-        max_w = profile["max_w"]
-        max_l = profile["max_l"]
-        def_rate = profile["def_rate"]
-        vehicle_key = _domestic_vehicle_key(v_type)
-        v_idx = _DOMESTIC_VEHICLE_ORDER.index(v_type)
-        if vehicle_prices and recommended_v in vehicle_prices:
-            bits = [
-                f"{name.split('(')[0].strip()} {format_num(price, 0)} Kč"
-                for name, price in sorted(vehicle_prices.items(), key=lambda item: item[1])
-            ]
-            if v_type == recommended_v:
-                st.caption("Nejlevnější vůz pro tuhle váhu a trasu: " + " · ".join(bits))
+            st.markdown("#### Parametry nákladu a vozidla")
+            cargo_kg = float(st.session_state.get("log_cargo_kg", 24000.0))
+            cargo_pallets = int(st.session_state.get("log_cargo_pallets", 0))
+            if cargo_pallets > 0:
+                cargo_ldm = cargo_pallets * _DOMESTIC_LDM_PER_EUR_PALLET
             else:
-                st.info(
-                    f"Levněji vychází **{recommended_v}** "
-                    f"({format_num(vehicle_prices[recommended_v], 0)} Kč). "
-                    "Nechávám vámi vybraný vůz. Změňte váhu a výběr se přepne sám. "
-                    + " · ".join(bits)
+                cargo_ldm = float(st.session_state.get("log_cargo_ldm", 6.0))
+            saved_route = _log_saved_route(start_loc, dest_loc)
+            pick_km = float(saved_route[0]) if saved_route else None
+            diesel_now = fetch_mbenzin_diesel()
+            nafta_for_pick = float(diesel_now["czk"]) if diesel_now else float(_DIESEL_BASE_CZK)
+            vehicle_prices = _logistics_vehicle_prices(cargo_kg, cargo_ldm, pick_km, nafta_for_pick)
+            if vehicle_prices:
+                recommended_v = min(vehicle_prices, key=vehicle_prices.get)
+            else:
+                recommended_v = _domestic_suggest_vehicle(cargo_kg, cargo_ldm)
+            cargo_sig = (round(cargo_kg), round(cargo_ldm, 1), None if pick_km is None else round(pick_km))
+            if st.session_state.get("log_vehicle_sig") != cargo_sig:
+                st.session_state["log_vehicle_sig"] = cargo_sig
+                st.session_state["log_vehicle_pinned"] = False
+            if (
+                not st.session_state.get("log_vehicle_pinned")
+                and recommended_v in _DOMESTIC_VEHICLE_ORDER
+            ):
+                st.session_state["domestic_v_type_selector_v75"] = recommended_v
+            v_type_raw = st.selectbox(
+                "Druh vozidla",
+                _DOMESTIC_VEHICLE_ORDER,
+                format_func=_domestic_vehicle_option_label,
+                key="domestic_v_type_selector_v75",
+                on_change=_pin_logistics_vehicle,
+                help=f"Sólo: pevný limit {_DOMESTIC_SOLO_MAX_KG:.0f} kg (7,5 t). "
+                "Při změně váhy se vybere nejlevnější vůz, který náklad uveze.",
+            )
+            v_type = _domestic_normalize_vehicle_type(v_type_raw)
+            profile = _DOMESTIC_VEHICLE_PROFILES[v_type]
+            max_w = profile["max_w"]
+            max_l = profile["max_l"]
+            def_rate = profile["def_rate"]
+            vehicle_key = _domestic_vehicle_key(v_type)
+            v_idx = _DOMESTIC_VEHICLE_ORDER.index(v_type)
+            if vehicle_prices and recommended_v in vehicle_prices:
+                bits = [
+                    f"{name.split('(')[0].strip()} {format_num(price, 0)} Kč"
+                    for name, price in sorted(vehicle_prices.items(), key=lambda item: item[1])
+                ]
+                if v_type == recommended_v:
+                    st.caption("Nejlevnější vůz pro tuhle váhu a trasu: " + " · ".join(bits))
+                else:
+                    st.info(
+                        f"Levněji vychází **{recommended_v}** "
+                        f"({format_num(vehicle_prices[recommended_v], 0)} Kč). "
+                        "Nechávám vámi vybraný vůz. Změňte váhu a výběr se přepne sám. "
+                        + " · ".join(bits)
+                    )
+
+            waha = st.number_input(
+                "Váha (kg)",
+                min_value=1.0,
+                value=24000.0,
+                step=50.0,
+                key="log_cargo_kg",
+            )
+
+            eur_pallets = st.number_input(
+                "Počet EUR palet (volitelně)",
+                min_value=0,
+                max_value=34,
+                value=0,
+                step=1,
+                key="log_cargo_pallets",
+            )
+            if eur_pallets > 0:
+                ldm_auto = float(eur_pallets) * _DOMESTIC_LDM_PER_EUR_PALLET
+                ldm = ldm_auto
+                st.number_input(
+                    "Ložné metry (LDM)",
+                    min_value=0.1,
+                    value=ldm_auto,
+                    step=0.1,
+                    format="%.1f",
+                    disabled=True,
+                    key=f"log_cargo_ldm_pallet_{eur_pallets}",
+                    help=f"Automaticky: {eur_pallets} palet × 0,4 LDM = {ldm_auto:.1f} LDM",
+                )
+            else:
+                ldm = st.number_input(
+                    "Ložné metry (LDM)",
+                    min_value=0.1,
+                    value=6.0,
+                    step=0.1,
+                    format="%.1f",
+                    key="log_cargo_ldm",
                 )
 
-        waha = st.number_input(
-            "Váha (kg)",
-            min_value=1.0,
-            value=24000.0,
-            step=50.0,
-            key="log_cargo_kg",
-        )
-
-        eur_pallets = st.number_input(
-            "Počet EUR palet (volitelně)",
-            min_value=0,
-            max_value=34,
-            value=0,
-            step=1,
-            key="log_cargo_pallets",
-        )
-        if eur_pallets > 0:
-            ldm_auto = float(eur_pallets) * _DOMESTIC_LDM_PER_EUR_PALLET
-            ldm = ldm_auto
-            st.number_input(
-                "Ložné metry (LDM)",
-                min_value=0.1,
-                value=ldm_auto,
+            diesel = diesel_now
+            l_per_100 = float(profile["l_per_100"])
+            if diesel:
+                diesel_seed = f"{diesel.get('date') or 'd'}_{float(diesel['czk']):.2f}"
+                diesel_prefill = float(diesel["czk"])
+            else:
+                diesel_seed = "rucne"
+                diesel_prefill = float(_DIESEL_BASE_CZK)
+            nafta_czk = st.number_input(
+                "Cena nafty (Kč/l)",
+                min_value=15.0,
+                max_value=120.0,
+                value=diesel_prefill,
+                step=0.1,
+                format="%.2f",
+                key=f"log_diesel_{v_idx}_{diesel_seed}",
+                help="Předvyplněno z mBenzin. Když se nenačte, napiš cenu ručně — sazba se přepočítá.",
+            )
+            suggested_rate = _diesel_adjusted_rate(def_rate, l_per_100, float(nafta_czk))
+            sazba = st.number_input(
+                "Sazba za celé auto (CZK/km)",
+                min_value=0.0,
+                value=float(suggested_rate),
                 step=0.1,
                 format="%.1f",
-                disabled=True,
-                key=f"log_cargo_ldm_pallet_{eur_pallets}",
-                help=f"Automaticky: {eur_pallets} palet × 0,4 LDM = {ldm_auto:.1f} LDM",
+                key=f"domestic_sazba_{v_idx}_{float(nafta_czk):.2f}",
             )
-        else:
-            ldm = st.number_input(
-                "Ložné metry (LDM)",
-                min_value=0.1,
-                value=6.0,
-                step=0.1,
-                format="%.1f",
-                key="log_cargo_ldm",
-            )
+            st.session_state["_log_diesel_pub"] = (diesel, float(nafta_czk))
 
-        diesel = diesel_now
-        l_per_100 = float(profile["l_per_100"])
-        if diesel:
-            diesel_seed = f"{diesel.get('date') or 'd'}_{float(diesel['czk']):.2f}"
-            diesel_prefill = float(diesel["czk"])
-        else:
-            diesel_seed = "rucne"
-            diesel_prefill = float(_DIESEL_BASE_CZK)
-        nafta_czk = st.number_input(
-            "Cena nafty (Kč/l)",
-            min_value=15.0,
-            max_value=120.0,
-            value=diesel_prefill,
-            step=0.1,
-            format="%.2f",
-            key=f"log_diesel_{v_idx}_{diesel_seed}",
-            help="Předvyplněno z mBenzin. Když se nenačte, napiš cenu ručně — sazba se přepočítá.",
-        )
-        suggested_rate = _diesel_adjusted_rate(def_rate, l_per_100, float(nafta_czk))
-        sazba = st.number_input(
-            "Sazba za celé auto (CZK/km)",
-            min_value=0.0,
-            value=float(suggested_rate),
-            step=0.1,
-            format="%.1f",
-            key=f"domestic_sazba_{v_idx}_{float(nafta_czk):.2f}",
-        )
-        st.session_state["_log_diesel_pub"] = (diesel, float(nafta_czk))
-
-        _render_domestic_pallet_cheat_sheet()
-        shipment_form = _render_domestic_shipment_form()
+            _render_domestic_pallet_cheat_sheet()
+            shipment_form = _render_domestic_shipment_form()
 
     with col_result:
         if not saved_route:
@@ -8688,6 +8718,7 @@ def _logistics_quote_panel() -> None:
     _render_log_quote_history()
 
 
+@st.fragment
 def render_domestic_logistics() -> None:
     """Kalkulačka silniční přepravy — ČR/SK i zahraničí (Turecko, EU)."""
     section_header("🚛", t("Logistika — kalkulačka přepravy"))
@@ -8714,24 +8745,23 @@ def render_domestic_logistics() -> None:
     col_form, col_result = st.columns([1, 1])
 
     with col_form:
-        start_loc = _render_location_search(
-            t("Odkud (Start)"),
-            f"log_start_q_{scope}",
-            f"log_start_s_{scope}",
-            default_query=start_default,
-            countries=countries,
-            placeholder=place_hint,
-        )
-        st.markdown("<br>", unsafe_allow_html=True)
-        dest_loc = _render_location_search(
-            t("Kam (Cíl)"),
-            f"log_dest_q_{scope}",
-            f"log_dest_s_{scope}",
-            default_query=dest_default,
-            countries=countries,
-            placeholder=place_hint,
-        )
-        st.markdown("<br>", unsafe_allow_html=True)
+        with st.container(border=True):
+            start_loc = _render_location_search(
+                t("Odkud (Start)"),
+                f"log_start_q_{scope}",
+                f"log_start_s_{scope}",
+                default_query=start_default,
+                countries=countries,
+                placeholder=place_hint,
+            )
+            dest_loc = _render_location_search(
+                t("Kam (Cíl)"),
+                f"log_dest_q_{scope}",
+                f"log_dest_s_{scope}",
+                default_query=dest_default,
+                countries=countries,
+                placeholder=place_hint,
+            )
 
 
     st.session_state["_log_start_loc"] = start_loc
@@ -8767,7 +8797,7 @@ def render_domestic_logistics() -> None:
             st.markdown(
                 "<div style='background:rgba(77,159,255,0.10); padding:12px; border-radius:10px; "
                 "border:1px solid rgba(77,159,255,0.28); border-left:4px solid #4D9FFF; margin-bottom:16px;'>"
-                "<span style='font-family:Syne, sans-serif; font-size:1.1rem; "
+                "<span style='font-family:Inter, system-ui, sans-serif; font-size:1.1rem; "
                 "font-weight:700;' class='route-banner-title'>"
                 f"📍 {html.escape(start_short)} "
                 f"<span class='route-banner-sub' style='font-size:0.85rem;'>"
@@ -8787,7 +8817,17 @@ def render_domestic_logistics() -> None:
                 lat=route_lats,
                 lon=route_lons,
                 mode="lines",
-                line=dict(width=4, color="#4D9FFF"),
+                line=dict(width=10, color="#38BDF8"),
+                opacity=0.28,
+                name="Trasa — záře",
+                showlegend=False,
+                hoverinfo="skip",
+            ))
+            route_fig.add_trace(go.Scattermap(
+                lat=route_lats,
+                lon=route_lons,
+                mode="lines",
+                line=dict(width=4, color="#38BDF8"),
                 name="Trasa",
                 showlegend=False,
                 hoverinfo="skip",
@@ -9129,7 +9169,7 @@ def _drum_schematic_svg(fd: float, kd: float, l2: float) -> str:
         f'height="{wind_h:.1f}" fill="rgba(77,159,255,0.18)" '
         f'stroke="rgba(77,159,255,0.35)" stroke-dasharray="2 2"/>',
         f'<text x="{cx}" y="10" text-anchor="middle" fill="#8D99AB" '
-        f'font-size="7.5" font-family="Syne,sans-serif">čelo / jádro / šířka</text>',
+        f'font-size="7.5" font-family="Inter, system-ui, sans-serif">čelo / jádro / šířka</text>',
         "</svg>",
     ]
     return "".join(parts)
