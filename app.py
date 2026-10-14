@@ -1227,6 +1227,8 @@ div[data-testid="column"] {
 .health-bad .health-orb { background: #F0565E; box-shadow: 0 0 0 3px rgba(240, 86, 94, 0.24); }
 .health-pill .health-name { font-weight: 700; color: #F2F5F9; }
 .health-pill .health-meta { color: #9AA6B8; }
+.route-banner-title { color: #F7FAFD; }
+.route-banner-sub { color: #8D99AB; }
 
 .st-key-theme_toggle {
     position: fixed;
@@ -1349,6 +1351,8 @@ details summary { color: #142033 !important; }
 [data-testid="stCaptionContainer"],
 [data-testid="stCaptionContainer"] p,
 [data-testid="stCaptionContainer"] span { color: #2A3544 !important; }
+.route-banner-title { color: #121820 !important; }
+.route-banner-sub { color: #3E4C5E !important; }
 [data-testid="stWidgetLabel"] p,
 [data-testid="stWidgetLabel"] span { color: #1A2330 !important; }
 .st-key-theme_toggle button {
@@ -7717,6 +7721,7 @@ def _transit_estimate(
         f"noční odpočinek {_format_drive_time(overnight_min)}" if overnight_min else None,
     ]
     detail = " · ".join(b for b in bits if b)
+    moving_min = max(0.0, total_min - border_min)
     return {
         "drive_min": drive,
         "breaks_min": breaks_min,
@@ -7724,9 +7729,11 @@ def _transit_estimate(
         "border_min": border_min,
         "overnight_min": overnight_min,
         "total_min": total_min,
+        "moving_min": moving_min,
         "calendar_days": calendar_days,
         "when": when,
         "detail": detail,
+        "border_days": border_days,
     }
 
 
@@ -8164,7 +8171,7 @@ def _format_domestic_transport_request(
         lines.append(f"Čistá jízda: {_format_drive_time(drive_min)}")
     if transit:
         lines.append(
-            f"Orientační doba na cestě: {_format_drive_time(transit.get('total_min'))} "
+            f"Orientační doba na cestě: {_format_drive_time(transit.get('moving_min'))} "
             f"— {transit.get('when')}"
         )
         if transit.get("detail"):
@@ -8207,51 +8214,161 @@ def _format_domestic_transport_request(
     return "\n".join(lines)
 
 
-def render_domestic_logistics() -> None:
-    """Kalkulačka silniční přepravy — ČR/SK i zahraničí (Turecko, EU)."""
-    section_header("🚛", t("Logistika — kalkulačka přepravy"))
-    log_health_slot = st.empty()
-    log_health: dict = {"diesel": None, "typed": None, "route": None}
+_LOG_QUOTES_KEY = "pbcable_log_quotes"
+_LOG_QUOTES_MAX = 40
 
-    scope = st.radio(
-        "Oblast trasy",
-        ("czsk", "intl"),
-        format_func=lambda v: (
-            "ČR a Slovensko" if v == "czsk" else "Zahraničí — Turecko, EU…"
-        ),
-        horizontal=True,
-        key="logistics_scope",
+
+def _parse_log_quotes(raw) -> list[dict]:
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return []
+        try:
+            raw = json.loads(text)
+        except Exception:
+            return []
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for item in raw:
+        if isinstance(item, dict) and item.get("start") and item.get("dest") and item.get("ltl") is not None:
+            out.append(item)
+    return out[:_LOG_QUOTES_MAX]
+
+
+def _log_quotes() -> list[dict]:
+    """Historie z tohoto prohlížeče. Než doběhne úložiště, nesmí se přepsat prázdným seznamem."""
+    if st.session_state.get("_log_quotes_hydrated") and isinstance(st.session_state.get("_log_quotes"), list):
+        return st.session_state["_log_quotes"]
+    store = st.session_state.get("pbcable_theme_store")
+    if not isinstance(store, dict):
+        return []
+    loaded = bool(st.session_state.get("_theme_boot")) and bool(store)
+    if _LOG_QUOTES_KEY not in store and not loaded:
+        return []
+    rows = _parse_log_quotes(store.get(_LOG_QUOTES_KEY))
+    st.session_state["_log_quotes"] = rows
+    st.session_state["_log_quotes_hydrated"] = True
+    return rows
+
+
+def _quote_signature(row: dict) -> tuple:
+    return (
+        row.get("start"),
+        row.get("dest"),
+        row.get("km"),
+        row.get("vehicle"),
+        row.get("kg"),
+        row.get("ldm"),
+        row.get("pallets"),
+        row.get("diesel"),
+        row.get("rate"),
+        row.get("border_days"),
+        row.get("ltl"),
+        row.get("ftl"),
     )
-    countries = _LOGISTICS_CZSK if scope == "czsk" else _LOGISTICS_INTL
-    if scope == "czsk":
-        start_default, dest_default = "Metylovice", ""
-        place_hint = "např. Metylovice, Košice, Senec, Praha 1, 040 01"
-    else:
-        start_default, dest_default = "Gebze", "Metylovice"
-        place_hint = "např. Gebze, Istanbul, Denizli, Bursa, Wien, Budapest"
+
+
+def _write_log_quotes(rows: list[dict]) -> None:
+    rows = rows[:_LOG_QUOTES_MAX]
+    st.session_state["_log_quotes"] = rows
+    st.session_state["_log_quotes_hydrated"] = True
+    store = st.session_state.get("pbcable_theme_store")
+    if isinstance(store, dict):
+        store[_LOG_QUOTES_KEY] = rows
+    try:
+        from streamlit_local_storage import _st_local_storage
+    except Exception:
+        return
+    _st_local_storage(
+        method="setItem",
+        itemKey=_LOG_QUOTES_KEY,
+        itemValue=rows,
+        key="set_pbcable_log_quotes",
+    )
+
+
+def _remember_log_quote(row: dict) -> bool:
+    """Uloží kalkulaci, když stejná trasa se stejnou naftou a cenou ještě v historii není."""
+    rows = list(_log_quotes())
+    sig = _quote_signature(row)
+    if any(_quote_signature(old) == sig for old in rows):
+        return False
+    rows.insert(0, row)
+    _write_log_quotes(rows)
+    return True
+
+
+def _clear_log_quotes() -> None:
+    _write_log_quotes([])
+
+
+def _format_log_quote_line(row: dict) -> str:
+    vehicle = str(row.get("vehicle") or "").split("(")[0].strip()
+    head = " · ".join(
+        bit
+        for bit in (
+            str(row.get("saved") or ""),
+            f"{row.get('start')} → {row.get('dest')}",
+            f"{format_num(row.get('km'), 0)} km",
+            vehicle,
+            f"{format_num(row.get('kg'), 0)} kg",
+            f"{format_num(row.get('ldm'), 1)} LDM",
+        )
+        if bit
+    )
+    diesel = f"nafta {format_num(row.get('diesel'), 2)} Kč/l"
+    if row.get("diesel_date"):
+        diesel += f" ({row['diesel_date']})"
+    tail = [
+        f"LTL {format_num(row.get('ltl'), 0)} CZK",
+        f"FTL {format_num(row.get('ftl'), 0)} CZK",
+    ]
+    if row.get("ltl_eur") is not None:
+        tail.append(f"{format_num(row.get('ltl_eur'), 0)} / {format_num(row.get('ftl_eur'), 0)} EUR")
+    tail.extend([diesel, f"sazba {format_num(row.get('rate'), 1)} Kč/km"])
+    if row.get("when"):
+        tail.append(str(row["when"]))
+    border = int(row.get("border_days") or 0)
+    if border:
+        tail.append(f"hranice {_days_cs(border)}")
+    return head + "  \n" + " · ".join(tail)
+
+
+def _render_log_quote_history() -> None:
+    rows = _log_quotes()
+    st.markdown("**Uložené kalkulace**")
+    st.caption(
+        "Po výpočtu se trasa uloží sama, s cenou a naftou z toho dne. "
+        "Drží se v tomto prohlížeči. Na GitHub ani do poptávky pro dopravce se neposílá."
+    )
+    if not rows:
+        return
+    visible = rows[:12]
+    older = rows[12:]
+    for row in visible:
+        st.markdown(_format_log_quote_line(row))
+    if older:
+        with st.expander(f"Starší kalkulace ({len(older)})"):
+            for row in older:
+                st.markdown(_format_log_quote_line(row))
+    if st.button("Vymazat uložené kalkulace", key="log_quotes_clear"):
+        _clear_log_quotes()
+        st.rerun()
+
+
+@st.fragment
+def _logistics_quote_panel() -> None:
+    """Váha, sazba a cena. Změna čísel znovu nekreslí mapu."""
+    start_loc = st.session_state.get("_log_start_loc")
+    dest_loc = st.session_state.get("_log_dest_loc")
+    scope = st.session_state.get("_log_scope") or "czsk"
+    saved_route = (
+        _log_saved_route(start_loc, dest_loc) if start_loc and dest_loc else None
+    )
 
     col_form, col_result = st.columns([1, 1])
-
     with col_form:
-        start_loc = _render_location_search(
-            t("Odkud (Start)"),
-            f"log_start_q_{scope}",
-            f"log_start_s_{scope}",
-            default_query=start_default,
-            countries=countries,
-            placeholder=place_hint,
-        )
-        st.markdown("<br>", unsafe_allow_html=True)
-        dest_loc = _render_location_search(
-            t("Kam (Cíl)"),
-            f"log_dest_q_{scope}",
-            f"log_dest_s_{scope}",
-            default_query=dest_default,
-            countries=countries,
-            placeholder=place_hint,
-        )
-        st.markdown("<br>", unsafe_allow_html=True)
-
         start_cc = str((start_loc or {}).get("country") or "")
         dest_cc = str((dest_loc or {}).get("country") or "")
         involves_tr = "TR" in {start_cc.upper(), dest_cc.upper()}
@@ -8371,8 +8488,7 @@ def render_domestic_logistics() -> None:
                 key="log_cargo_ldm",
             )
 
-        diesel = fetch_mbenzin_diesel()
-        log_health["diesel"] = diesel
+        diesel = diesel_now
         l_per_100 = float(profile["l_per_100"])
         if diesel:
             diesel_seed = f"{diesel.get('date') or 'd'}_{float(diesel['czk']):.2f}"
@@ -8399,37 +8515,16 @@ def render_domestic_logistics() -> None:
             format="%.1f",
             key=f"domestic_sazba_{v_idx}_{float(nafta_czk):.2f}",
         )
-        log_health["typed"] = float(nafta_czk)
+        st.session_state["_log_diesel_pub"] = (diesel, float(nafta_czk))
 
         _render_domestic_pallet_cheat_sheet()
         shipment_form = _render_domestic_shipment_form()
 
     with col_result:
-        if not start_loc or not dest_loc:
-            st.info("Vyberte startovní a cílovou adresu pro výpočet a náhled poptávky.")
-            if shipment_form.get("cargo_desc") and shipment_form["cargo_desc"] != "—":
-                st.caption(
-                    f"Zboží připraveno: {shipment_form['cargo_desc']} · "
-                    f"termín: {shipment_form['pickup_mode']}"
-                )
+        if not saved_route:
+            st.caption("Cena se doplní po výběru obou adres.")
         else:
-            route_key = _log_route_key(start_loc, dest_loc)
-            known_route = _log_saved_route(start_loc, dest_loc)
-            if known_route:
-                road_km, used_osrm, drive_min, route_coords = known_route
-            else:
-                with st.spinner("Počítám silniční trasu (OSRM)…"):
-                    road_km, used_osrm, drive_min, route_coords = get_driving_distance(
-                        start_loc["lat"], start_loc["lon"], dest_loc["lat"], dest_loc["lon"],
-                    )
-                st.session_state["_log_route"] = {
-                    "key": route_key,
-                    "result": (road_km, used_osrm, drive_min, route_coords),
-                }
-                if not st.session_state.get("log_vehicle_pinned"):
-                    st.rerun()
-            log_health["route"] = (bool(used_osrm), float(road_km))
-
+            road_km, used_osrm, drive_min, _route_coords = saved_route
             dist_help = (
                 "Reálná silniční trasa (OSRM)"
                 if used_osrm
@@ -8448,55 +8543,6 @@ def render_domestic_logistics() -> None:
             quote = _domestic_compute_quote(
                 dist, waha, ldm, profile, sazba, vehicle_key
             )
-
-            start_short = start_loc["display_name"].split(",")[0].strip()
-            dest_short = dest_loc["display_name"].split(",")[0].strip()
-            start_cc = str(start_loc.get("country") or "CZ").upper()
-            dest_cc = str(dest_loc.get("country") or "CZ").upper()
-            start_lbl = _LOGISTICS_COUNTRY_LABEL.get(start_cc, start_cc)
-            dest_lbl = _LOGISTICS_COUNTRY_LABEL.get(dest_cc, dest_cc)
-            st.markdown(
-                "<div style='background:rgba(77,159,255,0.10); padding:12px; border-radius:10px; "
-                "border:1px solid rgba(77,159,255,0.28); border-left:4px solid #4D9FFF; margin-bottom:16px;'>"
-                "<span style='font-family:Syne, sans-serif; font-size:1.1rem; "
-                "font-weight:700; color:#F7FAFD;'>"
-                f"📍 {html.escape(start_short)} "
-                f"<span style='font-size:0.85rem; color:#8D99AB;'>"
-                f"({html.escape(start_lbl)} · PSČ: {html.escape(str(start_loc.get('postcode', 'N/A')))})</span> "
-                f"&nbsp;➡️&nbsp; "
-                f"{html.escape(dest_short)} "
-                f"<span style='font-size:0.85rem; color:#8D99AB;'>"
-                f"({html.escape(dest_lbl)} · PSČ: {html.escape(str(dest_loc.get('postcode', 'N/A')))})</span>"
-                "</span></div>",
-                unsafe_allow_html=True,
-            )
-
-            route_lats = [c[0] for c in route_coords]
-            route_lons = [c[1] for c in route_coords]
-            route_fig = _new_osm_map(route_lats, route_lons, height=320)
-            route_fig.add_trace(go.Scattermap(
-                lat=route_lats,
-                lon=route_lons,
-                mode="lines",
-                line=dict(width=4, color="#4D9FFF"),
-                name="Trasa",
-                showlegend=False,
-                hoverinfo="skip",
-            ))
-            route_fig.add_trace(go.Scattermap(
-                lat=[route_lats[0], route_lats[-1]],
-                lon=[route_lons[0], route_lons[-1]],
-                mode="markers",
-                marker=dict(size=14, color=["#0D6EFD", "#EF4444"]),
-                hovertext=[start_short, dest_short],
-                hoverinfo="text",
-                name="Místa",
-                showlegend=False,
-            ))
-            _show_plotly_map(route_fig)
-            map_note = "silnice OSRM" if used_osrm else "úsečka, OSRM nedostupné"
-            st.caption(f"Modrá nakládka · červená vykládka · {map_note}")
-
             st.markdown("**Vytížení vozidla**")
             _render_domestic_capacity_bar(quote)
 
@@ -8526,7 +8572,7 @@ def render_domestic_logistics() -> None:
             )
             t3.metric(
                 "Doba na cestě",
-                _format_drive_time(transit["total_min"]),
+                _format_drive_time(transit["moving_min"]),
                 help=transit["detail"],
             )
             t4.metric(
@@ -8552,6 +8598,25 @@ def render_domestic_logistics() -> None:
             p_czk, p_ftl = st.columns(2)
             p_eur, p_ftl_eur = st.columns(2)
             if quote["price_valid"] and price_czk is not None:
+                _remember_log_quote({
+                    "saved": now_prague().strftime("%d. %m. %Y %H:%M"),
+                    "start": str((start_loc or {}).get("display_name") or "").split(",")[0].strip(),
+                    "dest": str((dest_loc or {}).get("display_name") or "").split(",")[0].strip(),
+                    "km": int(round(float(road_km))),
+                    "vehicle": str(v_type).split("(")[0].strip(),
+                    "kg": int(round(float(waha))),
+                    "ldm": round(float(ldm), 1),
+                    "pallets": int(eur_pallets),
+                    "diesel": round(float(nafta_czk), 2),
+                    "diesel_date": str((diesel or {}).get("date") or ""),
+                    "rate": round(float(sazba), 1),
+                    "border_days": int(border_days),
+                    "ltl": int(round(float(price_czk))),
+                    "ftl": int(round(float(ftl_price))) if ftl_price else None,
+                    "ltl_eur": None if price_eur is None else int(round(float(price_eur))),
+                    "ftl_eur": None if ftl_eur is None else int(round(float(ftl_eur))),
+                    "when": str(transit.get("when") or ""),
+                })
                 p_czk.metric(
                     "LTL — tahle zásilka",
                     f"{format_num(price_czk, 0)} CZK",
@@ -8617,8 +8682,132 @@ def render_domestic_logistics() -> None:
                 use_container_width=True,
             )
 
+    _render_log_quote_history()
+
+
+def render_domestic_logistics() -> None:
+    """Kalkulačka silniční přepravy — ČR/SK i zahraničí (Turecko, EU)."""
+    section_header("🚛", t("Logistika — kalkulačka přepravy"))
+    log_health_slot = st.empty()
+    log_health: dict = {"diesel": None, "typed": None, "route": None}
+
+    scope = st.radio(
+        "Oblast trasy",
+        ("czsk", "intl"),
+        format_func=lambda v: (
+            "ČR a Slovensko" if v == "czsk" else "Zahraničí — Turecko, EU…"
+        ),
+        horizontal=True,
+        key="logistics_scope",
+    )
+    countries = _LOGISTICS_CZSK if scope == "czsk" else _LOGISTICS_INTL
+    if scope == "czsk":
+        start_default, dest_default = "Metylovice", ""
+        place_hint = "např. Metylovice, Košice, Senec, Praha 1, 040 01"
+    else:
+        start_default, dest_default = "Gebze", "Metylovice"
+        place_hint = "např. Gebze, Istanbul, Denizli, Bursa, Wien, Budapest"
+
+    col_form, col_result = st.columns([1, 1])
+
+    with col_form:
+        start_loc = _render_location_search(
+            t("Odkud (Start)"),
+            f"log_start_q_{scope}",
+            f"log_start_s_{scope}",
+            default_query=start_default,
+            countries=countries,
+            placeholder=place_hint,
+        )
+        st.markdown("<br>", unsafe_allow_html=True)
+        dest_loc = _render_location_search(
+            t("Kam (Cíl)"),
+            f"log_dest_q_{scope}",
+            f"log_dest_s_{scope}",
+            default_query=dest_default,
+            countries=countries,
+            placeholder=place_hint,
+        )
+        st.markdown("<br>", unsafe_allow_html=True)
+
+
+    st.session_state["_log_start_loc"] = start_loc
+    st.session_state["_log_dest_loc"] = dest_loc
+    st.session_state["_log_scope"] = scope
+
+    with col_result:
+        if not start_loc or not dest_loc:
+            st.info("Vyberte startovní a cílovou adresu pro výpočet a náhled poptávky.")
+        else:
+            route_key = _log_route_key(start_loc, dest_loc)
+            known_route = _log_saved_route(start_loc, dest_loc)
+            if known_route:
+                road_km, used_osrm, drive_min, route_coords = known_route
+            else:
+                with st.spinner("Počítám silniční trasu (OSRM)…"):
+                    road_km, used_osrm, drive_min, route_coords = get_driving_distance(
+                        start_loc["lat"], start_loc["lon"], dest_loc["lat"], dest_loc["lon"],
+                    )
+                st.session_state["_log_route"] = {
+                    "key": route_key,
+                    "result": (road_km, used_osrm, drive_min, route_coords),
+                }
+            log_health["route"] = (bool(used_osrm), float(road_km))
+
+
+            start_short = start_loc["display_name"].split(",")[0].strip()
+            dest_short = dest_loc["display_name"].split(",")[0].strip()
+            start_cc = str(start_loc.get("country") or "CZ").upper()
+            dest_cc = str(dest_loc.get("country") or "CZ").upper()
+            start_lbl = _LOGISTICS_COUNTRY_LABEL.get(start_cc, start_cc)
+            dest_lbl = _LOGISTICS_COUNTRY_LABEL.get(dest_cc, dest_cc)
+            st.markdown(
+                "<div style='background:rgba(77,159,255,0.10); padding:12px; border-radius:10px; "
+                "border:1px solid rgba(77,159,255,0.28); border-left:4px solid #4D9FFF; margin-bottom:16px;'>"
+                "<span style='font-family:Syne, sans-serif; font-size:1.1rem; "
+                "font-weight:700;' class='route-banner-title'>"
+                f"📍 {html.escape(start_short)} "
+                f"<span class='route-banner-sub' style='font-size:0.85rem;'>"
+                f"({html.escape(start_lbl)} · PSČ: {html.escape(str(start_loc.get('postcode', 'N/A')))})</span> "
+                f"&nbsp;➡️&nbsp; "
+                f"{html.escape(dest_short)} "
+                f"<span class='route-banner-sub' style='font-size:0.85rem;'>"
+                f"({html.escape(dest_lbl)} · PSČ: {html.escape(str(dest_loc.get('postcode', 'N/A')))})</span>"
+                "</span></div>",
+                unsafe_allow_html=True,
+            )
+
+            route_lats = [c[0] for c in route_coords]
+            route_lons = [c[1] for c in route_coords]
+            route_fig = _new_osm_map(route_lats, route_lons, height=320)
+            route_fig.add_trace(go.Scattermap(
+                lat=route_lats,
+                lon=route_lons,
+                mode="lines",
+                line=dict(width=4, color="#4D9FFF"),
+                name="Trasa",
+                showlegend=False,
+                hoverinfo="skip",
+            ))
+            route_fig.add_trace(go.Scattermap(
+                lat=[route_lats[0], route_lats[-1]],
+                lon=[route_lons[0], route_lons[-1]],
+                mode="markers",
+                marker=dict(size=14, color=["#0D6EFD", "#EF4444"]),
+                hovertext=[start_short, dest_short],
+                hoverinfo="text",
+                name="Místa",
+                showlegend=False,
+            ))
+            _show_plotly_map(route_fig)
+            map_note = "silnice OSRM" if used_osrm else "úsečka, OSRM nedostupné"
+            st.caption(f"Modrá nakládka · červená vykládka · {map_note}")
+
+
+    _logistics_quote_panel()
+    diesel_pub = st.session_state.get("_log_diesel_pub") or (None, None)
     route = log_health.get("route")
-    pills = [_diesel_health(log_health.get("diesel"), log_health.get("typed"))]
+    pills = [_diesel_health(diesel_pub[0], diesel_pub[1])]
     if route:
         used_road, road = route
         if used_road:
@@ -8947,7 +9136,7 @@ def render_drum_capacity_calculator() -> None:
     """
     Kapacita bubnu + plán návinu po vrstvách + doporučení min. KTG dle ohybu.
     """
-    section_header("🛢️", t("Kapacita bubnu — co se vejde na buben"))
+    section_header("🪵", t("Kapacita bubnu — co se vejde na buben"))
     st.markdown(
         '<div class="info-box" style="margin-bottom:10px;">'
         "Návin se počítá <strong>po vrstvách (řadách)</strong> — každá další řada má větší obvod. "
@@ -9625,6 +9814,8 @@ _PAGE_ALIASES = {
     "Nákup": "📦 Nákup",
     "Kontejnery": "📍 Kontejnery",
     "Logistika": "🚛 Logistika",
+    "Buben": "🪵 Kapacita bubnu",
+    "Kapacita bubnu": "🪵 Kapacita bubnu",
     "Nástroje": "🧰 Nástroje",
 }
 
@@ -9703,10 +9894,11 @@ def main() -> None:
         ("📦 Nákup", "nakup", render_landed_cost_pricing),
         ("📍 Kontejnery", "kontejnery", render_container_tracking),
         ("🚛 Logistika", "logistika", render_domestic_logistics),
+        ("🪵 Kapacita bubnu", "buben", render_drum_capacity_calculator),
         ("🧰 Nástroje", "nastroje", render_tools_and_tips),
     ]
     if is_supplier:
-        page_specs = [item for item in page_specs if item[1] not in ("nakup", "kontejnery")]
+        page_specs = [item for item in page_specs if item[1] not in ("nakup", "kontejnery", "buben")]
     tabs_list = [label for label, _page_id, _fn in page_specs]
     page_memory = page_key + "_mem"
     # Tlačítko vzhledu je nad přepínačem sekcí a běh ukončí dřív.
