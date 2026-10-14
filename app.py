@@ -6789,6 +6789,77 @@ def _render_gps_on_the_way(active_rows: list[dict], arrived_rows: list[dict]) ->
         st.info(t("Žádný kontejner teď není na cestě."))
 
 
+_RAIL_ETA_LAST = 5
+
+
+def _recent_rail_samples(
+    arrived_rows: list[dict],
+    limit: int = _RAIL_ETA_LAST,
+) -> tuple[tuple[str, int], ...]:
+    """Nejnovější doručené kontejnery s známou dobou cesty: (jméno, dny)."""
+    scored: list[tuple[datetime, str, int]] = []
+    for row in arrived_rows:
+        days = _gps_transit_days(row)
+        end = _parse_gps_date(row.get("arrived"))
+        if days is None or end is None:
+            continue
+        name = str(row.get("container") or "").strip() or "—"
+        scored.append((end, name, int(days)))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return tuple((name, days) for _end, name, days in scored[:limit])
+
+
+@st.fragment
+def _render_rail_arrival_calc(samples: tuple[tuple[str, int], ...]) -> None:
+    """Datum nakládky na vlak → příjezd podle průměru a nejdelší poslední cesty."""
+    st.markdown("**Předpokládaný příjezd**")
+    if not samples:
+        st.caption(
+            "Až v archivu bude doručený kontejner s datem expedice a příjezdu, "
+            "spočítá se tady příjezd od nakládky na vlak."
+        )
+        return
+
+    with st.container(border=True):
+        load_date = st.date_input(
+            "Datum nakládky na vlak",
+            value=now_prague().date(),
+            format="DD.MM.YYYY",
+            key="rail_load_date",
+        )
+        if load_date is None:
+            return
+        durations = [days for _name, days in samples]
+        avg = int(sum(durations) / len(durations) + 0.5)
+        slow = max(durations)
+        avg_when = (load_date + timedelta(days=avg)).strftime("%d.%m.%Y")
+        slow_when = (load_date + timedelta(days=slow)).strftime("%d.%m.%Y")
+        c_avg, c_max = st.columns(2)
+        with c_avg:
+            st.markdown(
+                '<div class="spread-card">'
+                '<div class="spread-label">Příjezd podle průměru</div>'
+                f'<div class="spread-value" style="color:#38BDF8;">{avg_when}</div>'
+                f'<div class="spread-details">{_days_cs(avg)} od nakládky</div>'
+                "</div>",
+                unsafe_allow_html=True,
+            )
+        with c_max:
+            st.markdown(
+                '<div class="spread-card">'
+                '<div class="spread-label">Příjezd podle nejdelší cesty</div>'
+                f'<div class="spread-value" style="color:#E07A5F;">{slow_when}</div>'
+                f'<div class="spread-details">{_days_cs(slow)} od nakládky</div>'
+                "</div>",
+                unsafe_allow_html=True,
+            )
+        basis = ", ".join(f"{name} ({_days_cs(days)})" for name, days in samples)
+        st.caption(
+            f"Z posledních {len(samples)} doručených: {basis}. "
+            "Dny jsou od prvního GPS signálu (expedice) do data příjezdu."
+        )
+
+
 def render_container_tracking() -> None:
     """Kontejnery na cestě — živé GPS (Link4Future + Jagich), admin."""
     section_header(
@@ -6850,6 +6921,7 @@ def render_container_tracking() -> None:
     all_rows = _gps_trackers()
     active_rows = [row for row in all_rows if not _gps_is_arrived(row)]
     arrived_rows = [row for row in all_rows if _gps_is_arrived(row)]
+    _render_rail_arrival_calc(_recent_rail_samples(arrived_rows))
     _render_gps_on_the_way(active_rows, arrived_rows)
 
     tracks: list[dict] = []
