@@ -1228,6 +1228,25 @@ div[data-testid="column"] {
 .health-pill .health-name { font-weight: 700; color: #F2F5F9; }
 .health-pill .health-meta { color: #9AA6B8; }
 
+.st-key-theme_toggle {
+    position: fixed;
+    top: 8px;
+    right: 116px;
+    z-index: 1000;
+    width: 46px !important;
+    margin: 0 !important;
+}
+.st-key-theme_toggle button {
+    width: 46px !important;
+    height: 46px !important;
+    min-width: 46px !important;
+    min-height: 46px !important;
+    border-radius: 50% !important;
+    padding: 0 !important;
+    font-size: 1.35rem !important;
+    line-height: 1 !important;
+}
+
 </style>
 """
 
@@ -1235,9 +1254,9 @@ div[data-testid="column"] {
 LIGHT_CSS = """
 .stApp {
     background:
-        radial-gradient(1100px 520px at 88% -8%, rgba(77,159,255,0.08), transparent 60%),
-        linear-gradient(180deg, #F7F8FB 0%, #F3F5F8 100%) !important;
-    color: #1C2430 !important;
+        radial-gradient(1100px 520px at 88% -8%, rgba(77,159,255,0.10), transparent 60%),
+        linear-gradient(180deg, #E6EBF2 0%, #DCE3EC 100%) !important;
+    color: #121820 !important;
 }
 .stApp::before, .stApp::after { opacity: 0.16; }
 [data-testid="stAppViewContainer"],
@@ -1323,8 +1342,20 @@ details summary { color: #142033 !important; }
     background: #FFFFFF !important;
     color: #142033 !important;
 }
-[data-testid="stMetricLabel"] { color: #5C6B7C !important; }
-[data-testid="stMetricValue"] { color: #142033 !important; }
+[data-testid="stMetricLabel"],
+[data-testid="stMetricLabel"] * { color: #2C3848 !important; }
+[data-testid="stMetricValue"],
+[data-testid="stMetricValue"] * { color: #101820 !important; }
+[data-testid="stCaptionContainer"],
+[data-testid="stCaptionContainer"] p,
+[data-testid="stCaptionContainer"] span { color: #2A3544 !important; }
+[data-testid="stWidgetLabel"] p,
+[data-testid="stWidgetLabel"] span { color: #1A2330 !important; }
+.st-key-theme_toggle button {
+    background: #FFFFFF !important;
+    color: #1A2330 !important;
+    border-color: #8FA0B5 !important;
+}
 [data-testid="stRadio"] label {
     background: #FFFFFF !important;
     color: #1C2430 !important;
@@ -2850,9 +2881,9 @@ def _use_plot_theme() -> None:
     light = st.session_state.get("ui_theme") == "light"
     if light:
         paper, bg, title, tick, grid, line = (
-            "#F7F8FB", "#FFFFFF", "#17202A", "#4E5D6E", "#E3E8EF", "#D5DCE6",
+            "#F4F7FB", "#FFFFFF", "#121820", "#243040", "#D5DCE6", "#C5D0DE",
         )
-        hover_bg, hover_border, hover_font = "#FFFFFF", "#D5DCE6", "#17202A"
+        hover_bg, hover_border, hover_font = "#FFFFFF", "#D5DCE6", "#121820"
     else:
         paper, bg, title, tick, grid, line = (
             "#1E242E", "#1A1F28", "#E9EDF3", "#B8C2D0", "#2C3442", "#3A4454",
@@ -3931,19 +3962,10 @@ def render_header() -> None:
     )
     st.markdown(header_html, unsafe_allow_html=True)
 
-    c1, _gap, c3 = st.columns([1.15, 4.5, 1.35])
+    c1, _gap = st.columns([1.15, 5.8])
     with c1:
         if st.button(t("🔄  Obnovit data"), use_container_width=True):
             st.cache_data.clear()
-            st.rerun()
-    with c3:
-        light = st.session_state.get("ui_theme") == "light"
-        if st.button(
-            "🌙 Tmavý" if light else "☀️ Světlý",
-            use_container_width=True,
-            key="theme_toggle",
-        ):
-            _set_ui_theme("dark" if light else "light")
             st.rerun()
 
 
@@ -7643,12 +7665,17 @@ def _transit_estimate(
     drive_min: float | None,
     *,
     border_h: float = 0.0,
+    border_days: int = 0,
 ) -> dict:
     """
     Orientační doba přepravy: čistá jízda + pauzy AETR + nakládka/vykládka + hranice.
-    Kalendářní dny: max 9 h jízdy / den, mezi dny 11 h odpočinek.
+    Kalendářní dny jízdy: max 9 h / den, mezi dny 11 h odpočinek.
+    Čekání na hranici TR/EU jsou celé dny navíc — fronta nejede zároveň s jízdou.
     """
     drive = max(0.0, float(drive_min or 0.0))
+    border_days = max(0, int(border_days or 0))
+    if border_days:
+        border_h = float(border_days) * 24.0
     breaks_min = math.floor(drive / 270.0) * 45.0
     handling_min = 120.0
     border_min = max(0.0, float(border_h or 0.0)) * 60.0
@@ -7657,7 +7684,11 @@ def _transit_estimate(
     wheel_plus = handling_min + drive + breaks_min + border_min
     total_min = wheel_plus + overnight_min
 
-    if border_min < 60 and wheel_plus <= 12 * 60:
+    if border_days:
+        # Fronta na Kapıkule stojí celé dny, jízda před ní a za ní je zvlášť.
+        calendar_days = drive_days + border_days
+        when = "druhý den" if calendar_days == 2 else f"za {_days_cs(calendar_days)}"
+    elif border_min < 60 and wheel_plus <= 12 * 60:
         calendar_days = 1
         when = "stejný den (po nakládce)"
     elif border_min < 60 and drive_days == 1 and wheel_plus <= 24 * 60:
@@ -7672,11 +7703,17 @@ def _transit_estimate(
             calendar_days = 2
         when = "druhý den" if calendar_days == 2 else f"za {_days_cs(calendar_days)}"
 
+    if border_days:
+        border_bit = f"hranice TR/EU {_days_cs(border_days)}"
+    elif border_min:
+        border_bit = f"hranice {_format_drive_time(border_min)}"
+    else:
+        border_bit = None
     bits = [
         f"jízda {_format_drive_time(drive)}" if drive else None,
         f"pauzy {_format_drive_time(breaks_min)}" if breaks_min else None,
         "nakládka/vykládka 2 h",
-        f"hranice {_format_drive_time(border_min)}" if border_min else None,
+        border_bit,
         f"noční odpočinek {_format_drive_time(overnight_min)}" if overnight_min else None,
     ]
     detail = " · ".join(b for b in bits if b)
@@ -8218,18 +8255,24 @@ def render_domestic_logistics() -> None:
         start_cc = str((start_loc or {}).get("country") or "")
         dest_cc = str((dest_loc or {}).get("country") or "")
         involves_tr = "TR" in {start_cc.upper(), dest_cc.upper()}
-        border_h = 0.0
+        border_days = 0
         if involves_tr:
-            border_h = float(st.number_input(
-                "Čekání na hranici TR (hodin)",
-                min_value=0.0,
-                max_value=48.0,
-                value=8.0,
-                step=1.0,
-                key="logistics_tr_border_h",
-                help="Kapıkule / Kapitan Andreevo — podle fronty 4–24 h. Nula = bez čekání.",
+            border_days = int(st.number_input(
+                "Čekání na hranici TR/EU (dny)",
+                min_value=0,
+                max_value=14,
+                value=3,
+                step=1,
+                key="logistics_tr_border_days",
+                help=(
+                    "Kapıkule / Kapitan Andreevo. Fronta se mění, často 2–5 dní. "
+                    "Tyhle dny se přičtou k jízdě. Nula = bez čekání."
+                ),
             ))
-            st.caption("U TR→CZ počítejte 3–5 dní včetně hranice. Sazbu v CZK/km si upravte podle nabídky FTL v eurech.")
+            st.caption(
+                "Odhad příjezdu = dny jízdy + tohle čekání. "
+                "Sazbu v CZK/km si upravte podle nabídky FTL."
+            )
         elif scope == "intl":
             st.caption("Zahraniční sazba je k jednání (často FTL v EUR). Výchozí CZK/km je orientační.")
 
@@ -8400,7 +8443,7 @@ def render_domestic_logistics() -> None:
                     f"Záložní odhad jízdy: {format_num(road_km, 0)} km ÷ "
                     f"{_DOMESTIC_AVG_SPEED_KMH:.0f} km/h (OSRM čas nedostupný)"
                 )
-            transit = _transit_estimate(drive_min, border_h=border_h)
+            transit = _transit_estimate(drive_min, border_days=border_days)
             dist = road_km
             quote = _domestic_compute_quote(
                 dist, waha, ldm, profile, sazba, vehicle_key
@@ -8469,7 +8512,8 @@ def render_domestic_logistics() -> None:
             cap_pct = quote["cap_pct"]
             price_czk = quote["price_czk"]
 
-            t1, t2, t3, t4 = st.columns(4)
+            t1, t2 = st.columns(2)
+            t3, t4 = st.columns(2)
             t1.metric(
                 "Vzdálenost silniční",
                 f"{format_num(road_km, 0)} km",
@@ -8489,15 +8533,24 @@ def render_domestic_logistics() -> None:
                 "Na místě orientačně",
                 transit["when"],
                 help=(
-                    "Nakládka + jízda + pauzy řidiče (AETR 45 min / 4,5 h) "
-                    "+ případná hranice TR. Není slib dopravce."
+                    "Nakládka + jízda (max 9 h / den) + pauzy řidiče "
+                    "+ dny čekání na hranici TR/EU. Není slib dopravce."
                 ),
             )
             st.caption(transit["detail"])
 
             price_eur, eur_czk = _domestic_price_eur(price_czk)
             ftl_price = quote.get("ftl_price_czk")
-            p_czk, p_ftl, p_eur = st.columns(3)
+            ftl_eur, _eur_rate = _domestic_price_eur(ftl_price)
+            if eur_czk is None:
+                eur_czk = _eur_rate
+            eur_help = (
+                f"Kurz ČNB {eur_czk:.4f} CZK/EUR"
+                if eur_czk
+                else "Kurz ČNB EUR/CZK není k dispozici"
+            )
+            p_czk, p_ftl = st.columns(2)
+            p_eur, p_ftl_eur = st.columns(2)
             if quote["price_valid"] and price_czk is not None:
                 p_czk.metric(
                     "LTL — tahle zásilka",
@@ -8509,18 +8562,16 @@ def render_domestic_logistics() -> None:
                     f"{format_num(ftl_price, 0)} CZK" if ftl_price else "—",
                     help="Stejná trasa, vůz naplněný. Srovnání, jestli se LTL ještě vyplatí.",
                 )
-                if price_eur is not None and eur_czk:
-                    p_eur.metric(
-                        "LTL v EUR",
-                        f"{format_num(price_eur, 0)} EUR",
-                        help=f"Kurz ČNB {eur_czk:.4f} CZK/EUR",
-                    )
-                else:
-                    p_eur.metric(
-                        "LTL v EUR",
-                        "—",
-                        help="Kurz ČNB EUR/CZK není k dispozici",
-                    )
+                p_eur.metric(
+                    "LTL v EUR",
+                    f"{format_num(price_eur, 0)} EUR" if price_eur is not None else "—",
+                    help=eur_help,
+                )
+                p_ftl_eur.metric(
+                    "FTL v EUR",
+                    f"{format_num(ftl_eur, 0)} EUR" if ftl_eur is not None else "—",
+                    help=eur_help,
+                )
                 if ftl_price and float(cap_pct) < 98:
                     share = float(price_czk) / float(ftl_price) * 100.0
                     st.caption(
@@ -8539,6 +8590,7 @@ def render_domestic_logistics() -> None:
                 p_czk.metric("LTL — tahle zásilka", "—")
                 p_ftl.metric("FTL — celé auto", "—")
                 p_eur.metric("LTL v EUR", "—")
+                p_ftl_eur.metric("FTL v EUR", "—")
                 st.caption("Cena není k dispozici — přetížení vozidla.")
 
             request_text = _format_domestic_transport_request(
@@ -9719,6 +9771,16 @@ def main() -> None:
         renderers.get(page, renderers[tabs_list[0]])()
 
     render_footer()
+    # Až po formuláři. Kdyby se režim přepnul nahoře, Streamlit by běh
+    # ukončil dřív a smazal rozepsanou trasu v logistice.
+    _light = st.session_state.get("ui_theme") == "light"
+    if st.button(
+        "🌙" if _light else "☀️",
+        key="theme_toggle",
+        help="Tmavý režim" if _light else "Světlý režim",
+    ):
+        _set_ui_theme("dark" if _light else "light")
+        st.rerun()
 
 
 if __name__ == "__main__":
