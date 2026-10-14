@@ -583,6 +583,30 @@ footer { visibility: hidden; }
     height: 36px;
     display: block;
 }
+.metric-card.fx-compact {
+    padding: 8px 10px 8px 12px;
+    margin-bottom: 6px;
+    border-radius: 10px;
+}
+.metric-card.fx-compact .card-label {
+    margin-bottom: 2px;
+    font-size: 0.62rem;
+}
+.metric-card.fx-compact .card-value {
+    font-size: 1.02rem;
+    margin-bottom: 0;
+}
+.metric-card.fx-compact .card-unit {
+    font-size: 0.7rem;
+    margin: 1px 0 0;
+}
+.metric-card.fx-compact .card-spark {
+    margin-top: 2px;
+}
+.metric-card.fx-compact .card-spark svg {
+    height: 18px;
+    max-width: 120px;
+}
 
 .fill-gallery {
     display: grid;
@@ -747,6 +771,17 @@ footer { visibility: hidden; }
     .card-extra-emphasis { font-size: 0.92rem; }
     .section-title { font-size: 0.85rem; }
     [data-testid="stHorizontalBlock"] { flex-direction: column !important; }
+    /* Měna a období grafů ať zůstanou vedle sebe. */
+    [data-testid="stHorizontalBlock"]:has([data-testid="stButtonGroup"]) {
+        flex-direction: row !important;
+        flex-wrap: wrap !important;
+        align-items: flex-end !important;
+    }
+    [data-testid="stHorizontalBlock"]:has([data-testid="stButtonGroup"]) > div {
+        width: auto !important;
+        max-width: 100% !important;
+        flex: 1 1 auto !important;
+    }
     [data-testid="stHorizontalBlock"] > div,
     [data-testid="column"],
     [data-testid="stColumn"] {
@@ -2241,8 +2276,35 @@ CHART_PERIODS: dict[str, str] = {
     "1Y": "1y",
 }
 
+def _cnb_pair(cnb: dict | None, code: str) -> float | None:
+    """Kurz ČNB v CZK za 1 jednotku měny. Koruna je 1."""
+    if code == "CZK":
+        return 1.0
+    if not cnb:
+        return None
+    rate = (cnb.get(code) or {}).get("rate")
+    try:
+        value = float(rate)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def cnb_cross(base: str, quote: str, cnb: dict | None = None) -> float | None:
+    """Kolik jednotek quote stojí 1 base, obojí ze stejného lístku ČNB."""
+    sheet = fetch_cnb_rates() if cnb is None else cnb
+    base_czk = _cnb_pair(sheet, base)
+    quote_czk = _cnb_pair(sheet, quote)
+    if not base_czk or not quote_czk:
+        return None
+    return base_czk / quote_czk
+
+
 def get_eurusd_rate() -> float | None:
-    """Kurz EURUSD z Yahoo (USD za 1 EUR)."""
+    """USD za 1 EUR. Nejdřív kříž z ČNB, ať sedí s USD/CZK a EUR/CZK."""
+    crossed = cnb_cross("EUR", "USD")
+    if crossed:
+        return crossed
     spot = fetch_yf_spot("EURUSD=X")
     if spot and spot.get("price"):
         rate = float(spot["price"])
@@ -3571,7 +3633,7 @@ def render_global_controls() -> tuple[str, str]:
     if st.session_state.display_currency == "EUR" and not eurusd:
         st.warning(
             t(
-                "Přepočet na EUR není k dispozici — chybí živý kurz EUR/USD z Yahoo Finance. "
+                "Přepočet na EUR není k dispozici — chybí kurz EUR a USD na lístku ČNB. "
                 "Ceny v EUR se zobrazí jako N/A."
             )
         )
@@ -4298,22 +4360,22 @@ def _render_ccmn_spreads(wm_data: dict | None) -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def render_fx() -> None:
-    """Sekce 2 – ČNB kurzy v kartách, Yahoo pro grafy a křížové EUR/USD."""
+    """Sekce 2 – všechny karty z jednoho lístku ČNB, grafy z Yahoo."""
 
     cnb = fetch_cnb_rates()
     cnb_live = cnb is not None
 
     section_header(
-        "💱", t("Měnové Kurzy — ČNB & Křížové"),
+        "💱", t("Měnové Kurzy — ČNB"),
         badge_html(cnb_live, "ČNB"),
         badge_html(True, "Yahoo grafy"),
     )
 
     if not cnb_live:
-        st.warning(t("ČNB: kurzovní lístek se nepodařilo načíst — karty CZK párů budou nedostupné."))
+        st.warning(t("ČNB: kurzovní lístek se nepodařilo načíst — karty budou nedostupné."))
     elif "CNY" not in cnb:
         st.warning(
-            t("ČNB: v denním kurzovním lístku chybí kód CNY — kurz CNY/CZK nelze zobrazit.")
+            t("ČNB: v denním kurzovním lístku chybí kód CNY — kurz jüanu nelze zobrazit.")
         )
 
     period = get_chart_period()
@@ -4324,79 +4386,44 @@ def render_fx() -> None:
     )
     st.markdown(
         f'<div class="info-box">'
-        f'{t("Karty CZK párů: oficiální kurzovní lístek <strong>ČNB</strong>")}'
-        f"{cnb_date_note} · "
-        f'{t("Historické grafy ({period}), křížové kurzy a 30denní sparkliny: <strong>Yahoo Finance</strong> · "
-        "CNY/CZK graf: CNYCZK=X nebo odvozeno USDCZK×CNYUSD", period=period_lbl)}'
+        f'{t("Karty i kříže EUR/USD/CNY jsou z jednoho lístku <strong>ČNB</strong>")}'
+        f"{cnb_date_note}. "
+        f'{t("Přepočet přes eura i přímo do korun vyjde stejně. "
+        "Grafy ({period}) zůstávají z Yahoo.", period=period_lbl)}'
         f'</div>',
         unsafe_allow_html=True,
     )
 
-    eur_usd_spot = fetch_yf_spot("EURUSD=X")
-    # 2 kurzy vedle sebe na řádek (3 řady × 2 karty) — čitelné na PC i mobilu
-    cols = [*st.columns(2), *st.columns(2), *st.columns(2)]
-
-    for (code, pair, subtitle, cls), col in zip(_CNB_METRIC_CARDS, cols[:3]):
-        with col:
-            info = (cnb or {}).get(code)
-            spark_kind = {"USD": "usd", "EUR": "eur", "CNY": "cny"}.get(code, "")
-            spark = _fx_sparkline_html(spark_kind, cls) if spark_kind else None
-            if info:
-                st.markdown(
-                    metric_card(
-                        pair, f"{info['rate']:.4f}", t(subtitle),
-                        card_class=cls, sparkline_html=spark,
-                    ),
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown(error_card(pair, cls, t("Data nedostupná · ČNB")), unsafe_allow_html=True)
-
-    with cols[3]:
-        if eur_usd_spot and eur_usd_spot["price"]:
-            st.markdown(
-                metric_card(
-                    "EUR/USD", f"{eur_usd_spot['price']:.4f}", "Euro / USD (Yahoo)",
-                    delta=eur_usd_spot.get("delta"), delta_suffix="",
-                    card_class="card-eur",
-                    sparkline_html=_fx_sparkline_html("eurusd", "card-eur"),
-                ),
-                unsafe_allow_html=True,
-            )
-        else:
-            st.markdown(error_card("EUR/USD", "card-eur", "Kurz nedostupný"), unsafe_allow_html=True)
-
-    with cols[4]:
-        if eur_usd_spot and eur_usd_spot["price"]:
-            usd_eur = 1.0 / eur_usd_spot["price"]
-            prev_usd_eur = 1.0 / eur_usd_spot["prev"] if eur_usd_spot["prev"] else usd_eur
-            st.markdown(
-                metric_card(
-                    "USD/EUR", f"{usd_eur:.4f}", "Dolar / Euro (Yahoo)",
-                    delta=usd_eur - prev_usd_eur, delta_suffix="",
-                    card_class="card-usd",
-                    sparkline_html=_fx_sparkline_html("usdeur", "card-usd"),
-                ),
-                unsafe_allow_html=True,
-            )
-        else:
-            st.markdown(error_card("USD/EUR", "card-usd", "Kurz nedostupný"), unsafe_allow_html=True)
-
-    with cols[5]:
-        cny_info = (cnb or {}).get("CNY")
-        eur_info = (cnb or {}).get("EUR")
-        if cny_info and eur_info and eur_info.get("rate"):
-            cny_eur = float(cny_info["rate"]) / float(eur_info["rate"])
-            st.markdown(
-                metric_card(
-                    "CNY/EUR", f"{cny_eur:.4f}", "Jüan / Euro (ČNB kříž)",
-                    card_class="card-cny",
-                    sparkline_html=_fx_sparkline_html("cnyeur", "card-cny"),
-                ),
-                unsafe_allow_html=True,
-            )
-        else:
-            st.markdown(error_card("CNY/EUR", "card-cny", "Data nedostupná · ČNB"), unsafe_allow_html=True)
+    fx_cards = [
+        ("USD", "CZK", "USD/CZK", "Americký dolar", "card-usd", "usd"),
+        ("EUR", "CZK", "EUR/CZK", "Euro", "card-eur", "eur"),
+        ("CNY", "CZK", "CNY/CZK", "Čínský jüan", "card-cny", "cny"),
+        ("EUR", "USD", "EUR/USD", "Euro / USD", "card-eur", "eurusd"),
+        ("USD", "EUR", "USD/EUR", "Dolar / Euro", "card-usd", "usdeur"),
+        ("CNY", "EUR", "CNY/EUR", "Jüan / Euro", "card-cny", "cnyeur"),
+    ]
+    for row in (fx_cards[:3], fx_cards[3:]):
+        cols = st.columns(3)
+        for spec, col in zip(row, cols):
+            base, quote, pair, subtitle, cls, spark_kind = spec
+            value = cnb_cross(base, quote, cnb)
+            with col:
+                if value:
+                    st.markdown(
+                        metric_card(
+                            pair,
+                            f"{value:.4f}",
+                            subtitle,
+                            card_class=f"{cls} fx-compact",
+                            sparkline_html=_fx_sparkline_html(spark_kind, cls),
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        error_card(pair, f"{cls} fx-compact", "Data nedostupná · ČNB"),
+                        unsafe_allow_html=True,
+                    )
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -6461,29 +6488,39 @@ def render_container_tracking() -> None:
     failed: list[str] = []
     first_by_key: dict[str, str] = {}
     if active_rows:
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _gps_one(trk: dict) -> tuple[dict, dict | None]:
+            provider = trk.get("provider") or "link4future"
+            return trk, _fetch_gps_track(provider, trk["imei"])
+
         with st.spinner(t("Stahuji polohu GPS…")):
-            for trk in active_rows:
-                provider = trk.get("provider") or "link4future"
-                got = _fetch_gps_track(provider, trk["imei"])
-                if got is None:
-                    failed.append(trk["container"])
-                    continue
-                first_t = str((got.get("first") or {}).get("t") or "")
-                row_key = _gps_row_key(trk)
-                if first_t:
-                    first_by_key[row_key] = first_t
-                label = trk["container"]
-                if trk.get("description"):
-                    label = f"{trk['container']} · {trk['description']}"
-                tracks.append({
-                    **got,
-                    "provider": provider,
-                    "label": label,
-                    "container": trk["container"],
-                    "description": trk.get("description") or "",
-                    "first_signal": trk.get("first_signal") or first_t,
-                    "row_key": row_key,
-                })
+            if len(active_rows) == 1:
+                fetched = [_gps_one(active_rows[0])]
+            else:
+                with ThreadPoolExecutor(max_workers=min(4, len(active_rows))) as pool:
+                    fetched = list(pool.map(_gps_one, active_rows))
+        for trk, got in fetched:
+            if got is None:
+                failed.append(trk["container"])
+                continue
+            provider = trk.get("provider") or "link4future"
+            first_t = str((got.get("first") or {}).get("t") or "")
+            row_key = _gps_row_key(trk)
+            if first_t:
+                first_by_key[row_key] = first_t
+            label = trk["container"]
+            if trk.get("description"):
+                label = f"{trk['container']} · {trk['description']}"
+            tracks.append({
+                **got,
+                "provider": provider,
+                "label": label,
+                "container": trk["container"],
+                "description": trk.get("description") or "",
+                "first_signal": trk.get("first_signal") or first_t,
+                "row_key": row_key,
+            })
         if first_by_key:
             _remember_first_signals(first_by_key)
             all_rows = _gps_trackers()
@@ -6822,22 +6859,69 @@ def _diesel_adjusted_rate(base_rate: float, l_per_100: float, diesel_czk: float)
     return round(base_rate + (l_per_100 / 100.0) * (diesel_czk - _DIESEL_BASE_CZK), 1)
 
 
-@st.cache_data(ttl=6 * 3600, show_spinner=False)
-def fetch_mbenzin_diesel() -> dict | None:
-    """Celostátní průměr nafty z mBenzin (Kč/l). Stránka pustí dál až po cookie z JS výzvy."""
+def _js_int32(value: int) -> int:
+    """Stejné oříznutí na 32 bitů, jaké dělá JavaScript u operátoru ^."""
+    value = int(value) & 0xFFFFFFFF
+    if value >= 0x80000000:
+        value -= 0x100000000
+    return value
+
+
+def _mbenzin_cookie_from_challenge(html: str) -> str | None:
+    """Přístupová cookie. mBenzin ji skládá v JS a vzorec se při každém načtení mění."""
+    script = re.search(r"<script>(.*?)</script>", html or "", re.S)
+    body = script.group(1) if script else ""
+    nums = re.search(r"var d=\[([0-9,]+)\]", body)
+    loop = re.search(r"v=d\[i\];(.*?)s\+=String\.fromCharCode", body, re.S)
+    if nums and loop:
+        data = [int(part) for part in nums.group(1).split(",") if part]
+        ops = re.findall(
+            r"v\s*(\^|\+|-)=\((\d+)\+\(i\*(\d+)\)%(\d+)\)",
+            loop.group(1),
+        )
+        if data and ops:
+            chars: list[str] = []
+            for index, raw in enumerate(data):
+                value = raw
+                for op, base, step, mod in ops:
+                    delta = int(base) + (index * int(step)) % int(mod)
+                    if op == "^":
+                        value = _js_int32(value) ^ _js_int32(delta)
+                    elif op == "-":
+                        value = value - delta
+                    else:
+                        value = value + delta
+                code = int(value) & 0xFFFF
+                if code > 255:
+                    chars = []
+                    break
+                chars.append(chr(code))
+            token = "".join(chars)
+            if re.fullmatch(r"[A-Za-z0-9]+", token):
+                return token
+    plain = re.search(r"mb_vratna=([A-Za-z0-9]+)", html or "")
+    if plain and "var d=[" not in (html or ""):
+        return plain.group(1)
+    return None
+
+
+def _mbenzin_diesel_once() -> dict | None:
+    """Jedno stažení celostátního průměru nafty. Neúspěch se neukládá."""
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         ),
         "Accept-Language": "cs",
     }
     try:
         session = requests.Session()
         res = session.get(_MBENZIN_DIESEL_URL, headers=headers, timeout=20)
-        token = re.search(r"mb_vratna=([a-f0-9]+)", res.text or "")
-        if token:
-            session.cookies.set("mb_vratna", token.group(1), domain="www.mbenzin.cz", path="/")
+        if "tile-value" not in (res.text or ""):
+            token = _mbenzin_cookie_from_challenge(res.text or "")
+            if not token:
+                return None
+            session.cookies.set("mb_vratna", token, domain="www.mbenzin.cz", path="/")
             res = session.get(_MBENZIN_DIESEL_URL, headers=headers, timeout=20)
         res.encoding = "utf-8"
         soup = BeautifulSoup(res.text, "lxml")
@@ -6871,6 +6955,29 @@ def fetch_mbenzin_diesel() -> dict | None:
             day = text
             break
     return {"czk": price, "date": day, "stations": stations}
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _fetch_mbenzin_diesel_cached() -> dict:
+    """Úspěšný průměr nafty. Výjimka se do cache neukládá, ať se další pokus zkusí znovu."""
+    data = _mbenzin_diesel_once()
+    if not data:
+        raise RuntimeError("mBenzin")
+    return data
+
+
+def fetch_mbenzin_diesel() -> dict | None:
+    """Celostátní průměr nafty z mBenzin (Kč/l). Neúspěch držíme jen 10 minut."""
+    fail_until = float(st.session_state.get("_mbenzin_fail_until") or 0)
+    if time.time() < fail_until:
+        return None
+    try:
+        data = _fetch_mbenzin_diesel_cached()
+    except Exception:
+        st.session_state["_mbenzin_fail_until"] = time.time() + 10 * 60
+        return None
+    st.session_state.pop("_mbenzin_fail_until", None)
+    return data
 
 _NOMINATIM_HEADERS = {"User-Agent": "pbcable-dashboard"}
 
@@ -7172,6 +7279,28 @@ def get_driving_distance(
     except (requests.RequestException, ValueError, KeyError, TypeError, IndexError):
         fallback_km = haversine_distance(lat1, lon1, lat2, lon2) * _DOMESTIC_ROAD_FACTOR
         return fallback_km, False, None, [(lat1, lon1), (lat2, lon2)]
+
+
+def _log_route_key(start: dict, dest: dict) -> tuple:
+    return (
+        round(float(start["lat"]), 4),
+        round(float(start["lon"]), 4),
+        round(float(dest["lat"]), 4),
+        round(float(dest["lon"]), 4),
+    )
+
+
+def _log_saved_route(start: dict | None, dest: dict | None):
+    """Trasa z minulého běhu. Nový dotaz na OSRM formulář nezdrží."""
+    saved = st.session_state.get("_log_route")
+    if not start or not dest or not isinstance(saved, dict):
+        return None
+    if saved.get("key") != _log_route_key(start, dest):
+        return None
+    result = saved.get("result")
+    if isinstance(result, tuple) and len(result) == 4:
+        return result
+    return None
 
 
 def _format_drive_time(minutes: float | None) -> str:
@@ -7550,7 +7679,11 @@ def _domestic_price_eur(price_czk: float | None) -> tuple[float | None, float | 
 
 def _render_domestic_shipment_form() -> dict:
     """Formulář zboží, termínů a kontaktu pro poptávku dopravy."""
-    st.markdown("#### Poptávka dopravy — detaily zásilky")
+    with st.expander("Poptávka pro dopravce", expanded=False):
+        return _render_domestic_shipment_fields()
+
+
+def _render_domestic_shipment_fields() -> dict:
     cargo_choice = st.selectbox(
         "Přepravované zboží",
         _DOMESTIC_CARGO_PRESETS,
@@ -7591,7 +7724,7 @@ def _render_domestic_shipment_form() -> dict:
                 key="domestic_unload_date",
             )
 
-    with st.expander("Kontakt na nakládce", expanded=True):
+    with st.expander("Kontakt na nakládce", expanded=False):
         load_contact_key = st.selectbox(
             "Osoba na nakládce",
             _DOMESTIC_LOAD_CONTACT_KEYS,
@@ -7777,11 +7910,8 @@ def render_domestic_logistics() -> None:
             cargo_ldm = cargo_pallets * _DOMESTIC_LDM_PER_EUR_PALLET
         else:
             cargo_ldm = float(st.session_state.get("log_cargo_ldm", 6.0))
-        pick_km = None
-        if start_loc and dest_loc:
-            pick_km, _, _, _ = get_driving_distance(
-                start_loc["lat"], start_loc["lon"], dest_loc["lat"], dest_loc["lon"],
-            )
+        saved_route = _log_saved_route(start_loc, dest_loc)
+        pick_km = float(saved_route[0]) if saved_route else None
         diesel_now = fetch_mbenzin_diesel()
         nafta_for_pick = float(diesel_now["czk"]) if diesel_now else float(_DIESEL_BASE_CZK)
         vehicle_prices = _logistics_vehicle_prices(cargo_kg, cargo_ldm, pick_km, nafta_for_pick)
@@ -7931,13 +8061,21 @@ def render_domestic_logistics() -> None:
                     f"termín: {shipment_form['pickup_mode']}"
                 )
         else:
-            start_lat, start_lon = start_loc["lat"], start_loc["lon"]
-            dest_lat, dest_lon = dest_loc["lat"], dest_loc["lon"]
-
-            with st.spinner("Počítám silniční trasu (OSRM)…"):
-                road_km, used_osrm, drive_min, route_coords = get_driving_distance(
-                    start_lat, start_lon, dest_lat, dest_lon
-                )
+            route_key = _log_route_key(start_loc, dest_loc)
+            known_route = _log_saved_route(start_loc, dest_loc)
+            if known_route:
+                road_km, used_osrm, drive_min, route_coords = known_route
+            else:
+                with st.spinner("Počítám silniční trasu (OSRM)…"):
+                    road_km, used_osrm, drive_min, route_coords = get_driving_distance(
+                        start_loc["lat"], start_loc["lon"], dest_loc["lat"], dest_loc["lon"],
+                    )
+                st.session_state["_log_route"] = {
+                    "key": route_key,
+                    "result": (road_km, used_osrm, drive_min, route_coords),
+                }
+                if not st.session_state.get("log_vehicle_pinned"):
+                    st.rerun()
 
             dist_help = (
                 "Reálná silniční trasa (OSRM)"
@@ -9127,8 +9265,6 @@ def main() -> None:
     render_header()
     render_global_controls()
 
-    render_morning_briefing()
-
     # Krátké názvy, ať na telefonu nezaberou půl obrazovky.
     page_specs = [
         ("Kovy", render_metals),
@@ -9167,6 +9303,8 @@ def main() -> None:
     else:
         if isinstance(page, str):
             st.session_state["_dash_painted_page"] = page
+        if page == "Kovy":
+            render_morning_briefing()
         renderers.get(page, renderers[tabs_list[0]])()
 
     render_footer()
