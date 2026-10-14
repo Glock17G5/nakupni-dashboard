@@ -1197,13 +1197,172 @@ div[data-testid="column"] {
     margin-bottom: 8px !important;
 }
 
+.health-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 2px 0 14px;
+}
+.health-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    max-width: 100%;
+    padding: 5px 10px 5px 8px;
+    border-radius: 999px;
+    border: 1px solid #2C3442;
+    background: rgba(30, 36, 46, 0.9);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    line-height: 1.35;
+}
+.health-orb {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+}
+.health-ok .health-orb { background: #34C98E; box-shadow: 0 0 0 3px rgba(52, 201, 142, 0.22); }
+.health-warn .health-orb { background: #F5C451; box-shadow: 0 0 0 3px rgba(245, 196, 81, 0.22); }
+.health-bad .health-orb { background: #F0565E; box-shadow: 0 0 0 3px rgba(240, 86, 94, 0.24); }
+.health-pill .health-name { font-weight: 700; color: #F2F5F9; }
+.health-pill .health-meta { color: #9AA6B8; }
+
 </style>
+"""
+
+# Světlý režim se připojí jen když je zapnutý. Tmavý zůstává výchozí CSS výše.
+LIGHT_CSS = """
+.stApp {
+    background:
+        radial-gradient(1100px 520px at 88% -8%, rgba(77,159,255,0.08), transparent 60%),
+        linear-gradient(180deg, #F7F8FB 0%, #F3F5F8 100%) !important;
+    color: #1C2430 !important;
+}
+.stApp::before, .stApp::after { opacity: 0.16; }
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"],
+section[data-testid="stMain"] > div:first-child {
+    color: #1C2430 !important;
+}
+h1, h2, h3, h4, h5 { color: #17202A !important; }
+p, span, label, .stMarkdown { color: #243140; }
+.dash-header {
+    background: rgba(255, 255, 255, 0.94);
+    border-color: rgba(77, 159, 255, 0.2);
+    box-shadow: 0 10px 28px -18px rgba(20, 32, 48, 0.28);
+}
+.dash-title { color: #17202A; }
+.dash-subtitle, .dash-timestamp, .currency-bar-hint { color: #5C6B7C; }
+.dash-timestamp strong, .currency-bar-label, .section-title { color: #17202A; }
+.henry-chip { color: #14324F !important; }
+.section-header, .dash-footer { border-color: #E1E6EE; }
+.dash-footer { color: #5C6B7C; border-top-color: #E1E6EE; }
+.metric-card, .fill-gallery-card, .gps-shipment, .briefing-tile, .chart-wrap, .data-table-wrap, .currency-bar {
+    background: #FFFFFF;
+    border-color: #E1E6EE;
+    box-shadow: 0 10px 24px -18px rgba(20, 32, 48, 0.28);
+}
+.metric-card:hover { border-color: #C9D4E2; }
+.card-label, .card-extra, .metal-price-src, .metal-price-sub, .fill-gallery-sub,
+.briefing-tile .bl, .briefing-tile .bs, .gps-shipment-meta { color: #5C6B7C; }
+.card-value, .card-unit-emphasis, .card-extra-emphasis, .metal-price-region,
+.fill-gallery-title, .briefing-tile .bv, .gps-shipment-name { color: #142033; }
+.card-unit { color: #3E4C5C; }
+.card-extra-emphasis, .metal-price-grid, .metal-price-col-ccmn { border-color: #E1E6EE; }
+.metal-price-grid { background: #F7F9FC; }
+.info-box { color: #243140; }
+.info-box strong { color: #142033; }
+.success-box { color: #0E7A48; }
+.success-box strong { color: #0E7A48; }
+.data-table-wrap th { color: #17202A; border-bottom-color: #E1E6EE; }
+.data-table-wrap td { color: #243140; border-bottom-color: #EEF1F5; }
+.data-table-wrap tr:hover td { background: #F4F7FB; }
+.section-divider {
+    background: linear-gradient(90deg, transparent, #D5DCE6 20%, #D5DCE6 80%, transparent);
+}
+.health-pill { background: #FFFFFF; border-color: #E1E6EE; }
+.health-pill .health-name { color: #142033; }
+.health-pill .health-meta { color: #5C6B7C; }
+button[kind="secondary"],
+.stButton > button {
+    background: #FFFFFF !important;
+    color: #1D4F91 !important;
+    border-color: #C5D0DE !important;
+}
+[data-testid="stExpander"] {
+    background: #FFFFFF !important;
+    border-color: #E1E6EE !important;
+}
+details summary { color: #142033 !important; }
+[data-testid="stNumberInput"] input,
+[data-testid="stDateInput"] input,
+[data-testid="stTextInput"] input,
+[data-testid="stTextArea"] textarea,
+[data-baseweb="input"] input,
+[data-baseweb="textarea"] textarea {
+    background: #FFFFFF !important;
+    background-color: #FFFFFF !important;
+    color: #142033 !important;
+    -webkit-text-fill-color: #142033 !important;
+    border-color: #C5D0DE !important;
+}
+[data-baseweb="input"],
+[data-baseweb="base-input"] {
+    background-color: #FFFFFF !important;
+}
+[data-testid="stSelectbox"] > div > div,
+[data-baseweb="select"] > div {
+    background: #FFFFFF !important;
+    background-color: #FFFFFF !important;
+    color: #142033 !important;
+    border-color: #C5D0DE !important;
+}
+[data-baseweb="popover"] [data-baseweb="menu"],
+[data-baseweb="popover"] ul {
+    background: #FFFFFF !important;
+    color: #142033 !important;
+}
+[data-testid="stMetricLabel"] { color: #5C6B7C !important; }
+[data-testid="stMetricValue"] { color: #142033 !important; }
+[data-testid="stRadio"] label {
+    background: #FFFFFF !important;
+    color: #1C2430 !important;
+    border-color: #C5D0DE !important;
+}
+[data-testid="stButtonGroup"] button {
+    background: #FFFFFF !important;
+    color: #1C2430 !important;
+    border-color: #D5DCE6 !important;
+}
+[data-testid="stButtonGroup"] button[aria-checked="true"] {
+    background: linear-gradient(135deg, #2E7CE8, #4D9FFF) !important;
+    color: #FFFFFF !important;
+    border-color: #4D9FFF !important;
+}
+.stProgress > div > div > div { background-color: #E6EBF2 !important; }
+[data-testid="stSidebar"],
+[data-testid="stSidebarContent"] {
+    background-color: #F7F8FA !important;
+    border-right-color: #E1E6EE !important;
+}
+.stMarkdown [style*="#F7FAFD"],
+.stMarkdown [style*="#F2F5F9"],
+.stMarkdown [style*="#E9EDF3"],
+.stMarkdown [style*="#D6DDE7"],
+.stMarkdown [style*="#C9D3E0"] { color: #1C2430 !important; }
+.stMarkdown [style*="#8D99AB"],
+.stMarkdown [style*="#9AA6B8"],
+.stMarkdown [style*="#B8C2D0"] { color: #5C6B7C !important; }
 """
 
 
 def _render_app_branding() -> None:
     """Globální CSS (až po ověření přístupu). Logo je součástí dash-headeru."""
-    st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+    css = CUSTOM_CSS
+    if st.session_state.get("ui_theme") == "light":
+        css = css.replace("</style>", LIGHT_CSS + "\n</style>")
+    st.markdown(css, unsafe_allow_html=True)
 
 
 @st.cache_data
@@ -1253,6 +1412,146 @@ def badge_html(is_live: bool, source: str = "", model: bool = False) -> str:
     if is_live:
         return f'<span class="badge badge-live">LIVE{" · " + source if source else ""}</span>'
     return '<span class="badge badge-offline">OFFLINE</span>'
+
+
+def _health_html(items: list[tuple[str, str, str]]) -> str:
+    """Řádek kuliček: ok zelená, warn oranžová, bad červená."""
+    parts: list[str] = []
+    for level, label, detail in items:
+        if level not in ("ok", "warn", "bad"):
+            level = "warn"
+        parts.append(
+            f'<span class="health-pill health-{level}">'
+            f'<span class="health-orb"></span>'
+            f'<span class="health-name">{html.escape(label)}</span>'
+            f'<span class="health-meta">{html.escape(detail)}</span>'
+            f"</span>"
+        )
+    return f'<div class="health-row">{"".join(parts)}</div>'
+
+
+def _health_row(items: list[tuple[str, str, str]]) -> None:
+    _unsafe_html(_health_html(items))
+
+
+def _bday_age(day) -> int | None:
+    """Obchodní dny od data do dneška. 0 = dnes nebo v budoucnu."""
+    if day is None:
+        return None
+    today = now_prague().date()
+    if day >= today:
+        return 0
+    return int(len(pd.bdate_range(day + timedelta(days=1), today)))
+
+
+def _iso_age_days(iso: str | None) -> int | None:
+    try:
+        day = datetime.strptime(str(iso)[:10], "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+    return (now_prague().date() - day).days
+
+
+def _wm_health(metal_key: str, label: str, wm_data: dict | None) -> tuple[str, str, str]:
+    info = (wm_data or {}).get(metal_key)
+    if not isinstance(info, dict) or info.get("price") is None:
+        return ("bad", label, "nenačteno")
+    try:
+        day = datetime.strptime(str(info.get("asof") or ""), "%Y-%m-%d").date()
+    except ValueError:
+        day = None
+    shown = str(info.get("asof_cs") or "bez data")
+    detail = f"{format_num(info.get('price'), 0)} USD · {shown}"
+    age = _bday_age(day)
+    if age is None or age > 1:
+        return ("warn", label, detail)
+    return ("ok", label, detail)
+
+
+def _china_health() -> tuple[str, str, str]:
+    copper = fetch_ccmn_spot("copper")
+    aluminum = fetch_ccmn_spot("aluminum")
+    stale = _robot_stale_bdays()
+    last = _robot_last_run()
+    when = pd.Timestamp(last).strftime("%d.%m.") if last else ""
+    bits: list[str] = []
+    bits.append(f"Cu {format_num(copper['price'], 0)}" if copper else "Cu chybí")
+    bits.append(f"Al {format_num(aluminum['price'], 0)}" if aluminum else "Al chybí")
+    if when:
+        bits.append(f"robot {when}")
+    detail = " · ".join(bits)
+    if not copper or not aluminum:
+        return ("bad", "Čína", detail)
+    if stale is None or stale > _ROBOT_STALE_BDAYS:
+        return ("warn", "Čína", detail)
+    return ("ok", "Čína", detail)
+
+
+def _cnb_health(cnb: dict | None, need: tuple[str, ...] = ("USD", "EUR", "CNY")) -> tuple[str, str, str]:
+    if not cnb:
+        return ("bad", "ČNB", "lístek se nenačetl")
+    missing = [code for code in need if code not in cnb]
+    date_s = str(cnb.get("_date") or "bez data")
+    if missing:
+        return ("bad", "ČNB", "chybí " + ", ".join(missing))
+    got = _parse_cnb_date(date_s)
+    expected = _expected_cnb_date()
+    if got and expected and got < expected:
+        return ("warn", "ČNB", date_s)
+    return ("ok", "ČNB", date_s)
+
+
+def _oil_leg_health(oil: dict | None, key: str, label: str) -> tuple[str, str, str]:
+    leg = (oil or {}).get(key) or {}
+    price = leg.get("price")
+    stale = _robot_stale_bdays()
+    last = _robot_last_run()
+    when = pd.Timestamp(last).strftime("%d.%m.") if last else ""
+    if price is None:
+        return ("bad", label, "nenačteno")
+    detail = f"{float(price):.2f} USD"
+    if when:
+        detail += f" · robot {when}"
+    if stale is None or stale > _ROBOT_STALE_BDAYS:
+        return ("warn", label, detail)
+    return ("ok", label, detail)
+
+
+def _fx_chart_health() -> tuple[str, str, str]:
+    hist = _yf_history("EURCZK=X")
+    stale = _robot_stale_bdays()
+    last = _robot_last_run()
+    when = pd.Timestamp(last).strftime("%d.%m.") if last else ""
+    if hist is None or hist.empty:
+        return ("bad", "Grafy", "historie chybí")
+    detail = "tvar z robota"
+    if when:
+        detail += f" · {when}"
+    if stale is None or stale > _ROBOT_STALE_BDAYS:
+        return ("warn", "Grafy", detail)
+    return ("ok", "Grafy", detail)
+
+
+def _diesel_health(diesel: dict | None, typed: float | None = None) -> tuple[str, str, str]:
+    if not diesel:
+        shown = typed if typed is not None else _DIESEL_BASE_CZK
+        return ("bad", "Nafta", f"nenačteno, počítám z {format_num(shown, 2)} Kč/l")
+    age = _iso_age_days(diesel.get("date"))
+    nice = str(diesel.get("date") or "")
+    match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", nice)
+    if match:
+        nice = f"{int(match.group(3))}. {int(match.group(2))}."
+    detail = f"{format_num(diesel['czk'], 2)} Kč/l"
+    if nice:
+        detail += f" · {nice}"
+    if diesel.get("stations"):
+        detail += f" · {diesel['stations']} stanic"
+    if typed is not None and abs(float(typed) - float(diesel["czk"])) >= 0.05:
+        detail += f" · ručně {format_num(typed, 2)}"
+        return ("warn", "Nafta", detail)
+    if age is None or age > 1:
+        return ("warn", "Nafta", detail)
+    return ("ok", "Nafta", detail)
 
 
 def section_header(icon: str, title: str, *badges_html: str) -> None:
@@ -2544,6 +2843,33 @@ _HOVER_LABEL = dict(
     font=dict(family="IBM Plex Mono, monospace", size=11, color="#E9EDF3"),
 )
 
+
+def _use_plot_theme() -> None:
+    """Barvy grafů podle přepínače. Konstanty se čtou až při kreslení figury."""
+    global _PLOT_PAPER, _PLOT_BG, _PLOT_TITLE_COLOR, _PLOT_TICK_COLOR, _PLOT_GRID
+    light = st.session_state.get("ui_theme") == "light"
+    if light:
+        paper, bg, title, tick, grid, line = (
+            "#F7F8FB", "#FFFFFF", "#17202A", "#4E5D6E", "#E3E8EF", "#D5DCE6",
+        )
+        hover_bg, hover_border, hover_font = "#FFFFFF", "#D5DCE6", "#17202A"
+    else:
+        paper, bg, title, tick, grid, line = (
+            "#1E242E", "#1A1F28", "#E9EDF3", "#B8C2D0", "#2C3442", "#3A4454",
+        )
+        hover_bg, hover_border, hover_font = "#232A36", "#3D4859", "#E9EDF3"
+    _PLOT_PAPER = paper
+    _PLOT_BG = bg
+    _PLOT_TITLE_COLOR = title
+    _PLOT_TICK_COLOR = tick
+    _PLOT_GRID = grid
+    _TICK_AXIS["gridcolor"] = grid
+    _TICK_AXIS["linecolor"] = line
+    _TICK_AXIS["tickfont"]["color"] = tick
+    _HOVER_LABEL["bgcolor"] = hover_bg
+    _HOVER_LABEL["bordercolor"] = hover_border
+    _HOVER_LABEL["font"]["color"] = hover_font
+
 # Mezera = tisíce, tečka = desetinná (český standard v Plotly)
 _PLOT_SEPARATORS = " ."
 
@@ -3605,20 +3931,20 @@ def render_header() -> None:
     )
     st.markdown(header_html, unsafe_allow_html=True)
 
-    # Refresh tlačítko
-    c1, c2 = st.columns([1, 6])
+    c1, _gap, c3 = st.columns([1.15, 4.5, 1.35])
     with c1:
         if st.button(t("🔄  Obnovit data"), use_container_width=True):
             st.cache_data.clear()
             st.rerun()
-    with c2:
-        st.markdown(
-            '<div style="padding:8px 0;font-family:\'IBM Plex Mono\',monospace;'
-            'font-size:0.7rem;color:#8D99AB;">'
-            f'{t("Data se automaticky obnovují každou hodinu · "
-            "Všechny ceny jsou orientační · Žádné placené API")}</div>',
-            unsafe_allow_html=True,
-        )
+    with c3:
+        light = st.session_state.get("ui_theme") == "light"
+        if st.button(
+            "🌙 Tmavý" if light else "☀️ Světlý",
+            use_container_width=True,
+            key="theme_toggle",
+        ):
+            _set_ui_theme("dark" if light else "light")
+            st.rerun()
 
 
 def render_global_controls() -> tuple[str, str]:
@@ -4237,6 +4563,12 @@ def render_metals() -> None:
         badge_html(has_cu and has_al, "westmetall.com LME Cash"),
         badge_html(has_ccmn, "ccmn.cn spot"),
     )
+    _health_row([
+        _wm_health("copper", "Měď", wm_data),
+        _wm_health("aluminum", "Hliník", wm_data),
+        _china_health(),
+        _cnb_health(fetch_cnb_rates()),
+    ])
 
     if not wm_data:
         st.warning(t("Westmetall: LME data se nepodařilo stáhnout — ceny mědi a hliníku nejsou k dispozici."))
@@ -4272,14 +4604,6 @@ def render_metals() -> None:
     # ── CCMN vs LME spread — na závěr sekce ──────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
     _render_ccmn_spreads(wm_data)
-
-    if wm_data and wm_data.get("_source") == "westmetall.com":
-        st.markdown(
-            f'<div class="info-box">'
-            f'📦 <strong>Westmetall</strong> LME Cash &amp; skladové zásoby · '
-            f'Načteno: <strong>{wm_data.get("_ts", "N/A")}</strong></div>',
-            unsafe_allow_html=True,
-        )
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
@@ -4370,6 +4694,10 @@ def render_fx() -> None:
         badge_html(cnb_live, "ČNB"),
         badge_html(True, "Yahoo grafy"),
     )
+    _health_row([
+        _cnb_health(cnb),
+        _fx_chart_health(),
+    ])
 
     if not cnb_live:
         st.warning(t("ČNB: kurzovní lístek se nepodařilo načíst — karty budou nedostupné."))
@@ -4380,19 +4708,6 @@ def render_fx() -> None:
 
     period = get_chart_period()
     period_lbl = get_chart_period_label()
-
-    cnb_date_note = (
-        (" " + t("ze dne {date}", date=cnb.get("_date", "N/A"))) if cnb else ""
-    )
-    st.markdown(
-        f'<div class="info-box">'
-        f'{t("Karty i kříže EUR/USD/CNY jsou z jednoho lístku <strong>ČNB</strong>")}'
-        f"{cnb_date_note}. "
-        f'{t("Přepočet přes eura i přímo do korun vyjde stejně. "
-        "Grafy ({period}) zůstávají z Yahoo.", period=period_lbl)}'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
 
     fx_cards = [
         ("USD", "CZK", "USD/CZK", "Americký dolar", "card-usd", "usd"),
@@ -4516,6 +4831,10 @@ def render_oil_plastics() -> None:
         badge_html(live, "Yahoo Finance"),
         badge_html(False, "", model=True) if plastics else badge_html(False),
     )
+    _health_row([
+        _oil_leg_health(oil, "brent", "Brent"),
+        _oil_leg_health(oil, "wti", "WTI"),
+    ])
 
     ccy_oil = get_display_currency()
     oil_unit = oil_unit_label()
@@ -4973,6 +5292,7 @@ def render_landed_cost_pricing() -> None:
     st.header(t("🚢 Logistika a Prodejní ceny"))
 
     cnb = fetch_cnb_rates()
+    _health_row([_cnb_health(cnb, ("EUR",))])
     eur_czk = _get_eur_czk_rate(cnb)
     cnb_date = (cnb or {}).get("_date", "N/A")
 
@@ -6428,6 +6748,7 @@ def render_container_tracking() -> None:
         "📍", t("Kontejnery na cestě (GPS tracking)"),
         badge_html(True, "Link4Future + Jagich"),
     )
+    gps_health_slot = st.empty()
     st.caption(
         t(
             "Přidejte zásilku (jméno kontejneru, číslo vydané objednávky, odkaz GPS). "
@@ -6528,8 +6849,15 @@ def render_container_tracking() -> None:
             arrived_rows = [row for row in all_rows if _gps_is_arrived(row)]
         _gps_store_last_seen(tracks)
 
-    if failed:
-        st.warning(t("Nepodařilo se načíst: ") + ", ".join(failed))
+    if not active_rows:
+        gps_state = ("ok", "GPS", "nic na cestě")
+    elif failed and not tracks:
+        gps_state = ("bad", "GPS", "nenačteno: " + ", ".join(failed))
+    elif failed:
+        gps_state = ("warn", "GPS", f"{len(tracks)} živě · {', '.join(failed)}")
+    else:
+        gps_state = ("ok", "GPS", f"{len(tracks)} živě")
+    gps_health_slot.markdown(_health_html([gps_state]), unsafe_allow_html=True)
 
     if tracks:
         all_lats = [p["lat"] for tr in tracks for p in tr["points"]]
@@ -7845,6 +8173,8 @@ def _format_domestic_transport_request(
 def render_domestic_logistics() -> None:
     """Kalkulačka silniční přepravy — ČR/SK i zahraničí (Turecko, EU)."""
     section_header("🚛", t("Logistika — kalkulačka přepravy"))
+    log_health_slot = st.empty()
+    log_health: dict = {"diesel": None, "typed": None, "route": None}
 
     scope = st.radio(
         "Oblast trasy",
@@ -7999,6 +8329,7 @@ def render_domestic_logistics() -> None:
             )
 
         diesel = fetch_mbenzin_diesel()
+        log_health["diesel"] = diesel
         l_per_100 = float(profile["l_per_100"])
         if diesel:
             diesel_seed = f"{diesel.get('date') or 'd'}_{float(diesel['czk']):.2f}"
@@ -8025,29 +8356,7 @@ def render_domestic_logistics() -> None:
             format="%.1f",
             key=f"domestic_sazba_{v_idx}_{float(nafta_czk):.2f}",
         )
-        if diesel:
-            day_label = str(diesel.get("date") or "")
-            day_match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", day_label)
-            if day_match:
-                day_label = f"{int(day_match.group(3))}. {int(day_match.group(2))}. {day_match.group(1)}"
-            stations = diesel.get("stations")
-            sample = f", {stations} stanic" if stations else ""
-            typed = abs(float(nafta_czk) - float(diesel["czk"])) >= 0.05
-            source = (
-                f"ručně {format_num(nafta_czk, 2)} Kč/l (mBenzin měl {format_num(diesel['czk'], 2)})"
-                if typed
-                else (
-                    f"mBenzin {format_num(diesel['czk'], 2)} Kč/l"
-                    f"{', ' + day_label if day_label else ''}{sample}"
-                )
-            )
-        else:
-            source = f"mBenzin se nenačetl, počítám z {format_num(nafta_czk, 2)} Kč/l"
-        st.caption(
-            f"Nafta: {source}. Výchozí {def_rate:.0f} Kč/km platí při {_DIESEL_BASE_CZK:.0f} Kč/l. "
-            f"Spotřeba {l_per_100:.0f} l/100 km → {format_num(suggested_rate, 1)} Kč/km. "
-            "Obě čísla jdou přepsat."
-        )
+        log_health["typed"] = float(nafta_czk)
 
         _render_domestic_pallet_cheat_sheet()
         shipment_form = _render_domestic_shipment_form()
@@ -8076,6 +8385,7 @@ def render_domestic_logistics() -> None:
                 }
                 if not st.session_state.get("log_vehicle_pinned"):
                     st.rerun()
+            log_health["route"] = (bool(used_osrm), float(road_km))
 
             dist_help = (
                 "Reálná silniční trasa (OSRM)"
@@ -8254,6 +8564,16 @@ def render_domestic_logistics() -> None:
                 mime="text/plain",
                 use_container_width=True,
             )
+
+    route = log_health.get("route")
+    pills = [_diesel_health(log_health.get("diesel"), log_health.get("typed"))]
+    if route:
+        used_road, road = route
+        if used_road:
+            pills.append(("ok", "Trasa", f"silnice {format_num(road, 0)} km"))
+        else:
+            pills.append(("warn", "Trasa", f"vzdušná čára {format_num(road, 0)} km"))
+    log_health_slot.markdown(_health_html(pills), unsafe_allow_html=True)
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
@@ -9246,10 +9566,112 @@ def _kick_section_paint() -> None:
     st.rerun()
 
 
+_PAGE_ALIASES = {
+    "Kovy": "🔩 Kovy",
+    "Kurzy": "💱 Kurzy",
+    "Ropa": "🛢️ Ropa",
+    "Nákup": "📦 Nákup",
+    "Kontejnery": "📍 Kontejnery",
+    "Logistika": "🚛 Logistika",
+    "Nástroje": "🧰 Nástroje",
+}
+
+
+def _normalize_page_label(value: str, allowed: list[str]) -> str | None:
+    """Starý název sekce bez ikony přemapuje na aktuální tlačítko."""
+    if value in allowed:
+        return value
+    mapped = _PAGE_ALIASES.get(value.strip())
+    if mapped in allowed:
+        return mapped
+    tail = value.split(" ", 1)[-1]
+    for label in allowed:
+        if label == tail or label.endswith(" " + tail):
+            return label
+    return None
+
+
+def _saved_ui_theme() -> str | None:
+    """Volba z prohlížeče. První běh ještě nic nevrátí, další už ano."""
+    try:
+        from streamlit_local_storage import _st_local_storage
+    except Exception:
+        return None
+    _st_local_storage(method="getAll", key="pbcable_theme_store", default={})
+    data = st.session_state.get("pbcable_theme_store")
+    if not isinstance(data, dict):
+        return None
+    saved = data.get("pbcable_theme")
+    return saved if saved in ("light", "dark") else None
+
+
+def _sync_ui_theme() -> str:
+    if st.session_state.get("ui_theme") not in ("light", "dark"):
+        st.session_state["ui_theme"] = "dark"
+    if st.session_state.get("_theme_boot"):
+        return st.session_state["ui_theme"]
+    saved = _saved_ui_theme()
+    store = st.session_state.get("pbcable_theme_store")
+    if isinstance(store, dict):
+        st.session_state["_theme_boot"] = True
+        if saved and saved != st.session_state["ui_theme"]:
+            st.session_state["ui_theme"] = saved
+            st.rerun()
+    return st.session_state["ui_theme"]
+
+
+def _set_ui_theme(mode: str) -> None:
+    st.session_state["ui_theme"] = mode
+    st.session_state["_theme_boot"] = True
+    try:
+        from streamlit_local_storage import _st_local_storage
+    except Exception:
+        return
+    _st_local_storage(
+        method="setItem",
+        itemKey="pbcable_theme",
+        itemValue=mode,
+        key="set_pbcable_theme",
+    )
+    store = st.session_state.get("pbcable_theme_store")
+    if isinstance(store, dict):
+        store["pbcable_theme"] = mode
+
+
 def main() -> None:
     """Hlavní funkce – sestaví celý dashboard voláním dílčích render funkcí."""
+    _sync_ui_theme()
+    _use_plot_theme()
     is_supplier = st.session_state.get(_SESSION_ROLE) == "supplier"
     page_key = "dash_page_supplier" if is_supplier else "dash_page_admin"
+    page_specs = [
+        ("🔩 Kovy", "kovy", render_metals),
+        ("💱 Kurzy", "kurzy", render_fx),
+        ("🛢️ Ropa", "ropa", render_oil_plastics),
+        ("📦 Nákup", "nakup", render_landed_cost_pricing),
+        ("📍 Kontejnery", "kontejnery", render_container_tracking),
+        ("🚛 Logistika", "logistika", render_domestic_logistics),
+        ("🧰 Nástroje", "nastroje", render_tools_and_tips),
+    ]
+    if is_supplier:
+        page_specs = [item for item in page_specs if item[1] not in ("nakup", "kontejnery")]
+    tabs_list = [label for label, _page_id, _fn in page_specs]
+    page_memory = page_key + "_mem"
+    # Tlačítko vzhledu je nad přepínačem sekcí a běh ukončí dřív.
+    # Bez téhle paměti by se sekce vrátila na Kovy.
+    if page_key not in st.session_state and page_memory in st.session_state:
+        remembered = st.session_state.get(page_memory)
+        if remembered in tabs_list:
+            st.session_state[page_key] = remembered
+    for state_key in (page_key, "_dash_painted_page", "_dash_defer_page"):
+        current = st.session_state.get(state_key)
+        if not isinstance(current, str) or current in tabs_list:
+            continue
+        fixed = _normalize_page_label(current, tabs_list)
+        if fixed:
+            st.session_state[state_key] = fixed
+        else:
+            st.session_state.pop(state_key, None)
     # Přepnutí sekce: jeden krátký úspěšný běh bez těla stránky.
     # Jinak na telefonu zůstanou grafy kovů pod novou sekcí, dokud doběhne GPS.
     pending = st.session_state.get(page_key)
@@ -9265,20 +9687,8 @@ def main() -> None:
     render_header()
     render_global_controls()
 
-    # Krátké názvy, ať na telefonu nezaberou půl obrazovky.
-    page_specs = [
-        ("Kovy", render_metals),
-        ("Kurzy", render_fx),
-        ("Ropa", render_oil_plastics),
-        ("Nákup", render_landed_cost_pricing),
-        ("Kontejnery", render_container_tracking),
-        ("Logistika", render_domestic_logistics),
-        ("Nástroje", render_tools_and_tips),
-    ]
-    if is_supplier:
-        page_specs = [item for item in page_specs if item[0] not in ("Nákup", "Kontejnery")]
-    tabs_list = [name for name, _fn in page_specs]
-    renderers = {name: fn for name, fn in page_specs}
+    renderers = {label: fn for label, _page_id, fn in page_specs}
+    page_ids = {label: page_id for label, page_id, _fn in page_specs}
     picker = getattr(st, "segmented_control", None)
     if picker is not None:
         page = picker(
@@ -9298,12 +9708,13 @@ def main() -> None:
         )
     if not isinstance(page, str):
         page = tabs_list[0]
+    st.session_state[page_memory] = page
     if st.session_state.get("_dash_hold"):
         _kick_section_paint()
     else:
         if isinstance(page, str):
             st.session_state["_dash_painted_page"] = page
-        if page == "Kovy":
+        if page_ids.get(page) == "kovy":
             render_morning_briefing()
         renderers.get(page, renderers[tabs_list[0]])()
 
