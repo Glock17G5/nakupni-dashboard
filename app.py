@@ -242,10 +242,22 @@ h1, h2, h3, h4, h5 { color: #F2F5F9 !important; }
 p, span, label, .stMarkdown { color: #D6DDE7; }
 
 #MainMenu { visibility: hidden; }
-header[data-testid="stHeader"] { visibility: hidden; height: 0; }
+header[data-testid="stHeader"] {
+    visibility: hidden;
+    height: 0 !important;
+    min-height: 0 !important;
+}
 footer { visibility: hidden; }
 [data-testid="stDecoration"] { display: none; }
 [data-testid="stStatusWidget"] { display: none; }
+.st-key-pbcable_theme_store {
+    height: 0 !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    border: none !important;
+}
 
 [data-testid="stSidebar"],
 [data-testid="stSidebarContent"] {
@@ -686,7 +698,7 @@ footer { visibility: hidden; }
     .fill-gallery { grid-template-columns: repeat(3, 1fr); }
 }
 @media (max-width: 520px) {
-    .fill-gallery { grid-template-columns: 1fr; }
+    .fill-gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 .delta-chip {
@@ -723,54 +735,87 @@ footer { visibility: hidden; }
 
 /* ── Mobil & tablet: kompaktní rozvržení, posuvné taby ─────────────────── */
 @media (max-width: 768px) {
+    html, body, .stApp,
+    [data-testid="stAppViewContainer"] {
+        overflow-x: clip;
+        max-width: 100%;
+    }
     .block-container {
-        padding-left: 0.8rem !important;
-        padding-right: 0.8rem !important;
-        padding-top: 1rem !important;
+        padding-left: max(0.7rem, env(safe-area-inset-left)) !important;
+        padding-right: max(0.7rem, env(safe-area-inset-right)) !important;
+        padding-top: max(0.45rem, env(safe-area-inset-top)) !important;
+        padding-bottom: max(1.6rem, env(safe-area-inset-bottom)) !important;
     }
-    .dash-title { font-size: 1.3rem; }
-    .dash-header { padding: 16px 18px 14px; border-radius: 16px; }
-    .dash-brand { gap: 12px; }
-    .dash-logo { border-radius: 10px; padding: 5px 8px; }
-    .dash-logo img { height: 34px; }
-    .metal-price-grid {
-        grid-template-columns: 1fr;
-        gap: 0;
+    .dash-subtitle, .dash-cache { display: none; }
+    .dash-title { font-size: 1.05rem !important; line-height: 1.2; margin: 0; }
+    .dash-header {
+        padding: 8px 54px 8px 38px !important;
+        border-radius: 12px;
+        margin-top: 20px;
+        margin-bottom: 8px;
     }
+    .dash-brand { gap: 8px; }
+    .dash-logo { border-radius: 8px; padding: 3px 6px; }
+    .dash-logo img { height: 28px !important; }
+    .dash-timestamp { font-size: 0.68rem; line-height: 1.35; }
+    .dash-meta { gap: 4px; }
+    .st-key-theme_toggle {
+        top: max(6px, env(safe-area-inset-top)) !important;
+        right: max(8px, env(safe-area-inset-right)) !important;
+    }
+    [data-testid="stExpandSidebarButton"] {
+        top: max(8px, env(safe-area-inset-top)) !important;
+        left: max(8px, env(safe-area-inset-left)) !important;
+        z-index: 1001;
+    }
+    .metal-price-col { padding: 8px 8px 10px; }
     .metal-price-src {
         white-space: normal;
         line-height: 1.35;
         font-size: 0.62rem;
     }
-    .metal-price-col-ccmn {
-        border-left: none;
-        border-top: 1px solid #2C3442;
+    [data-testid="stHorizontalBlock"]:has(.metal-price-grid) > [data-testid="stColumn"] {
+        flex: 1 1 100% !important;
+        width: 100% !important;
     }
-    .metric-card { padding: 12px 12px 12px 16px; }
-    .card-value { font-size: 1.2rem; }
+    .metric-card { padding: 12px 12px 12px 16px; min-height: 0; }
+    .card-value { font-size: 1.2rem; overflow-wrap: anywhere; }
     .card-unit-emphasis { font-size: 1.05rem; }
     .card-extra-emphasis { font-size: 0.92rem; }
     .section-title { font-size: 0.85rem; }
-    [data-testid="stHorizontalBlock"] { flex-direction: column !important; }
-    /* Měna a období grafů ať zůstanou vedle sebe. */
-    [data-testid="stHorizontalBlock"]:has([data-testid="stButtonGroup"]) {
+    /* Dvojice karet vedle sebe. Mapa, tabulka a formulář zůstanou přes celou šířku. */
+    [data-testid="stHorizontalBlock"] {
         flex-direction: row !important;
         flex-wrap: wrap !important;
+        gap: 8px !important;
+    }
+    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
+        flex: 1 1 148px !important;
+        width: auto !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+    }
+    /* Dvojice polí (adresa | výsledek, formulář | cena) pod sebou na celou šířku. */
+    [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"]:nth-child(2)):not(:has(> [data-testid="stColumn"]:nth-child(3))):has([data-testid="stTextInput"], [data-testid="stNumberInput"], [data-testid="stTextArea"], [data-testid="stDateInput"]) > [data-testid="stColumn"] {
+        flex: 1 1 100% !important;
+        width: 100% !important;
+        max-width: 100% !important;
+    }
+    [data-testid="stHorizontalBlock"]:has([data-testid="stPlotlyChart"]) > div,
+    [data-testid="stHorizontalBlock"]:has([data-testid="stDataFrame"]) > div,
+    [data-testid="stHorizontalBlock"]:has([data-testid="stDataEditor"]) > div,
+    [data-testid="stForm"] [data-testid="stHorizontalBlock"] > div {
+        flex: 1 1 100% !important;
+        width: 100% !important;
+        max-width: 100% !important;
+    }
+    [data-testid="stHorizontalBlock"]:has([data-testid="stButtonGroup"]) {
         align-items: flex-end !important;
     }
     [data-testid="stHorizontalBlock"]:has([data-testid="stButtonGroup"]) > div {
+        flex: 0 1 auto !important;
         width: auto !important;
         max-width: 100% !important;
-        flex: 1 1 auto !important;
-    }
-    [data-testid="stHorizontalBlock"] > div,
-    [data-testid="column"],
-    [data-testid="stColumn"] {
-        width: 100% !important;
-        min-width: 0 !important;
-        max-width: 100% !important;
-        position: relative !important;
-        overflow: visible !important;
     }
     [data-testid="stTabs"] {
         position: relative !important;
@@ -838,18 +883,49 @@ footer { visibility: hidden; }
     .currency-bar-hint { display: none; }
     .dash-header-content { flex-direction: column; align-items: flex-start; }
     .dash-meta { align-items: flex-start; }
-    .henry-chip { min-height: 44px; }
-    [data-testid="stMetric"] { width: 100%; }
+    .henry-chip { min-height: 40px; padding: 6px 10px; font-size: 0.75rem; }
+    [data-testid="stMetric"] { width: 100%; min-width: 0; }
+    [data-testid="stMetricValue"],
+    [data-testid="stMetricLabel"] { white-space: normal !important; overflow-wrap: anywhere; }
+    [data-testid="stMetricValue"] { font-size: 1.02rem !important; }
+    .briefing-tile { padding: 8px 8px 8px 10px; min-width: 0; }
+    .briefing-tile .bv { font-size: 0.98rem; overflow-wrap: anywhere; }
+    .spread-value { font-size: 1rem; overflow-wrap: anywhere; }
+    .st-key-refresh_row [data-testid="stColumn"]:last-child { display: none !important; }
+    .st-key-refresh_row [data-testid="stColumn"]:first-child {
+        flex: 1 1 100% !important;
+        width: 100% !important;
+    }
     [data-testid="stDataFrame"],
     [data-testid="stDataEditor"] {
         overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        max-width: 100%;
     }
     [data-testid="stRadio"] > div { flex-wrap: wrap !important; }
     /* Sekce (Kovy, Kontejnery, …) v jednom řádku, zbytek se posune do strany. */
     [data-testid="stButtonGroup"] {
         max-width: 100%;
         overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
         scrollbar-width: none;
+    }
+    .st-key-dash_page_admin [data-testid="stButtonGroup"],
+    .st-key-dash_page_supplier [data-testid="stButtonGroup"] {
+        touch-action: pan-x;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(233, 237, 243, 0.45) transparent;
+        padding-bottom: 4px;
+    }
+    .st-key-dash_page_admin [data-testid="stButtonGroup"]::-webkit-scrollbar,
+    .st-key-dash_page_supplier [data-testid="stButtonGroup"]::-webkit-scrollbar {
+        display: block;
+        height: 4px;
+    }
+    .st-key-dash_page_admin [data-testid="stButtonGroup"]::-webkit-scrollbar-thumb,
+    .st-key-dash_page_supplier [data-testid="stButtonGroup"]::-webkit-scrollbar-thumb {
+        background: rgba(233, 237, 243, 0.45);
+        border-radius: 4px;
     }
     [data-testid="stButtonGroup"] [role="radiogroup"] {
         flex-wrap: nowrap !important;
@@ -859,10 +935,17 @@ footer { visibility: hidden; }
     [data-testid="stButtonGroup"] button {
         white-space: nowrap !important;
         flex: 0 0 auto !important;
-        font-size: 0.82rem !important;
-        padding: 6px 10px !important;
+        font-size: 0.78rem !important;
+        padding: 8px 10px !important;
+        min-height: 40px !important;
     }
     input, textarea, select { font-size: 16px !important; }
+    [data-testid="stTextInput"] input,
+    [data-testid="stNumberInput"] input,
+    [data-testid="stDateInput"] input,
+    [data-testid="stSelectbox"] [data-baseweb="select"] > div {
+        min-height: 44px;
+    }
     div[data-testid="column"] {
         padding-left: 0 !important;
         padding-right: 0 !important;
@@ -965,7 +1048,7 @@ footer { visibility: hidden; }
     .briefing-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 640px) {
-    .briefing-grid { grid-template-columns: 1fr; }
+    .briefing-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .briefing-tile {
     background: rgba(30, 36, 46, 0.92);
@@ -1373,6 +1456,16 @@ details summary { color: #142033 !important; }
 .stMarkdown [style*="#8D99AB"],
 .stMarkdown [style*="#9AA6B8"],
 .stMarkdown [style*="#B8C2D0"] { color: #5C6B7C !important; }
+@media (max-width: 768px) {
+    .st-key-dash_page_admin [data-testid="stButtonGroup"],
+    .st-key-dash_page_supplier [data-testid="stButtonGroup"] {
+        scrollbar-color: rgba(18, 24, 32, 0.4) transparent;
+    }
+    .st-key-dash_page_admin [data-testid="stButtonGroup"]::-webkit-scrollbar-thumb,
+    .st-key-dash_page_supplier [data-testid="stButtonGroup"]::-webkit-scrollbar-thumb {
+        background: rgba(18, 24, 32, 0.4);
+    }
+}
 """
 
 
@@ -3954,16 +4047,17 @@ def render_header() -> None:
         '</div></div>'
         f'<div class="dash-meta">{henry_chip}'
         f'<div class="dash-timestamp"><strong>{t("Poslední aktualizace")}</strong> (CET)<br>'
-        f'{now.strftime("%d.%m.%Y %H:%M:%S")}<br>'
-        "Cache TTL: <strong>1 hod</strong></div></div></div></div>"
+        f'{now.strftime("%d.%m.%Y %H:%M")}'
+        '<span class="dash-cache"><br>Cache TTL: <strong>1 hod</strong></span></div></div></div></div>'
     )
     st.markdown(header_html, unsafe_allow_html=True)
 
-    c1, _gap = st.columns([1.15, 5.8])
-    with c1:
-        if st.button(t("🔄  Obnovit data"), use_container_width=True):
-            st.cache_data.clear()
-            st.rerun()
+    with st.container(key="refresh_row"):
+        c1, _gap = st.columns([1.15, 5.8])
+        with c1:
+            if st.button(t("🔄  Obnovit data"), use_container_width=True):
+                st.cache_data.clear()
+                st.rerun()
 
 
 def render_global_controls() -> tuple[str, str]:
