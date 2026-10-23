@@ -1,53 +1,53 @@
 {
   "ccmn": {
-    "copper": 109705.0,
-    "aluminum": 23710.0
+    "copper": 108790.0,
+    "aluminum": 23675.0
   },
   "yf_spot": {
     "HRC=F": {
-      "price": 1339.0,
+      "price": 1286.0,
       "prev": 1286.0,
-      "delta": 53.0,
-      "delta_pct": 4.121
+      "delta": 0.0,
+      "delta_pct": 0.0
     },
     "BZ=F": {
-      "price": 112.919998,
-      "prev": 108.82,
-      "delta": 4.099998,
-      "delta_pct": 3.768
+      "price": 109.739998,
+      "prev": 113.169998,
+      "delta": -3.43,
+      "delta_pct": -3.031
     },
     "CL=F": {
-      "price": 99.790001,
-      "prev": 97.150002,
-      "delta": 2.639999,
-      "delta_pct": 2.717
+      "price": 101.089996,
+      "prev": 99.470001,
+      "delta": 1.619995,
+      "delta_pct": 1.629
     },
     "EURUSD=X": {
-      "price": 1.122586,
-      "prev": 1.122675,
-      "delta": -8.8e-05,
-      "delta_pct": -0.008
+      "price": 1.120323,
+      "prev": 1.123469,
+      "delta": -0.003147,
+      "delta_pct": -0.28
     },
     "EURCZK=X": {
-      "price": 24.272499,
-      "prev": 24.290701,
-      "delta": -0.018202,
-      "delta_pct": -0.075
+      "price": 24.315701,
+      "prev": 24.2577,
+      "delta": 0.058001,
+      "delta_pct": 0.239
     },
     "HG=F": {
-      "price": 6.408,
-      "prev": 6.543,
-      "delta": -0.135,
-      "delta_pct": -2.063
+      "price": 6.444,
+      "prev": 6.3625,
+      "delta": 0.0815,
+      "delta_pct": 1.281
     },
     "ALI=F": {
-      "price": 3088.0,
-      "prev": 3177.75,
-      "delta": -89.75,
-      "delta_pct": -2.824
+      "price": 3090.0,
+      "prev": 3193.0,
+      "delta": -103.0,
+      "delta_pct": -3.226
     }
   },
-  "_ts": "2026-10-22 17:56",
+  "_ts": "2026-10-23 09:58",
   "_health": {
     "ccmn_copper": true,
     "ccmn_aluminum": true,
@@ -55,5 +55,5 @@
     "eurusd": true,
     "history": true
   },
-  "_alert_sig": "2026-10-22|Brent den: +3.8 % (pr\u00e1h \u00b13.0 %) \u00b7 $112.92"
+  "_alert_sig": "2026-10-23|Brent den: -3.0 % (pr\u00e1h \u00b13.0 %) \u00b7 $109.74|Hlin\u00edk COMEX (ALI=F) den: -3.2 % (pr\u00e1h \u00b13.0 %) \u00b7 3090.0 USD"
 }
