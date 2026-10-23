@@ -5,49 +5,49 @@
   },
   "yf_spot": {
     "HRC=F": {
-      "price": 1286.0,
+      "price": 1368.0,
       "prev": 1286.0,
-      "delta": 0.0,
-      "delta_pct": 0.0
+      "delta": 82.0,
+      "delta_pct": 6.376
     },
     "BZ=F": {
-      "price": 109.739998,
+      "price": 111.669998,
       "prev": 113.169998,
-      "delta": -3.43,
-      "delta_pct": -3.031
+      "delta": -1.5,
+      "delta_pct": -1.325
     },
     "CL=F": {
-      "price": 101.089996,
+      "price": 103.239998,
       "prev": 99.470001,
-      "delta": 1.619995,
-      "delta_pct": 1.629
+      "delta": 3.769997,
+      "delta_pct": 3.79
     },
     "EURUSD=X": {
-      "price": 1.120323,
+      "price": 1.11957,
       "prev": 1.123469,
-      "delta": -0.003147,
-      "delta_pct": -0.28
+      "delta": -0.003899,
+      "delta_pct": -0.347
     },
     "EURCZK=X": {
-      "price": 24.315701,
+      "price": 24.3433,
       "prev": 24.2577,
-      "delta": 0.058001,
-      "delta_pct": 0.239
+      "delta": 0.0856,
+      "delta_pct": 0.353
     },
     "HG=F": {
-      "price": 6.444,
+      "price": 6.4965,
       "prev": 6.3625,
-      "delta": 0.0815,
-      "delta_pct": 1.281
+      "delta": 0.134,
+      "delta_pct": 2.106
     },
     "ALI=F": {
-      "price": 3090.0,
+      "price": 3136.0,
       "prev": 3193.0,
-      "delta": -103.0,
-      "delta_pct": -3.226
+      "delta": -57.0,
+      "delta_pct": -1.785
     }
   },
-  "_ts": "2026-10-23 09:58",
+  "_ts": "2026-10-23 17:51",
   "_health": {
     "ccmn_copper": true,
     "ccmn_aluminum": true,
@@ -55,5 +55,5 @@
     "eurusd": true,
     "history": true
   },
-  "_alert_sig": "2026-10-23|Brent den: -3.0 % (pr\u00e1h \u00b13.0 %) \u00b7 $109.74|Hlin\u00edk COMEX (ALI=F) den: -3.2 % (pr\u00e1h \u00b13.0 %) \u00b7 3090.0 USD"
+  "_alert_sig": "2026-10-23|"
 }
