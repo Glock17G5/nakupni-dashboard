@@ -1,53 +1,53 @@
 {
   "ccmn": {
-    "copper": 111010.0,
-    "aluminum": 23930.0
+    "copper": 111170.0,
+    "aluminum": 23810.0
   },
   "yf_spot": {
     "HRC=F": {
-      "price": 1394.0,
+      "price": 1344.0,
       "prev": 1292.0,
-      "delta": 102.0,
-      "delta_pct": 7.895
+      "delta": 52.0,
+      "delta_pct": 4.025
     },
     "BZ=F": {
-      "price": 111.360001,
-      "prev": 113.879997,
-      "delta": -2.519997,
-      "delta_pct": -2.213
+      "price": 110.110001,
+      "prev": 115.32,
+      "delta": -5.209999,
+      "delta_pct": -4.518
     },
     "CL=F": {
-      "price": 102.449997,
-      "prev": 99.900002,
-      "delta": 2.549995,
-      "delta_pct": 2.553
+      "price": 101.440002,
+      "prev": 102.779999,
+      "delta": -1.339996,
+      "delta_pct": -1.304
     },
     "EURUSD=X": {
-      "price": 1.11657,
-      "prev": 1.117381,
-      "delta": -0.000811,
-      "delta_pct": -0.073
+      "price": 1.1152,
+      "prev": 1.112966,
+      "delta": 0.002234,
+      "delta_pct": 0.201
     },
     "EURCZK=X": {
-      "price": 24.3573,
-      "prev": 24.345699,
-      "delta": 0.0116,
-      "delta_pct": 0.048
+      "price": 24.330299,
+      "prev": 24.314899,
+      "delta": 0.0154,
+      "delta_pct": 0.063
     },
     "HG=F": {
-      "price": 6.6785,
-      "prev": 6.622,
-      "delta": 0.0565,
-      "delta_pct": 0.853
+      "price": 6.5925,
+      "prev": 6.6415,
+      "delta": -0.049,
+      "delta_pct": -0.738
     },
     "ALI=F": {
-      "price": 3175.5,
+      "price": 3278.0,
       "prev": 3285.25,
-      "delta": -109.75,
-      "delta_pct": -3.341
+      "delta": -7.25,
+      "delta_pct": -0.221
     }
   },
-  "_ts": "2026-10-28 18:48",
+  "_ts": "2026-10-29 11:27",
   "_health": {
     "ccmn_copper": true,
     "ccmn_aluminum": true,
@@ -55,5 +55,5 @@
     "eurusd": true,
     "history": true
   },
-  "_alert_sig": "2026-10-28|Hlin\u00edk COMEX (ALI=F) den: -3.3 % (pr\u00e1h \u00b13.0 %) \u00b7 3175.5 USD"
+  "_alert_sig": "2026-10-29|Brent den: -4.5 % (pr\u00e1h \u00b13.0 %) \u00b7 $110.11"
 }
