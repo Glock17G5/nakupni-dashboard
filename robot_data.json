@@ -1,53 +1,53 @@
 {
   "ccmn": {
-    "copper": 110465.0,
-    "aluminum": 23780.0
+    "copper": 109980.0,
+    "aluminum": 23560.0
   },
   "yf_spot": {
     "HRC=F": {
-      "price": 1402.0,
+      "price": 1347.0,
       "prev": 1342.0,
-      "delta": 60.0,
-      "delta_pct": 4.471
+      "delta": 5.0,
+      "delta_pct": 0.373
     },
     "BZ=F": {
-      "price": 113.589996,
-      "prev": 114.879997,
-      "delta": -1.290001,
-      "delta_pct": -1.123
+      "price": 108.379997,
+      "prev": 117.639999,
+      "delta": -9.260002,
+      "delta_pct": -7.871
     },
     "CL=F": {
-      "price": 104.830002,
-      "prev": 102.0,
-      "delta": 2.830002,
-      "delta_pct": 2.775
+      "price": 99.330002,
+      "prev": 104.120003,
+      "delta": -4.790001,
+      "delta_pct": -4.6
     },
     "EURUSD=X": {
-      "price": 1.116695,
-      "prev": 1.115573,
-      "delta": 0.001121,
-      "delta_pct": 0.101
+      "price": 1.121957,
+      "prev": 1.118281,
+      "delta": 0.003676,
+      "delta_pct": 0.329
     },
     "EURCZK=X": {
-      "price": 24.350201,
-      "prev": 24.3386,
-      "delta": 0.0116,
-      "delta_pct": 0.048
+      "price": 24.3466,
+      "prev": 24.3347,
+      "delta": 0.0119,
+      "delta_pct": 0.049
     },
     "HG=F": {
-      "price": 6.4535,
-      "prev": 6.581,
-      "delta": -0.1275,
-      "delta_pct": -1.937
+      "price": 6.508,
+      "prev": 6.4585,
+      "delta": 0.0495,
+      "delta_pct": 0.766
     },
     "ALI=F": {
-      "price": 3160.0,
-      "prev": 3332.25,
-      "delta": -172.25,
-      "delta_pct": -5.169
+      "price": 3164.0,
+      "prev": 3310.5,
+      "delta": -146.5,
+      "delta_pct": -4.425
     }
   },
-  "_ts": "2026-10-30 18:33",
+  "_ts": "2026-11-02 13:24",
   "_health": {
     "ccmn_copper": true,
     "ccmn_aluminum": true,
@@ -55,5 +55,5 @@
     "eurusd": true,
     "history": true
   },
-  "_alert_sig": "2026-10-30|Hlin\u00edk COMEX (ALI=F) den: -5.2 % (pr\u00e1h \u00b13.0 %) \u00b7 3160.0 USD"
+  "_alert_sig": "2026-11-02|Brent den: -7.9 % (pr\u00e1h \u00b13.0 %) \u00b7 $108.38|Hlin\u00edk COMEX (ALI=F) den: -4.4 % (pr\u00e1h \u00b13.0 %) \u00b7 3164.0 USD"
 }
