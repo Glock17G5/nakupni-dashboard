@@ -5256,8 +5256,39 @@ def _normalize_hs_label(hs_label: object) -> str:
     return _DEFAULT_IMPORT_HS_LABEL
 
 
+def _named_invoice_hs(df: pd.DataFrame | None) -> list[str]:
+    """HS kódy jen u řádků s názvem. Prázdný rozepsaný řádek se nepočítá."""
+    if df is None or df.empty or _INVOICE_COL_HS not in df.columns:
+        return []
+    names = df[_INVOICE_COL_NAME].astype(str).str.strip()
+    keep = ~names.str.lower().isin(("", "nan", "none"))
+    return df.loc[keep, _INVOICE_COL_HS].astype(str).tolist()
+
+
+def _invoice_duty_refresh(df: pd.DataFrame, *, force_zero: bool) -> pd.DataFrame:
+    """Doplní clo podle HS. Nemění ceny ani množství."""
+    out = df.copy().reset_index(drop=True)
+    for col in _DEFAULT_INVOICE_DF.columns:
+        if col not in out.columns:
+            out[col] = pd.NA
+    out = out.loc[:, list(_DEFAULT_INVOICE_DF.columns)]
+    for i, row in out.iterrows():
+        name = str(row.get(_INVOICE_COL_NAME, "") or "").strip()
+        if name.lower() in ("", "nan", "none"):
+            continue
+        hs_raw = row.get(_INVOICE_COL_HS, "")
+        if pd.isna(hs_raw) or str(hs_raw).strip().lower() in ("", "nan", "none"):
+            continue
+        normalized = _normalize_hs_label(hs_raw)
+        out.at[i, _INVOICE_COL_HS] = normalized
+        out.at[i, _INVOICE_COL_DUTY] = float(
+            _duty_for_hs_label(normalized, force_zero=force_zero)
+        )
+    return out
+
+
 def _apply_duty_from_hs_column(df: pd.DataFrame, *, force_zero: bool = False) -> pd.DataFrame:
-    """Přepočítá sloupec cla z HS kódů — volat vždy PŘED vykreslením data_editoru."""
+    """Přepočítá sloupec cla z HS kódů. Nemění ceny ani množství."""
     if df is None or df.empty:
         return df
     out = df.copy().reset_index(drop=True)
@@ -5658,7 +5689,11 @@ def render_landed_cost_pricing() -> None:
         st.metric("EUR/CZK (ČNB)", f"{eur_czk:.4f}")
 
     st.markdown(f"#### {t('Import dat z Pohody')}")
-    is_atr_turkey = st.checkbox(t("🇹🇷 Aplikovat nulové clo (Zboží z Turecka s certifikátem A.TR)"), value=False)
+    is_atr_turkey = st.checkbox(
+        t("🇹🇷 Aplikovat nulové clo (Zboží z Turecka s certifikátem A.TR)"),
+        value=False,
+        key="landed_atr_zero",
+    )
 
     uploaded_file = st.file_uploader(
         t("Nahrát exportní soubor (CSV nebo Excel z Pohody)"),
@@ -5757,6 +5792,8 @@ def render_landed_cost_pricing() -> None:
                     new_rows,
                     columns=list(_DEFAULT_INVOICE_DF.columns),
                 )
+                st.session_state.landed_invoice_live = st.session_state.landed_invoice_data.copy()
+                st.session_state._landed_zero_applied = bool(force_zero_duty or is_atr_turkey)
                 st.session_state.pop("landed_invoice_editor", None)
                 st.success(f"Úspěšně nahráno {len(new_rows)} položek s výchozím claem 3,7 %.")
             else:
@@ -5776,31 +5813,18 @@ def render_landed_cost_pricing() -> None:
     )
 
     zero_duty = force_zero_duty or is_atr_turkey
-    st.session_state.landed_invoice_data = _normalize_invoice_hs_options(
-        st.session_state.landed_invoice_data
-    )
-    # Klíčové: clo vypočítat PŘED vykreslením editoru (widget jinak drží starou hodnotu v cache).
-    invoice_df = _apply_duty_from_hs_column(
-        st.session_state.landed_invoice_data,
-        force_zero=zero_duty,
-    )
-    st.session_state.landed_invoice_data = invoice_df
-    hs_before_edit = invoice_df[_INVOICE_COL_HS].astype(str).tolist()
-
-    if not st.session_state.landed_invoice_data.empty:
-        df_calc = st.session_state.landed_invoice_data
-        qty = pd.to_numeric(df_calc[_INVOICE_COL_QTY], errors="coerce").fillna(0)
-        price = pd.to_numeric(df_calc[_INVOICE_COL_PRICE], errors="coerce").fillna(0)
-        total_qty = qty.sum()
-        total_val = (qty * price).sum()
-
-        sum_col1, sum_col2, _sum_col3 = st.columns(3)
-        sum_col1.metric("Celková metráž / ks", format_num(total_qty, 2))
-        sum_col2.metric("Celková hodnota položek", f"{format_num(total_val, 2)} EUR")
-        st.markdown("---")
-
+    # Základ tabulky se při psaní ceny nesmí přepisovat. Jinak Streamlit
+    # zahodí rozpracované řádky a vrátí původní data.
+    # Když uživatel odejde ze sekce, Streamlit smaže stav editoru.
+    # Rozepsaná faktura zůstává v landed_invoice_live a sem se vrátí.
+    if (
+        "landed_invoice_editor" not in st.session_state
+        and isinstance(st.session_state.get("landed_invoice_live"), pd.DataFrame)
+    ):
+        st.session_state.landed_invoice_data = st.session_state.landed_invoice_live.copy()
+    invoice_totals = st.empty()
     edited_df = st.data_editor(
-        invoice_df,
+        st.session_state.landed_invoice_data.copy(),
         key="landed_invoice_editor",
         column_config={
             _INVOICE_COL_NAME: st.column_config.TextColumn("Název položky", width="large"),
@@ -5828,16 +5852,42 @@ def render_landed_cost_pricing() -> None:
     )
 
     edited_df = edited_df.reset_index(drop=True)
-    hs_after_edit = edited_df[_INVOICE_COL_HS].astype(str).tolist()
-    st.session_state.landed_invoice_data = edited_df
-
-    # HS se změnil → uložit, smazat cache widgetu, rerun; clo se dopočítá pre-syncem na začátku.
-    if hs_after_edit != hs_before_edit or len(hs_after_edit) != len(hs_before_edit):
+    # Překreslit základ jen když se změní HS nebo nulové clo. Změna ceny
+    # základ nemění, takže rozepsané řádky zůstanou.
+    same_hs = _named_invoice_hs(edited_df) == _named_invoice_hs(
+        st.session_state.landed_invoice_data
+    )
+    known_zero = st.session_state.get("_landed_zero_applied")
+    if same_hs and known_zero is None:
+        st.session_state._landed_zero_applied = zero_duty
+    elif not same_hs or known_zero != zero_duty:
+        refreshed = _invoice_duty_refresh(edited_df, force_zero=zero_duty)
+        st.session_state.landed_invoice_data = refreshed
+        st.session_state.landed_invoice_live = refreshed.copy()
+        st.session_state._landed_zero_applied = zero_duty
         st.session_state.pop("landed_invoice_editor", None)
+        if _fragment_only_run():
+            st.rerun(scope="fragment")
         st.rerun()
 
+    st.session_state.landed_invoice_live = edited_df.copy()
+
+    qty_now = pd.to_numeric(edited_df[_INVOICE_COL_QTY], errors="coerce").fillna(0)
+    price_now = pd.to_numeric(edited_df[_INVOICE_COL_PRICE], errors="coerce").fillna(0)
+    named = edited_df[_INVOICE_COL_NAME].astype(str).str.strip()
+    filled = (named != "") & (named.str.lower() != "nan") & (qty_now > 0) & (price_now > 0)
+    if filled.any():
+        with invoice_totals.container():
+            sum_col1, sum_col2, _sum_col3 = st.columns(3)
+            sum_col1.metric("Celková metráž / ks", format_num(float(qty_now[filled].sum()), 2))
+            sum_col2.metric(
+                "Celková hodnota položek",
+                f"{format_num(float((qty_now[filled] * price_now[filled]).sum()), 2)} EUR",
+            )
+            st.markdown("---")
+
     invoice = _sanitize_invoice_input(
-        _apply_duty_from_hs_column(st.session_state.landed_invoice_data, force_zero=zero_duty)
+        _apply_duty_from_hs_column(edited_df, force_zero=zero_duty)
     )
     if invoice.empty:
         st.info("Přidejte alespoň jeden řádek faktury (název, množství > 0, cena > 0).")
