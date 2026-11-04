@@ -1,53 +1,53 @@
 {
   "ccmn": {
-    "copper": 110040.0,
-    "aluminum": 23440.0
+    "copper": 109510.0,
+    "aluminum": 23340.0
   },
   "yf_spot": {
     "HRC=F": {
-      "price": 1415.0,
-      "prev": 1352.0,
-      "delta": 63.0,
-      "delta_pct": 4.66
+      "price": 1363.0,
+      "prev": 1360.0,
+      "delta": 3.0,
+      "delta_pct": 0.221
     },
     "BZ=F": {
-      "price": 104.080002,
-      "prev": 104.769997,
-      "delta": -0.689995,
-      "delta_pct": -0.659
+      "price": 102.139999,
+      "prev": 103.599998,
+      "delta": -1.459999,
+      "delta_pct": -1.409
     },
     "CL=F": {
-      "price": 96.540001,
-      "prev": 96.459999,
-      "delta": 0.080002,
-      "delta_pct": 0.083
+      "price": 94.989998,
+      "prev": 96.089996,
+      "delta": -1.099998,
+      "delta_pct": -1.145
     },
     "EURUSD=X": {
-      "price": 1.119194,
-      "prev": 1.115685,
-      "delta": 0.003509,
-      "delta_pct": 0.314
+      "price": 1.126634,
+      "prev": 1.119207,
+      "delta": 0.007427,
+      "delta_pct": 0.664
     },
     "EURCZK=X": {
-      "price": 24.346701,
-      "prev": 24.3297,
-      "delta": 0.017,
-      "delta_pct": 0.07
+      "price": 24.3074,
+      "prev": 24.3125,
+      "delta": -0.0051,
+      "delta_pct": -0.021
     },
     "HG=F": {
-      "price": 6.387,
-      "prev": 6.5435,
-      "delta": -0.1565,
-      "delta_pct": -2.392
+      "price": 6.4395,
+      "prev": 6.3785,
+      "delta": 0.061,
+      "delta_pct": 0.956
     },
     "ALI=F": {
-      "price": 3169.75,
-      "prev": 3314.75,
-      "delta": -145.0,
-      "delta_pct": -4.374
+      "price": 3204.0,
+      "prev": 3235.25,
+      "delta": -31.25,
+      "delta_pct": -0.966
     }
   },
-  "_ts": "2026-11-03 20:04",
+  "_ts": "2026-11-04 12:56",
   "_health": {
     "ccmn_copper": true,
     "ccmn_aluminum": true,
@@ -55,5 +55,5 @@
     "eurusd": true,
     "history": true
   },
-  "_alert_sig": "2026-11-03|Hlin\u00edk COMEX (ALI=F) den: -4.4 % (pr\u00e1h \u00b13.0 %) \u00b7 3169.75 USD"
+  "_alert_sig": "2026-11-04|"
 }
