@@ -5400,6 +5400,188 @@ def _apply_sales_pricing(results: pd.DataFrame, margin_pct: float) -> pd.DataFra
     return out
 
 
+_NAKUP_EXPORT_COLS = (
+    _INVOICE_COL_NAME,
+    _INVOICE_COL_HS,
+    _INVOICE_COL_QTY,
+    _INVOICE_COL_PRICE,
+    _INVOICE_COL_DUTY,
+    "Hodnota řádku (EUR)",
+    "Podíl na faktuře",
+    "Doprava přidělená (EUR)",
+    "Základ pro clo (EUR)",
+    "Clo (EUR)",
+    "Deklarace přidělená (EUR)",
+    "Celková Landed cena položky (EUR)",
+    "Finální Landed nákupka za 1 m (EUR)",
+    "Finální Landed nákupka za 1 m (CZK)",
+    "Prodej (Přirážka CZK)",
+    "Prodej (Marže CZK)",
+)
+
+
+def _nakup_excel_bytes(
+    route_label: str,
+    zero_duty: bool,
+    transport_eur: float,
+    customs_czk: float,
+    eur_czk: float,
+    cnb_date: str,
+    margin_pct: float,
+    results: pd.DataFrame,
+) -> bytes:
+    """Excel se zadanou fakturou, parametry nákupu a dopočítaným landed cost."""
+    from io import BytesIO
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.page import PageMargins
+
+    header_fill = PatternFill("solid", fgColor="1B3A4B")
+    header_font = Font(name="Calibri", bold=True, color="FFFFFF", size=11)
+    label_font = Font(name="Calibri", bold=True, size=11)
+    body_font = Font(name="Calibri", size=11)
+    thin = Border(
+        left=Side(style="thin", color="D0D5DD"),
+        right=Side(style="thin", color="D0D5DD"),
+        top=Side(style="thin", color="D0D5DD"),
+        bottom=Side(style="thin", color="D0D5DD"),
+    )
+    alt_fill = PatternFill("solid", fgColor="F4F7FB")
+    wrap = Alignment(vertical="center", wrap_text=True)
+    mid = Alignment(vertical="center")
+
+    total_qty = float(results[_INVOICE_COL_QTY].sum())
+    total_goods = float(results["Hodnota řádku (EUR)"].sum())
+    total_landed = float(results["Celková Landed cena položky (EUR)"].sum())
+    summary_rows: list[tuple[str, object]] = [
+        ("Trasa", route_label),
+        ("Clo vynulováno (Turecko / A.TR)", "Ano" if zero_duty else "Ne"),
+        ("Cena dopravy (EUR)", float(transport_eur)),
+        ("Poplatek za celní deklaraci a JSD (CZK)", float(customs_czk)),
+        ("Kurz EUR/CZK (ČNB)", float(eur_czk)),
+        ("Datum kurzu ČNB", str(cnb_date or "")),
+        ("Marže / přirážka (%)", float(margin_pct)),
+        ("Celková metráž", total_qty),
+        ("Hodnota zboží (EUR)", total_goods),
+        ("Doprava celkem (EUR)", float(results["Doprava přidělená (EUR)"].sum())),
+        ("Clo celkem (EUR)", float(results["Clo (EUR)"].sum())),
+        ("Deklarace celkem (EUR)", float(results["Deklarace přidělená (EUR)"].sum())),
+        ("Celkové náklady landed (EUR)", total_landed),
+        ("Celkem landed (CZK)", total_landed * float(eur_czk)),
+        ("Vygenerováno", now_prague().strftime("%d.%m.%Y %H:%M")),
+    ]
+
+    wb = Workbook()
+    wb.properties.title = "pbcable Nákup"
+    wb.properties.creator = "pbcable dashboard"
+    souhrn = wb.active
+    souhrn.title = "Souhrn"
+    for col, title in ((1, "Položka"), (2, "Hodnota")):
+        cell = souhrn.cell(1, col, title)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = mid
+        cell.border = thin
+    for i, (label, value) in enumerate(summary_rows, start=2):
+        left = souhrn.cell(i, 1, label)
+        right = souhrn.cell(i, 2, value)
+        left.font = label_font
+        right.font = body_font
+        left.alignment = mid
+        right.alignment = mid
+        if isinstance(value, float):
+            if "Kurz" in label:
+                right.number_format = "0.0000"
+            elif label.endswith("(%)"):
+                right.number_format = "0.0"
+            else:
+                right.number_format = "#,##0.00"
+        for cell in (left, right):
+            cell.border = thin
+            if i % 2 == 0:
+                cell.fill = alt_fill
+    souhrn.column_dimensions["A"].width = 48
+    souhrn.column_dimensions["B"].width = 28
+    souhrn.freeze_panes = "A2"
+    souhrn.auto_filter.ref = f"A1:B{len(summary_rows) + 1}"
+    souhrn.page_setup.orientation = "portrait"
+    souhrn.page_setup.paperSize = souhrn.PAPERSIZE_A4
+    souhrn.page_setup.fitToWidth = 1
+    souhrn.page_setup.fitToHeight = 1
+    souhrn.sheet_properties.pageSetUpPr.fitToPage = True
+    souhrn.page_margins = PageMargins(left=0.6, right=0.6, top=0.7, bottom=0.7)
+    souhrn.oddHeader.left.text = "pbcable — Nákup"
+    souhrn.oddFooter.right.text = "Strana &P / &N"
+
+    pol = wb.create_sheet("Položky")
+    for c, name in enumerate(_NAKUP_EXPORT_COLS, start=1):
+        cell = pol.cell(1, c, name)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = wrap
+        cell.border = thin
+    pol.row_dimensions[1].height = 34
+    for r_i, (_, row) in enumerate(results.iterrows(), start=2):
+        for c, name in enumerate(_NAKUP_EXPORT_COLS, start=1):
+            val = row[name]
+            if pd.isna(val):
+                val = None
+            elif name not in (_INVOICE_COL_NAME, _INVOICE_COL_HS):
+                val = float(val)
+            cell = pol.cell(r_i, c, val)
+            cell.font = body_font
+            cell.border = thin
+            cell.alignment = wrap if name in (_INVOICE_COL_NAME, _INVOICE_COL_HS) else mid
+            if r_i % 2 == 0:
+                cell.fill = alt_fill
+            if name == "Podíl na faktuře":
+                cell.number_format = "0.00%"
+            elif name == _INVOICE_COL_DUTY:
+                cell.number_format = "0.0"
+            elif name == _INVOICE_COL_QTY:
+                cell.number_format = "#,##0.00"
+            elif name == _INVOICE_COL_PRICE:
+                cell.number_format = "#,##0.000"
+            elif isinstance(val, float):
+                cell.number_format = "#,##0.00"
+    widths = {
+        _INVOICE_COL_NAME: 36,
+        _INVOICE_COL_HS: 44,
+        _INVOICE_COL_QTY: 16,
+        _INVOICE_COL_PRICE: 22,
+        _INVOICE_COL_DUTY: 16,
+        "Podíl na faktuře": 16,
+        "Finální Landed nákupka za 1 m (EUR)": 28,
+        "Finální Landed nákupka za 1 m (CZK)": 28,
+        "Celková Landed cena položky (EUR)": 28,
+        "Prodej (Přirážka CZK)": 22,
+        "Prodej (Marže CZK)": 20,
+    }
+    for c, name in enumerate(_NAKUP_EXPORT_COLS, start=1):
+        pol.column_dimensions[get_column_letter(c)].width = widths.get(name, 20)
+    last_col = get_column_letter(len(_NAKUP_EXPORT_COLS))
+    pol.freeze_panes = "B2"
+    pol.auto_filter.ref = f"A1:{last_col}{len(results) + 1}"
+    pol.page_setup.orientation = "landscape"
+    pol.page_setup.paperSize = pol.PAPERSIZE_A4
+    pol.page_setup.fitToWidth = 1
+    pol.page_setup.fitToHeight = 0
+    pol.sheet_properties.pageSetUpPr.fitToPage = True
+    pol.page_setup.horizontalCentered = True
+    pol.print_title_rows = "1:1"
+    pol.page_margins = PageMargins(left=0.4, right=0.4, top=0.7, bottom=0.6, header=0.3, footer=0.3)
+    pol.oddHeader.left.text = "pbcable — Nákup — položky"
+    pol.oddFooter.right.text = "Strana &P / &N"
+    pol.sheet_view.showGridLines = False
+    pol.sheet_view.zoomScale = 110
+
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def _landed_column_config(frame: pd.DataFrame) -> dict:
     """Měny a procenta ve sloupci, čísla pod sebou."""
     cfg: dict = {}
@@ -5705,6 +5887,25 @@ def render_landed_cost_pricing() -> None:
 
     results_sales = _apply_sales_pricing(results, margin_pct)
     display_cols += ["Prodej (Přirážka CZK)", "Prodej (Marže CZK)"]
+
+    excel_bytes = _nakup_excel_bytes(
+        _LANDED_ROUTES[int(route_i)],
+        zero_duty,
+        transport_eur,
+        customs_czk,
+        eur_czk,
+        str(cnb_date or ""),
+        margin_pct,
+        results_sales,
+    )
+    st.download_button(
+        "⬇️ Stáhnout Excel",
+        data=excel_bytes,
+        file_name=f"pbcable_nakup_{now_prague().strftime('%Y-%m-%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="landed_excel_download",
+        help="Faktura, doprava, clo, landed cost i prodejní ceny v jednom souboru.",
+    )
 
     show = results_sales[display_cols].copy()
     st.dataframe(
