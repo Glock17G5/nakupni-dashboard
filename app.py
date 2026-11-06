@@ -9254,7 +9254,7 @@ def _pin_logistics_vehicle() -> None:
 
 
 def _pin_logistics_rate(pin_key: str) -> None:
-    """Ručně přepsaná sazba zůstane, i když se změní načtená nafta."""
+    """Ručně přepsaná sazba nebo cena nafty zůstane i po načtení nové pumpy."""
     st.session_state[pin_key] = True
 
 
@@ -9960,22 +9960,40 @@ def _logistics_quote_panel() -> None:
 
             diesel = diesel_now
             l_per_100 = float(profile["l_per_100"])
-            if diesel:
-                diesel_seed = f"{diesel.get('date') or 'd'}_{float(diesel['czk']):.2f}"
-                diesel_prefill = float(diesel["czk"])
-            else:
-                diesel_seed = "rucne"
-                diesel_prefill = float(_DIESEL_BASE_CZK)
+            diesel_prefill = float(diesel["czk"]) if diesel else float(_DIESEL_BASE_CZK)
+            diesel_key = f"log_diesel_v{v_idx}"
+            diesel_pin = f"log_diesel_pinned_v{v_idx}"
+            if st.session_state.pop(f"log_diesel_reset_pending_{v_idx}", False):
+                st.session_state[diesel_pin] = False
+            if not st.session_state.get(diesel_pin):
+                st.session_state[diesel_key] = float(diesel_prefill)
             nafta_czk = st.number_input(
                 "Cena nafty (Kč/l)",
                 min_value=15.0,
                 max_value=120.0,
-                value=diesel_prefill,
+                value=float(diesel_prefill),
                 step=0.1,
                 format="%.2f",
-                key=f"log_diesel_{v_idx}_{diesel_seed}",
-                help="Předvyplněno z aktuální ceny nafty. Když se nenačte, napiš cenu ručně — sazba se přepočítá.",
+                key=diesel_key,
+                on_change=_pin_logistics_rate,
+                args=(diesel_pin,),
+                help=(
+                    "Předvyplněno z aktuální ceny nafty. Ručně zadaná cena zůstane, "
+                    "i když se načte nová. Když se nenačte, počítá se ze 40 Kč/l."
+                ),
             )
+            fetched_differs = bool(diesel) and abs(float(nafta_czk) - diesel_prefill) >= 0.005
+            if fetched_differs:
+                st.caption(
+                    f"Načtená nafta je {format_num(diesel_prefill, 2)} Kč/l. "
+                    f"Vaše {format_num(float(nafta_czk), 2)} zůstává."
+                )
+                if st.button("Vzít načtenou naftu", key=f"log_diesel_reset_{v_idx}"):
+                    st.session_state[diesel_pin] = False
+                    st.session_state[f"log_diesel_reset_pending_{v_idx}"] = True
+                    if _fragment_only_run():
+                        st.rerun(scope="fragment")
+                    st.rerun()
             suggested_rate = _diesel_adjusted_rate(def_rate, l_per_100, float(nafta_czk))
             rate_key = f"domestic_sazba_v{v_idx}"
             pin_key = f"domestic_sazba_pinned_v{v_idx}"
