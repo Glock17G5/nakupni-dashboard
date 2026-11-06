@@ -5304,7 +5304,7 @@ def _metal_compare_excel_bytes(
 
 @st.fragment
 def _render_metal_date_compare() -> None:
-    """Dva zvolené dny ve sbalovacím okně, s Excelem na jednání s dodavatelem."""
+    """Nákup: dva zvolené dny ve sbalovacím okně, s Excelem na jednání s dodavatelem."""
     default_from = datetime(2026, 8, 18).date()
     default_to = datetime(2026, 9, 24).date()
     shown_from = st.session_state.get("metal_cmp_from", default_from)
@@ -5385,8 +5385,6 @@ def render_metals() -> None:
     with col_al:
         _render_lme_metal_card(al_cfg[0], t(al_cfg[1]), al_cfg[2], al_cfg[3], wm_data)
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    _render_metal_date_compare()
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Historické grafy — pod sebou na plnou šířku (mobil-friendly) ─────────
@@ -6329,6 +6327,7 @@ def _landed_column_config(frame: pd.DataFrame) -> dict:
 def render_landed_cost_pricing() -> None:
     """Logistika a cenotvorba — faktura (více řádků), landed cost, prodejní ceny."""
     st.header(t("🚢 Logistika a Prodejní ceny"))
+    _render_metal_date_compare()
 
     cnb = fetch_cnb_rates()
     _health_row([_cnb_health(cnb, ("EUR",))])
