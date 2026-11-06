@@ -515,6 +515,44 @@ footer { visibility: hidden; }
 }
 .card-delta-row { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
 
+.metal-cmp-wrap { overflow-x: auto; }
+.metal-cmp {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.84rem;
+}
+.metal-cmp th,
+.metal-cmp td {
+    padding: 7px 8px;
+    text-align: right;
+    border-bottom: 1px solid #2C3442;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+.metal-cmp th:first-child,
+.metal-cmp td:first-child {
+    text-align: left;
+    font-family: Inter, system-ui, sans-serif;
+}
+.metal-cmp th {
+    font-family: Inter, system-ui, sans-serif;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    color: #8D99AB;
+}
+.metal-cmp td {
+    font-family: 'IBM Plex Mono', monospace;
+    color: #F2F5F9;
+}
+.metal-cmp td:first-child { color: #9AA6B8; font-weight: 650; }
+.metal-cmp-note {
+    margin-top: 8px;
+    font-size: 0.78rem;
+    color: #9AA6B8;
+    line-height: 1.4;
+}
+
 .metal-price-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -774,9 +812,11 @@ footer { visibility: hidden; }
         line-height: 1.35;
         font-size: 0.62rem;
     }
-    [data-testid="stHorizontalBlock"]:has(.metal-price-grid) > [data-testid="stColumn"] {
+    [data-testid="stHorizontalBlock"]:has(.metal-price-grid) > [data-testid="stColumn"],
+    [data-testid="stHorizontalBlock"]:has(.metal-cmp) > [data-testid="stColumn"] {
         flex: 1 1 100% !important;
         width: 100% !important;
+        max-width: 100% !important;
     }
     .metric-card { padding: 12px 12px 12px 16px; min-height: 0; }
     .card-value { font-size: 1.2rem; overflow-wrap: anywhere; }
@@ -1356,6 +1396,9 @@ p, span, label, .stMarkdown { color: #243140; }
 .card-unit { color: #3E4C5C; }
 .card-extra-emphasis, .metal-price-grid, .metal-price-col-ccmn { border-color: #E1E6EE; }
 .metal-price-grid { background: #F7F9FC; }
+.metal-cmp th, .metal-cmp td { border-bottom-color: #E1E6EE; }
+.metal-cmp th, .metal-cmp td:first-child, .metal-cmp-note { color: #5C6B7C; }
+.metal-cmp td { color: #142033; }
 .info-box { color: #243140; }
 .info-box strong { color: #142033; }
 .success-box { color: #0E7A48; }
@@ -1660,6 +1703,9 @@ def _diesel_health(diesel: dict | None, typed: float | None = None) -> tuple[str
         detail += f" · {diesel['stations']} stanic"
     if typed is not None and abs(float(typed) - float(diesel["czk"])) >= 0.05:
         detail += f" · ručně {format_num(typed, 2)}"
+        return ("warn", "Nafta", detail)
+    if diesel.get("source") == "kurzy":
+        detail += " · Kurzy.cz"
         return ("warn", "Nafta", detail)
     if age is None or age > 1:
         return ("warn", "Nafta", detail)
@@ -2375,6 +2421,148 @@ def fetch_cnb_rates() -> dict | None:
         return rates if len(rates) > 3 else None
     except Exception:
         return None
+
+
+def _cnb_year_fx_once(year: int) -> pd.DataFrame | None:
+    """Celý rok kurzů ČNB. Sloupce Date, eur_czk, usd_czk — za 1 jednotku měny."""
+    url = (
+        "https://www.cnb.cz/cs/financni-trhy/devizovy-trh/"
+        "kurzy-devizoveho-trhu/kurzy-devizoveho-trhu/rok.txt?rok="
+        + str(int(year))
+    )
+    try:
+        resp = requests.get(url, timeout=20)
+        resp.encoding = "utf-8"
+        lines = [line.strip() for line in resp.text.splitlines() if line.strip()]
+    except Exception:
+        return None
+    if len(lines) < 2 or not lines[0].lower().startswith("datum"):
+        return None
+    headers = [part.strip() for part in lines[0].split("|")]
+
+    def column_for(code: str) -> tuple[int, int] | None:
+        for index, header in enumerate(headers):
+            match = re.fullmatch(rf"(\d+)\s+{code}", header, re.I)
+            if match:
+                amount = int(match.group(1))
+                return index, amount if amount else 1
+        return None
+
+    eur_col = column_for("EUR")
+    usd_col = column_for("USD")
+    if not eur_col or not usd_col:
+        return None
+    rows: list[dict] = []
+    for line in lines[1:]:
+        parts = line.split("|")
+        if len(parts) <= max(eur_col[0], usd_col[0]):
+            continue
+        try:
+            day = datetime.strptime(parts[0].strip(), "%d.%m.%Y")
+            eur = float(parts[eur_col[0]].replace(" ", "").replace(",", ".")) / eur_col[1]
+            usd = float(parts[usd_col[0]].replace(" ", "").replace(",", ".")) / usd_col[1]
+        except (ValueError, IndexError, ZeroDivisionError):
+            continue
+        if eur <= 0 or usd <= 0:
+            continue
+        rows.append({"Date": day, "eur_czk": eur, "usd_czk": usd})
+    if not rows:
+        return None
+    frame = pd.DataFrame(rows)
+    return frame.drop_duplicates(subset=["Date"], keep="last").sort_values("Date").reset_index(drop=True)
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def fetch_cnb_year_fx(year: int) -> pd.DataFrame:
+    """Roční lístek ČNB. Neúspěch se neukládá, další otevření to zkusí znovu."""
+    frame = _cnb_year_fx_once(year)
+    if frame is None or frame.empty:
+        raise RuntimeError("ČNB rok")
+    return frame
+
+
+def _cnb_fx_asof(day) -> dict | None:
+    """Poslední lístek ČNB v ten den nebo dřív. Vrací EUR/CZK a USD/CZK."""
+    target = pd.Timestamp(day).normalize()
+    frames: list[pd.DataFrame] = []
+    for year in (int(target.year) - 1, int(target.year)):
+        try:
+            frames.append(fetch_cnb_year_fx(year))
+        except Exception:
+            continue
+    if not frames:
+        return None
+    fx = pd.concat(frames, ignore_index=True)
+    fx["Date"] = pd.to_datetime(fx["Date"]).dt.normalize()
+    fx = fx.drop_duplicates(subset=["Date"], keep="last").sort_values("Date")
+    past = fx[fx["Date"] <= target]
+    if past.empty:
+        return None
+    row = past.iloc[-1]
+    return {
+        "date": pd.Timestamp(row["Date"]),
+        "eur_czk": float(row["eur_czk"]),
+        "usd_czk": float(row["usd_czk"]),
+    }
+
+
+def _wm_close_asof(metal_key: str, day) -> dict | None:
+    """Poslední LME Cash (USD/t) v zadaný den nebo dřív."""
+    url = WM_HISTORY_URLS.get(metal_key)
+    if not url:
+        return None
+    history = fetch_westmetall_history(url)
+    if history is None or history.empty or "Close" not in history.columns:
+        return None
+    work = history.dropna(subset=["Close"]).copy()
+    work["Date"] = pd.to_datetime(work["Date"]).dt.normalize()
+    target = pd.Timestamp(day).normalize()
+    past = work[work["Date"] <= target]
+    if past.empty:
+        return None
+    row = past.iloc[-1]
+    usd = float(row["Close"])
+    if not (usd > 0):
+        return None
+    return {"date": pd.Timestamp(row["Date"]), "usd": usd}
+
+
+def _metal_quote_on(metal_key: str, day) -> dict | None:
+    """Cena kovu v USD, EUR a CZK. Koruna = euro toho dne × EUR/CZK ČNB z toho dne."""
+    price = _wm_close_asof(metal_key, day)
+    if not price:
+        return None
+    fx = _cnb_fx_asof(price["date"])
+    quote = {
+        "price_date": price["date"],
+        "fx_date": None,
+        "usd": price["usd"],
+        "eur": None,
+        "czk": None,
+        "eur_czk": None,
+        "usd_czk": None,
+        "eur_usd": None,
+    }
+    if not fx or not fx["eur_czk"] or not fx["usd_czk"]:
+        return quote
+    eur_usd = fx["eur_czk"] / fx["usd_czk"]
+    eur = price["usd"] / eur_usd
+    quote.update({
+        "fx_date": fx["date"],
+        "eur": eur,
+        "czk": eur * fx["eur_czk"],
+        "eur_czk": fx["eur_czk"],
+        "usd_czk": fx["usd_czk"],
+        "eur_usd": eur_usd,
+    })
+    return quote
+
+
+def _move_pct(new: float | None, old: float | None) -> float | None:
+    """Procento z první hodnoty na druhou. Záporné = pokles."""
+    if new is None or old is None or old == 0:
+        return None
+    return (float(new) / float(old) - 1.0) * 100.0
 
 
 def fetch_fx_history(ticker: str, period: str = "3mo") -> pd.DataFrame | None:
@@ -4661,6 +4849,114 @@ def _render_price_forecast_section() -> None:
         _render_forecast_for_metal(name, color, conv, y_unit)
 
 
+def _cz_day(value) -> str:
+    ts = pd.Timestamp(value)
+    return f"{int(ts.day)}. {int(ts.month)}. {int(ts.year)}"
+
+
+def _quote_shift_note(picked, quote: dict | None) -> str:
+    """Řekne, když cena nebo kurz nejsou přesně ze zadaného kalendářního dne."""
+    if not quote or quote.get("usd") is None:
+        return "cena LME v tento den ani dřív není"
+    bits: list[str] = []
+    picked_ts = pd.Timestamp(picked).normalize()
+    price_ts = pd.Timestamp(quote["price_date"]).normalize()
+    if price_ts != picked_ts:
+        bits.append(f"cena je ze {_cz_day(price_ts)}")
+    fx_date = quote.get("fx_date")
+    if fx_date is None:
+        bits.append("kurz ČNB chybí")
+    elif pd.Timestamp(fx_date).normalize() != price_ts:
+        bits.append(f"kurz ČNB je ze {_cz_day(fx_date)}")
+    return ", ".join(bits)
+
+
+def _metal_compare_html(name: str, day_from, day_to, left: dict | None, right: dict | None) -> str:
+    """Tabulka dvou dnů: cena v USD, EUR, CZK a kurzy, které se na ni použily."""
+    specs = (
+        ("USD/t", "usd", 0),
+        ("EUR/t", "eur", 0),
+        ("CZK/t", "czk", 0),
+        ("EUR/CZK", "eur_czk", 3),
+        ("EUR/USD", "eur_usd", 4),
+    )
+    body: list[str] = []
+    for label, key, decimals in specs:
+        start = None if not left else left.get(key)
+        end = None if not right else right.get(key)
+        start_txt = "—" if start is None else format_num(start, decimals)
+        end_txt = "—" if end is None else format_num(end, decimals)
+        body.append(
+            "<tr>"
+            f"<td>{html.escape(label)}</td>"
+            f"<td>{html.escape(start_txt)}</td>"
+            f"<td>{html.escape(end_txt)}</td>"
+            f"<td>{delta_chip(_move_pct(end, start), ' %')}</td>"
+            "</tr>"
+        )
+    notes = []
+    for label, day, quote in (("První den", day_from, left), ("Druhý den", day_to, right)):
+        note = _quote_shift_note(day, quote)
+        if note:
+            notes.append(f"{label}: {note}.")
+    note_html = ""
+    if notes:
+        note_html = f'<div class="metal-cmp-note">{html.escape(" ".join(notes))}</div>'
+    return (
+        '<div class="metric-card card-neutral">'
+        f'<div class="card-label">{html.escape(name)}</div>'
+        '<div class="metal-cmp-wrap"><table class="metal-cmp">'
+        "<thead><tr><th></th>"
+        f"<th>{html.escape(_cz_day(day_from))}</th>"
+        f"<th>{html.escape(_cz_day(day_to))}</th>"
+        "<th>Změna</th></tr></thead>"
+        f"<tbody>{''.join(body)}</tbody></table></div>"
+        f"{note_html}</div>"
+    )
+
+
+@st.fragment
+def _render_metal_date_compare() -> None:
+    """Dva zvolené dny: cena, kurz z toho dne a procento mezi nimi."""
+    st.markdown(
+        "<div style='font-family:Inter, system-ui, sans-serif;font-size:0.75rem;font-weight:700;"
+        "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;margin:4px 0 8px;'>"
+        "Porovnání dvou dnů</div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Cena LME v každý z těch dnů, kurz ČNB z toho dne a procento mezi nimi. "
+        "Euro je dolar přepočtený kurzem EUR/USD z téhož lístku. "
+        "Koruna je to euro krát kurz EUR/CZK z toho dne, ať jde nákup a nabídka porovnat v penězích, které tehdy platily."
+    )
+    day_from, day_to = st.columns(2)
+    first = day_from.date_input(
+        "První den",
+        value=datetime(2026, 8, 18).date(),
+        format="DD.MM.YYYY",
+        key="metal_cmp_from",
+    )
+    second = day_to.date_input(
+        "Druhý den",
+        value=datetime(2026, 9, 24).date(),
+        format="DD.MM.YYYY",
+        key="metal_cmp_to",
+    )
+    cards = st.columns(2)
+    for (metal_key, _label, _card_class, _stock), col in zip(_LME_METAL_CARDS, cards):
+        with col:
+            st.markdown(
+                _metal_compare_html(
+                    t(_label),
+                    first,
+                    second,
+                    _metal_quote_on(metal_key, first),
+                    _metal_quote_on(metal_key, second),
+                ),
+                unsafe_allow_html=True,
+            )
+
+
 def render_metals() -> None:
     """Sekce 1 – LME kovy, spot CCMN vs LME, historie Westmetall."""
 
@@ -4693,6 +4989,8 @@ def render_metals() -> None:
     with col_al:
         _render_lme_metal_card(al_cfg[0], t(al_cfg[1]), al_cfg[2], al_cfg[3], wm_data)
 
+    st.markdown("<br>", unsafe_allow_html=True)
+    _render_metal_date_compare()
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Historické grafy — pod sebou na plnou šířku (mobil-friendly) ─────────
@@ -7669,6 +7967,18 @@ def _js_int32(value: int) -> int:
     return value
 
 
+def _mbenzin_js_shift(body: str) -> int:
+    """Posun znaků z ověřovací stránky. V prohlížeči má typeof funkce délku 8."""
+    match = re.search(
+        r"t=\((typeof [^)]+(?:\+typeof [^)]+)*)\)\.length\s*-\s*(\d+)",
+        body or "",
+    )
+    if not match:
+        return 0
+    width = len("function") * match.group(1).count("typeof")
+    return width - int(match.group(2))
+
+
 def _mbenzin_cookie_from_challenge(html: str) -> str | None:
     """Přístupová cookie. mBenzin ji skládá v JS a vzorec se při každém načtení mění."""
     script = re.search(r"<script>(.*?)</script>", html or "", re.S)
@@ -7681,6 +7991,7 @@ def _mbenzin_cookie_from_challenge(html: str) -> str | None:
             r"v\s*(\^|\+|-)=\((\d+)\+\(i\*(\d+)\)%(\d+)\)",
             loop.group(1),
         )
+        shift = _mbenzin_js_shift(body)
         if data and ops:
             chars: list[str] = []
             for index, raw in enumerate(data):
@@ -7693,7 +8004,7 @@ def _mbenzin_cookie_from_challenge(html: str) -> str | None:
                         value = value - delta
                     else:
                         value = value + delta
-                code = int(value) & 0xFFFF
+                code = (int(value) + shift) & 0xFFFF
                 if code > 255:
                     chars = []
                     break
@@ -7707,24 +8018,53 @@ def _mbenzin_cookie_from_challenge(html: str) -> str | None:
     return None
 
 
+_MBENZIN_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "cs-CZ,cs;q=0.9",
+}
+
+
+def _mbenzin_confirm(session, html: str, token: str) -> None:
+    """Po cookie mBenzin ještě čeká na potvrzení. Bez něj server stránku s cenou nedostane."""
+    script = re.search(r"<script>(.*?)</script>", html or "", re.S)
+    body = script.group(1) if script else ""
+    found = re.search(r'fetch\("(/[^"?]+)', body)
+    path = found.group(1) if found else "/_vratna/potvrd"
+    try:
+        session.get(
+            "https://www.mbenzin.cz" + path,
+            params={"t": token, "z": "Europe/Prague"},
+            headers={**_MBENZIN_HEADERS, "Cookie": f"mb_vratna={token}"},
+            timeout=20,
+        )
+    except Exception:
+        return
+
+
 def _mbenzin_diesel_once() -> dict | None:
     """Jedno stažení celostátního průměru nafty. Neúspěch se neukládá."""
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-        ),
-        "Accept-Language": "cs",
-    }
     try:
         session = requests.Session()
-        res = session.get(_MBENZIN_DIESEL_URL, headers=headers, timeout=20)
+        res = session.get(_MBENZIN_DIESEL_URL, headers=_MBENZIN_HEADERS, timeout=20)
         if "tile-value" not in (res.text or ""):
             token = _mbenzin_cookie_from_challenge(res.text or "")
             if not token:
                 return None
             session.cookies.set("mb_vratna", token, domain="www.mbenzin.cz", path="/")
-            res = session.get(_MBENZIN_DIESEL_URL, headers=headers, timeout=20)
+            _mbenzin_confirm(session, res.text or "", token)
+            res = session.get(
+                _MBENZIN_DIESEL_URL,
+                headers={
+                    **_MBENZIN_HEADERS,
+                    "Cookie": f"mb_vratna={token}",
+                    "Referer": _MBENZIN_DIESEL_URL,
+                },
+                timeout=20,
+            )
         res.encoding = "utf-8"
         soup = BeautifulSoup(res.text, "lxml")
     except Exception:
@@ -7748,6 +8088,14 @@ def _mbenzin_diesel_once() -> dict | None:
             if stations_match:
                 stations = int(re.sub(r"\s+", "", stations_match.group(1)))
         break
+    if price is None:
+        plain = re.search(
+            r"průměrná cena nafty\s*(\d+[.,]\d+)",
+            soup.get_text(" ", strip=True),
+            re.I,
+        )
+        if plain:
+            price = float(plain.group(1).replace(",", "."))
     if price is None or not (20.0 <= price <= 80.0):
         return None
     day = None
@@ -7756,13 +8104,59 @@ def _mbenzin_diesel_once() -> dict | None:
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
             day = text
             break
-    return {"czk": price, "date": day, "stations": stations}
+    return {"czk": price, "date": day, "stations": stations, "source": "mbenzin"}
+
+
+_KURZY_DIESEL_URL = "https://www.kurzy.cz/komodity/benzin-nafta-cena/"
+
+
+def _kurzy_diesel_once() -> dict | None:
+    """Denní cena nafty u českých pump, když mBenzin ověření nepustí."""
+    try:
+        res = requests.get(_KURZY_DIESEL_URL, headers=_MBENZIN_HEADERS, timeout=20)
+        res.encoding = "utf-8"
+        soup = BeautifulSoup(res.text, "lxml")
+    except Exception:
+        return None
+    best: dict | None = None
+    for table in soup.select("table"):
+        header_row = table.find("tr")
+        if header_row is None:
+            continue
+        headers = [
+            cell.get_text(" ", strip=True).lower()
+            for cell in header_row.find_all(["th", "td"])
+        ]
+        if "datum" not in headers or "nafta" not in headers:
+            continue
+        price_at = headers.index("nafta")
+        for row in table.find_all("tr")[1:]:
+            cells = [cell.get_text(" ", strip=True) for cell in row.find_all("td")]
+            if len(cells) <= price_at:
+                continue
+            day_match = re.fullmatch(r"(\d{1,2})\.(\d{1,2})\.(\d{4})", cells[0])
+            price_match = re.search(r"(\d+[.,]\d+)", cells[price_at])
+            if not day_match or not price_match:
+                continue
+            price = float(price_match.group(1).replace(",", "."))
+            if not (20.0 <= price <= 80.0):
+                continue
+            day = (
+                f"{int(day_match.group(3)):04d}-"
+                f"{int(day_match.group(2)):02d}-"
+                f"{int(day_match.group(1)):02d}"
+            )
+            if best is None or day > str(best["date"]):
+                best = {"czk": price, "date": day, "stations": None, "source": "kurzy"}
+    return best
 
 
 @st.cache_data(ttl=6 * 3600, show_spinner=False)
 def _fetch_mbenzin_diesel_cached() -> dict:
-    """Úspěšný průměr nafty. Výjimka se do cache neukládá, ať se další pokus zkusí znovu."""
+    """Úspěšná cena nafty. Výjimka se do cache neukládá, ať se další pokus zkusí znovu."""
     data = _mbenzin_diesel_once()
+    if not data:
+        data = _kurzy_diesel_once()
     if not data:
         raise RuntimeError("mBenzin")
     return data
@@ -8953,7 +9347,7 @@ def _logistics_quote_panel() -> None:
                 step=0.1,
                 format="%.2f",
                 key=f"log_diesel_{v_idx}_{diesel_seed}",
-                help="Předvyplněno z mBenzin. Když se nenačte, napiš cenu ručně — sazba se přepočítá.",
+                help="Předvyplněno z aktuální ceny nafty. Když se nenačte, napiš cenu ručně — sazba se přepočítá.",
             )
             suggested_rate = _diesel_adjusted_rate(def_rate, l_per_100, float(nafta_czk))
             sazba = st.number_input(
