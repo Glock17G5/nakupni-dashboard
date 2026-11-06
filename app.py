@@ -546,6 +546,55 @@ footer { visibility: hidden; }
     color: #F2F5F9;
 }
 .metal-cmp td:first-child { color: #9AA6B8; font-weight: 650; }
+.metal-cmp-section td {
+    text-align: left !important;
+    font-family: Inter, system-ui, sans-serif !important;
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: #8D99AB !important;
+    padding-top: 12px;
+}
+.metal-cmp-name {
+    font-family: Inter, system-ui, sans-serif;
+    font-size: 1.7rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+    margin-bottom: 6px;
+}
+.metal-cmp-cu { color: #fb923c; }
+.metal-cmp-al { color: #d5dde8; }
+.metal-cmp-hero { margin: 2px 0 12px; }
+.metal-cmp-pct {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 2rem;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+}
+.metal-cmp-abs {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #F2F5F9;
+    margin-top: 2px;
+}
+.metal-cmp-kicker {
+    font-size: 0.75rem;
+    color: #9AA6B8;
+    margin-top: 2px;
+}
+.metal-cmp-up { color: #4ADE9C; }
+.metal-cmp-down { color: #F58489; }
+.metal-cmp-flat { color: #9AA6B8; }
+.metal-cmp-story {
+    margin-top: 10px;
+    font-size: 0.92rem;
+    line-height: 1.45;
+    color: #E9EDF3;
+}
 .metal-cmp-note {
     margin-top: 8px;
     font-size: 0.78rem;
@@ -1397,8 +1446,13 @@ p, span, label, .stMarkdown { color: #243140; }
 .card-extra-emphasis, .metal-price-grid, .metal-price-col-ccmn { border-color: #E1E6EE; }
 .metal-price-grid { background: #F7F9FC; }
 .metal-cmp th, .metal-cmp td { border-bottom-color: #E1E6EE; }
-.metal-cmp th, .metal-cmp td:first-child, .metal-cmp-note { color: #5C6B7C; }
-.metal-cmp td { color: #142033; }
+.metal-cmp th, .metal-cmp td:first-child, .metal-cmp-note, .metal-cmp-kicker { color: #5C6B7C; }
+.metal-cmp td, .metal-cmp-abs, .metal-cmp-story { color: #142033; }
+.metal-cmp-cu { color: #c2410c; }
+.metal-cmp-al { color: #334155; }
+.metal-cmp-up { color: #0E7A48; }
+.metal-cmp-down { color: #9B1C1C; }
+.metal-cmp-flat { color: #5C6B7C; }
 .info-box { color: #243140; }
 .info-box strong { color: #142033; }
 .success-box { color: #0E7A48; }
@@ -4871,90 +4925,432 @@ def _quote_shift_note(picked, quote: dict | None) -> str:
     return ", ".join(bits)
 
 
-def _metal_compare_html(name: str, day_from, day_to, left: dict | None, right: dict | None) -> str:
-    """Tabulka dvou dnů: cena v USD, EUR, CZK a kurzy, které se na ni použily."""
-    specs = (
-        ("USD/t", "usd", 0),
-        ("EUR/t", "eur", 0),
-        ("CZK/t", "czk", 0),
-        ("EUR/CZK", "eur_czk", 3),
-        ("EUR/USD", "eur_usd", 4),
+def _signed_num(value: float | None, decimals: int) -> str:
+    if value is None:
+        return "—"
+    sign = "+" if value > 0 else ""
+    return f"{sign}{format_num(value, decimals)}"
+
+
+def _signed_pct(value: float | None) -> str:
+    if value is None:
+        return "—"
+    sign = "+" if value > 0 else ""
+    return f"{sign}{format_num(value, 2)} %"
+
+
+def _move_tone(value: float | None) -> str:
+    if value is None or abs(value) <= 0.005:
+        return "metal-cmp-flat"
+    return "metal-cmp-up" if value > 0 else "metal-cmp-down"
+
+
+def _metal_move_story(left: dict | None, right: dict | None) -> str:
+    """Kolik procentních bodů v korunách udělal kov a kolik kurz."""
+    if not left or not right:
+        return ""
+    usd = _move_pct(right.get("usd"), left.get("usd"))
+    czk = _move_pct(right.get("czk"), left.get("czk"))
+    if usd is None or czk is None:
+        return ""
+    return (
+        f"V korunách {_signed_pct(czk)}. "
+        f"Z toho {_signed_pct(usd)} je samotný kov a {_signed_pct(czk - usd)} udělal kurz."
     )
+
+
+def _cmp_rows_html(rows: list[tuple[str, str, int]], left: dict | None, right: dict | None) -> str:
     body: list[str] = []
-    for label, key, decimals in specs:
+    for label, key, decimals in rows:
         start = None if not left else left.get(key)
         end = None if not right else right.get(key)
-        start_txt = "—" if start is None else format_num(start, decimals)
-        end_txt = "—" if end is None else format_num(end, decimals)
+        diff = None if start is None or end is None else float(end) - float(start)
         body.append(
             "<tr>"
             f"<td>{html.escape(label)}</td>"
-            f"<td>{html.escape(start_txt)}</td>"
-            f"<td>{html.escape(end_txt)}</td>"
+            f"<td>{html.escape('—' if start is None else format_num(start, decimals))}</td>"
+            f"<td>{html.escape('—' if end is None else format_num(end, decimals))}</td>"
+            f"<td>{html.escape(_signed_num(diff, decimals))}</td>"
             f"<td>{delta_chip(_move_pct(end, start), ' %')}</td>"
             "</tr>"
         )
+    return "".join(body)
+
+
+def _metal_compare_html(name: str, day_from, day_to, left: dict | None, right: dict | None) -> str:
+    """Karta dvou dnů: velký rozdíl v korunách, ceny a kurzy zvlášť."""
+    accent = "metal-cmp-cu" if "Cu" in name else "metal-cmp-al"
+    czk_start = None if not left else left.get("czk")
+    czk_end = None if not right else right.get("czk")
+    czk_pct = _move_pct(czk_end, czk_start)
+    czk_diff = None if czk_start is None or czk_end is None else float(czk_end) - float(czk_start)
+    tone = _move_tone(czk_pct)
+    prices = (("USD/t", "usd", 0), ("EUR/t", "eur", 0), ("CZK/t", "czk", 0))
+    rates = (("EUR/CZK", "eur_czk", 3), ("EUR/USD", "eur_usd", 4))
     notes = []
     for label, day, quote in (("První den", day_from, left), ("Druhý den", day_to, right)):
         note = _quote_shift_note(day, quote)
         if note:
             notes.append(f"{label}: {note}.")
-    note_html = ""
-    if notes:
-        note_html = f'<div class="metal-cmp-note">{html.escape(" ".join(notes))}</div>'
+    if left and right and left.get("price_date") is not None and right.get("price_date") is not None:
+        gap = abs((pd.Timestamp(right["price_date"]) - pd.Timestamp(left["price_date"])).days)
+        notes.insert(0, f"Mezi cenami je {int(gap)} dní.")
+    note_html = f'<div class="metal-cmp-note">{html.escape(" ".join(notes))}</div>' if notes else ""
+    story = _metal_move_story(left, right)
+    story_html = f'<div class="metal-cmp-story">{html.escape(story)}</div>' if story else ""
     return (
         '<div class="metric-card card-neutral">'
-        f'<div class="card-label">{html.escape(name)}</div>'
+        f'<div class="metal-cmp-name {accent}">{html.escape(name)}</div>'
+        f'<div class="metal-cmp-hero">'
+        f'<div class="metal-cmp-pct {tone}">{html.escape(_signed_pct(czk_pct))}</div>'
+        f'<div class="metal-cmp-abs">{html.escape(_signed_num(czk_diff, 0))} Kč/t</div>'
+        '<div class="metal-cmp-kicker">v korunách za tunu</div>'
+        "</div>"
         '<div class="metal-cmp-wrap"><table class="metal-cmp">'
         "<thead><tr><th></th>"
         f"<th>{html.escape(_cz_day(day_from))}</th>"
         f"<th>{html.escape(_cz_day(day_to))}</th>"
-        "<th>Změna</th></tr></thead>"
-        f"<tbody>{''.join(body)}</tbody></table></div>"
-        f"{note_html}</div>"
+        "<th>Rozdíl</th><th>Změna</th></tr></thead><tbody>"
+        '<tr class="metal-cmp-section"><td colspan="5">Ceny</td></tr>'
+        f"{_cmp_rows_html(list(prices), left, right)}"
+        '<tr class="metal-cmp-section"><td colspan="5">Kurzy toho dne</td></tr>'
+        f"{_cmp_rows_html(list(rates), left, right)}"
+        "</tbody></table></div>"
+        f"{story_html}{note_html}</div>"
     )
+
+
+def _metal_cmp_summary(day_from, day_to) -> str:
+    bits = [f"{_cz_day(day_from)} → {_cz_day(day_to)}"]
+    for metal_key, short in (("copper", "měď"), ("aluminum", "hliník")):
+        left = _metal_quote_on(metal_key, day_from)
+        right = _metal_quote_on(metal_key, day_to)
+        pct = _move_pct(
+            None if not right else right.get("czk"),
+            None if not left else left.get("czk"),
+        )
+        bits.append(f"{short} {_signed_pct(pct)} v Kč")
+    return " · ".join(bits)
+
+
+def _metal_compare_excel_bytes(
+    day_from,
+    day_to,
+    note: str,
+    metals: list[tuple[str, dict | None, dict | None]],
+) -> bytes:
+    """Excel s trhem zamčeným ve vzorcích a žlutými buňkami na dvě nabídky."""
+    from io import BytesIO
+
+    from openpyxl import Workbook
+    from openpyxl.comments import Comment
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Protection, Side
+    from openpyxl.worksheet.datavalidation import DataValidation
+    from openpyxl.worksheet.page import PageMargins
+
+    header_fill = PatternFill("solid", fgColor="1B3A4B")
+    header_font = Font(name="Calibri", bold=True, color="FFFFFF", size=11)
+    title_font = Font(name="Calibri", bold=True, size=16, color="1B3A4B")
+    label_font = Font(name="Calibri", bold=True, size=11)
+    body_font = Font(name="Calibri", size=11)
+    input_fill = PatternFill("solid", fgColor="FFF3C4")
+    input_font = Font(name="Calibri", bold=True, size=12)
+    metal_fill = PatternFill("solid", fgColor="F97316")
+    metal_font = Font(name="Calibri", bold=True, color="FFFFFF", size=16)
+    section_fill = PatternFill("solid", fgColor="E8EEF4")
+    kov_fill = PatternFill("solid", fgColor="E7F6EE")
+    mena_fill = PatternFill("solid", fgColor="E7F0FA")
+    other_fill = PatternFill("solid", fgColor="FBF3E4")
+    thin = Border(
+        left=Side(style="thin", color="D0D5DD"),
+        right=Side(style="thin", color="D0D5DD"),
+        top=Side(style="thin", color="D0D5DD"),
+        bottom=Side(style="thin", color="D0D5DD"),
+    )
+    mid = Alignment(vertical="center")
+    wrap = Alignment(vertical="center", wrap_text=True)
+    unlocked = Protection(locked=False)
+
+    def paint(cell, value, font=body_font, fill=None, fmt=None, lock=True, align=None):
+        cell.value = value
+        cell.font = font
+        cell.border = thin
+        cell.alignment = align or mid
+        cell.protection = Protection(locked=lock)
+        if fill is not None:
+            cell.fill = fill
+        if fmt:
+            cell.number_format = fmt
+        return cell
+
+    def market_row(ws, row, label, start, end, decimals):
+        paint(ws.cell(row, 1), label, label_font)
+        num_fmt = "#,##0.00" if decimals <= 2 else ("0.000" if decimals == 3 else "0.0000")
+        paint(ws.cell(row, 2), None if start is None else float(start), fmt=num_fmt)
+        paint(ws.cell(row, 3), None if end is None else float(end), fmt=num_fmt)
+        b, c = f"B{row}", f"C{row}"
+        paint(ws.cell(row, 4), f'=IF(OR({b}="",{c}=""),"",{c}-{b})', fmt=num_fmt)
+        paint(ws.cell(row, 5), f'=IF(OR({b}="",{b}=0,{c}=""),"",{c}/{b}-1)', fmt="0.00%")
+
+    wb = Workbook()
+    wb.properties.title = "pbcable porovnání"
+    wb.properties.creator = "pbcable dashboard"
+    ws = wb.active
+    ws.title = "Jednání"
+    paint(ws.cell(1, 1), "Porovnání nabídek", title_font, align=wrap)
+    ws.merge_cells("A1:E1")
+    ws.row_dimensions[1].height = 24
+    paint(ws.cell(2, 1), "Poznámka", label_font)
+    paint(ws.cell(2, 2), note or None, input_font, input_fill, lock=False)
+    ws.merge_cells("B2:E2")
+    paint(ws.cell(3, 1), "První den", label_font)
+    paint(ws.cell(3, 2), datetime(day_from.year, day_from.month, day_from.day), fmt="DD.MM.YYYY")
+    paint(ws.cell(4, 1), "Druhý den", label_font)
+    paint(ws.cell(4, 2), datetime(day_to.year, day_to.month, day_to.day), fmt="DD.MM.YYYY")
+    paint(
+        ws.cell(5, 1),
+        "Žluté buňky se vyplňují. Podíl kovu 100 % znamená, že celá cena nabídky má jet s burzou. "
+        "Když je v ceně i zpracování, podíl snižte. "
+        "Kov je změna dolarové ceny LME. Měna je zbytek po přepočtu do měny nabídky kurzem toho dne. "
+        "Jiné vícenáklady jsou to, co z rozdílu nabídek neudělal ani kov, ani kurz.",
+        body_font,
+        align=wrap,
+    )
+    ws.merge_cells("A5:E5")
+    ws.row_dimensions[5].height = 48
+
+    currency_cells: list[str] = []
+    row = 7
+    for name, left, right in metals:
+        left = left or {}
+        right = right or {}
+        for col in range(1, 6):
+            paint(ws.cell(row, col), name if col == 1 else None, metal_font, metal_fill)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
+        ws.row_dimensions[row].height = 26
+        row += 1
+        for col, title in enumerate(("", "První den", "Druhý den", "Rozdíl", "Změna"), start=1):
+            paint(ws.cell(row, col), title, header_font, header_fill)
+        row += 1
+        usd_row = row
+        market_row(ws, row, "USD/t", left.get("usd"), right.get("usd"), 2)
+        row += 1
+        eur_row = row
+        market_row(ws, row, "EUR/t", left.get("eur"), right.get("eur"), 2)
+        row += 1
+        czk_row = row
+        market_row(ws, row, "CZK/t", left.get("czk"), right.get("czk"), 2)
+        row += 1
+        market_row(ws, row, "EUR/CZK", left.get("eur_czk"), right.get("eur_czk"), 3)
+        row += 1
+        market_row(ws, row, "EUR/USD", left.get("eur_usd"), right.get("eur_usd"), 4)
+        row += 1
+        shift = []
+        for label, picked, quote in (("První den", day_from, left), ("Druhý den", day_to, right)):
+            text = _quote_shift_note(picked, quote or None)
+            if text:
+                shift.append(f"{label}: {text}.")
+        if shift:
+            paint(ws.cell(row, 1), " ".join(shift), body_font, align=wrap)
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
+            row += 1
+        row += 1
+        paint(ws.cell(row, 1), "Měna nabídky", label_font, section_fill)
+        currency_cell = f"B{row}"
+        paint(ws.cell(row, 2), "CZK", input_font, input_fill, lock=False)
+        currency_cells.append(currency_cell)
+        for col in range(3, 6):
+            paint(ws.cell(row, col), None, fill=section_fill)
+        row += 1
+        paint(ws.cell(row, 1), "Cena první nabídky", label_font)
+        offer1 = f"B{row}"
+        paint(ws.cell(row, 2), None, input_font, input_fill, "#,##0.00", lock=False)
+        row += 1
+        paint(ws.cell(row, 1), "Cena druhé nabídky", label_font)
+        offer2 = f"B{row}"
+        paint(ws.cell(row, 2), None, input_font, input_fill, "#,##0.00", lock=False)
+        row += 1
+        paint(ws.cell(row, 1), "Podíl kovu v ceně", label_font)
+        share = f"B{row}"
+        share_cell = paint(ws.cell(row, 2), 1, input_font, input_fill, "0%", lock=False)
+        share_cell.comment = Comment(
+            "100 % = celá cena má následovat burzu. "
+            "60 % = kov tvoří 60 % ceny, zpracování při srovnání s burzou stojí.",
+            "pbcable",
+            width=240,
+            height=70,
+        )
+        row += 1
+        paint(ws.cell(row, 2), "Částka", header_font, header_fill)
+        paint(ws.cell(row, 3), "Podíl z první ceny", header_font, header_fill)
+        for col in (1, 4, 5):
+            paint(ws.cell(row, col), None, header_font, header_fill)
+        row += 1
+        u1, u2 = f"B{usd_row}", f"C{usd_row}"
+        e1, e2 = f"B{eur_row}", f"C{eur_row}"
+        k1, k2 = f"B{czk_row}", f"C{czk_row}"
+        idx1 = f'IF({currency_cell}="EUR",{e1},IF({currency_cell}="USD",{u1},{k1}))'
+        idx2 = f'IF({currency_cell}="EUR",{e2},IF({currency_cell}="USD",{u2},{k2}))'
+        ready = f'OR({offer1}="",{offer2}="",{share}="",{u1}="",{u1}=0,{idx1}=0)'
+        paint(ws.cell(row, 1), "Kov", label_font, kov_fill)
+        kov = f"B{row}"
+        paint(
+            ws.cell(row, 2),
+            f'=IF({ready},"",{offer1}*{share}*({u2}/{u1}-1))',
+            label_font,
+            kov_fill,
+            "#,##0.00",
+        )
+        paint(
+            ws.cell(row, 3),
+            f'=IF(OR({kov}="",{offer1}="",{offer1}=0),"",{kov}/{offer1})',
+            fmt="0.00%",
+            fill=kov_fill,
+        )
+        for col in range(4, 6):
+            paint(ws.cell(row, col), None, fill=kov_fill)
+        row += 1
+        paint(ws.cell(row, 1), "Měna", label_font, mena_fill)
+        mena = f"B{row}"
+        paint(
+            ws.cell(row, 2),
+            f'=IF({ready},"",{offer1}*{share}*(({idx2})/({idx1})-{u2}/{u1}))',
+            label_font,
+            mena_fill,
+            "#,##0.00",
+        )
+        paint(
+            ws.cell(row, 3),
+            f'=IF(OR({mena}="",{offer1}="",{offer1}=0),"",{mena}/{offer1})',
+            fmt="0.00%",
+            fill=mena_fill,
+        )
+        for col in range(4, 6):
+            paint(ws.cell(row, col), None, fill=mena_fill)
+        row += 1
+        paint(ws.cell(row, 1), "Jiné vícenáklady", label_font, other_fill)
+        paint(
+            ws.cell(row, 2),
+            f'=IF(OR({offer1}="",{offer2}=""),"",({offer2}-{offer1})-IF({kov}="",0,{kov})-IF({mena}="",0,{mena}))',
+            label_font,
+            other_fill,
+            "#,##0.00",
+        )
+        other = f"B{row}"
+        paint(
+            ws.cell(row, 3),
+            f'=IF(OR({other}="",{offer1}="",{offer1}=0),"",{other}/{offer1})',
+            fmt="0.00%",
+            fill=other_fill,
+        )
+        for col in range(4, 6):
+            paint(ws.cell(row, col), None, fill=other_fill)
+        row += 1
+        paint(ws.cell(row, 1), "Rozdíl nabídek", label_font)
+        paint(
+            ws.cell(row, 2),
+            f'=IF(OR({offer1}="",{offer2}=""),"",{offer2}-{offer1})',
+            label_font,
+            fmt="#,##0.00",
+        )
+        diff = f"B{row}"
+        paint(
+            ws.cell(row, 3),
+            f'=IF(OR({diff}="",{offer1}="",{offer1}=0),"",{diff}/{offer1})',
+            fmt="0.00%",
+        )
+        row += 2
+
+    paint(
+        ws.cell(row, 1),
+        "Ceny kovu: LME Cash, Westmetall. Kurzy: denní lístek ČNB. "
+        "Euro = dolar ÷ EUR/USD toho dne. Koruna = euro × EUR/CZK toho dne. "
+        f"Vygenerováno {now_prague().strftime('%d.%m.%Y %H:%M')}.",
+        body_font,
+        align=wrap,
+    )
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
+    ws.row_dimensions[row].height = 36
+
+    if currency_cells:
+        check = DataValidation(type="list", formula1='"CZK,EUR,USD"', allow_blank=False)
+        check.error = "Vyberte CZK, EUR nebo USD."
+        check.errorTitle = "Měna nabídky"
+        for cell_ref in currency_cells:
+            check.add(cell_ref)
+        ws.add_data_validation(check)
+
+    ws.column_dimensions["A"].width = 28
+    ws.column_dimensions["B"].width = 24
+    ws.column_dimensions["C"].width = 18
+    ws.column_dimensions["D"].width = 16
+    ws.column_dimensions["E"].width = 14
+    ws.freeze_panes = "A7"
+    ws.page_setup.orientation = "portrait"
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 1
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_margins = PageMargins(left=0.6, right=0.6, top=0.7, bottom=0.7)
+    ws.oddHeader.left.text = "pbcable — porovnání nabídek"
+    ws.oddFooter.right.text = "Strana &P / &N"
+    ws.sheet_view.showGridLines = False
+    ws.protection.sheet = True
+
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 @st.fragment
 def _render_metal_date_compare() -> None:
-    """Dva zvolené dny: cena, kurz z toho dne a procento mezi nimi."""
-    st.markdown(
-        "<div style='font-family:Inter, system-ui, sans-serif;font-size:0.75rem;font-weight:700;"
-        "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;margin:4px 0 8px;'>"
-        "Porovnání dvou dnů</div>",
-        unsafe_allow_html=True,
-    )
-    st.caption(
-        "Cena LME v každý z těch dnů, kurz ČNB z toho dne a procento mezi nimi. "
-        "Euro je dolar přepočtený kurzem EUR/USD z téhož lístku. "
-        "Koruna je to euro krát kurz EUR/CZK z toho dne, ať jde nákup a nabídka porovnat v penězích, které tehdy platily."
-    )
-    day_from, day_to = st.columns(2)
-    first = day_from.date_input(
-        "První den",
-        value=datetime(2026, 8, 18).date(),
-        format="DD.MM.YYYY",
-        key="metal_cmp_from",
-    )
-    second = day_to.date_input(
-        "Druhý den",
-        value=datetime(2026, 9, 24).date(),
-        format="DD.MM.YYYY",
-        key="metal_cmp_to",
-    )
-    cards = st.columns(2)
-    for (metal_key, _label, _card_class, _stock), col in zip(_LME_METAL_CARDS, cards):
-        with col:
-            st.markdown(
-                _metal_compare_html(
-                    t(_label),
-                    first,
-                    second,
-                    _metal_quote_on(metal_key, first),
-                    _metal_quote_on(metal_key, second),
-                ),
-                unsafe_allow_html=True,
-            )
+    """Dva zvolené dny ve sbalovacím okně, s Excelem na jednání s dodavatelem."""
+    default_from = datetime(2026, 8, 18).date()
+    default_to = datetime(2026, 9, 24).date()
+    shown_from = st.session_state.get("metal_cmp_from", default_from)
+    shown_to = st.session_state.get("metal_cmp_to", default_to)
+    with st.expander(f"Porovnání dvou dnů · {_metal_cmp_summary(shown_from, shown_to)}", expanded=False):
+        st.caption(
+            "Koruna je euro toho dne krát kurz EUR/CZK z ČNB. "
+            "V Excelu se do žlutých buněk doplní obě nabídky a vzorce oddělí kov, kurz a jiné vícenáklady."
+        )
+        day_from, day_to = st.columns(2)
+        first = day_from.date_input(
+            "První den",
+            value=default_from,
+            format="DD.MM.YYYY",
+            key="metal_cmp_from",
+        )
+        second = day_to.date_input(
+            "Druhý den",
+            value=default_to,
+            format="DD.MM.YYYY",
+            key="metal_cmp_to",
+        )
+        note = st.text_input(
+            "Poznámka do Excelu",
+            key="metal_cmp_note",
+            placeholder="třeba číslo nabídky",
+        )
+        cards = st.columns(2)
+        packed: list[tuple[str, dict | None, dict | None]] = []
+        for (metal_key, label, _card_class, _stock), col in zip(_LME_METAL_CARDS, cards):
+            left = _metal_quote_on(metal_key, first)
+            right = _metal_quote_on(metal_key, second)
+            packed.append((t(label), left, right))
+            with col:
+                st.markdown(
+                    _metal_compare_html(t(label), first, second, left, right),
+                    unsafe_allow_html=True,
+                )
+        st.download_button(
+            "⬇️ Stáhnout porovnání (Excel)",
+            data=_metal_compare_excel_bytes(first, second, note, packed),
+            file_name=f"pbcable_porovnani_{first.isoformat()}_{second.isoformat()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="metal_cmp_excel",
+            use_container_width=True,
+        )
 
 
 def render_metals() -> None:
