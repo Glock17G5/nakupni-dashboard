@@ -1,53 +1,53 @@
 {
   "ccmn": {
-    "copper": 110030.0,
-    "aluminum": 23380.0
+    "copper": 109515.0,
+    "aluminum": 23330.0
   },
   "yf_spot": {
     "HRC=F": {
-      "price": 1438.0,
-      "prev": 1355.0,
-      "delta": 83.0,
-      "delta_pct": 6.125
+      "price": 1380.0,
+      "prev": 1357.0,
+      "delta": 23.0,
+      "delta_pct": 1.695
     },
     "BZ=F": {
-      "price": 98.379997,
-      "prev": 94.620003,
-      "delta": 3.759995,
-      "delta_pct": 3.974
+      "price": 97.699997,
+      "prev": 98.290001,
+      "delta": -0.590004,
+      "delta_pct": -0.6
     },
     "CL=F": {
-      "price": 90.699997,
-      "prev": 88.120003,
-      "delta": 2.579994,
-      "delta_pct": 2.928
+      "price": 90.220001,
+      "prev": 90.519997,
+      "delta": -0.299995,
+      "delta_pct": -0.331
     },
     "EURUSD=X": {
-      "price": 1.122586,
-      "prev": 1.120724,
-      "delta": 0.001862,
-      "delta_pct": 0.166
+      "price": 1.117194,
+      "prev": 1.123495,
+      "delta": -0.006301,
+      "delta_pct": -0.561
     },
     "EURCZK=X": {
-      "price": 24.334499,
-      "prev": 24.335501,
-      "delta": -0.001001,
-      "delta_pct": -0.004
+      "price": 24.301001,
+      "prev": 24.259199,
+      "delta": 0.041801,
+      "delta_pct": 0.172
     },
     "HG=F": {
-      "price": 6.2225,
-      "prev": 6.403,
-      "delta": -0.1805,
-      "delta_pct": -2.819
+      "price": 6.2635,
+      "prev": 6.249,
+      "delta": 0.0145,
+      "delta_pct": 0.232
     },
     "ALI=F": {
-      "price": 3192.5,
-      "prev": 3253.75,
-      "delta": -61.25,
-      "delta_pct": -1.882
+      "price": 3195.0,
+      "prev": 3209.75,
+      "delta": -14.75,
+      "delta_pct": -0.46
     }
   },
-  "_ts": "2026-11-05 20:37",
+  "_ts": "2026-11-06 12:53",
   "_health": {
     "ccmn_copper": true,
     "ccmn_aluminum": true,
@@ -55,5 +55,5 @@
     "eurusd": true,
     "history": true
   },
-  "_alert_sig": "2026-11-05|Brent den: +4.0 % (pr\u00e1h \u00b13.0 %) \u00b7 $98.38"
+  "_alert_sig": "2026-11-06|"
 }
