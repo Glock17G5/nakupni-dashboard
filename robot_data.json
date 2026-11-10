@@ -1,53 +1,53 @@
 {
   "ccmn": {
-    "copper": 109885.0,
-    "aluminum": 23530.0
+    "copper": 109780.0,
+    "aluminum": 23290.0
   },
   "yf_spot": {
     "HRC=F": {
-      "price": 1417.0,
-      "prev": 1357.0,
-      "delta": 60.0,
-      "delta_pct": 4.422
+      "price": 1414.0,
+      "prev": 1359.0,
+      "delta": 55.0,
+      "delta_pct": 4.047
     },
     "BZ=F": {
-      "price": 94.18,
-      "prev": 98.32,
-      "delta": -4.139999,
-      "delta_pct": -4.211
+      "price": 89.860001,
+      "prev": 92.57,
+      "delta": -2.709999,
+      "delta_pct": -2.928
     },
     "CL=F": {
-      "price": 87.279999,
-      "prev": 90.830002,
-      "delta": -3.550003,
-      "delta_pct": -3.908
+      "price": 84.709999,
+      "prev": 86.849998,
+      "delta": -2.139999,
+      "delta_pct": -2.464
     },
     "EURUSD=X": {
-      "price": 1.11957,
-      "prev": 1.122826,
-      "delta": -0.003256,
-      "delta_pct": -0.29
+      "price": 1.121202,
+      "prev": 1.114728,
+      "delta": 0.006474,
+      "delta_pct": 0.581
     },
     "EURCZK=X": {
-      "price": 24.365,
-      "prev": 24.310101,
-      "delta": 0.054899,
-      "delta_pct": 0.226
+      "price": 24.330799,
+      "prev": 24.3137,
+      "delta": 0.017099,
+      "delta_pct": 0.07
     },
     "HG=F": {
-      "price": 6.3205,
-      "prev": 6.218,
-      "delta": 0.1025,
-      "delta_pct": 1.648
+      "price": 6.287,
+      "prev": 6.3285,
+      "delta": -0.0415,
+      "delta_pct": -0.656
     },
     "ALI=F": {
-      "price": 3190.0,
-      "prev": 3236.25,
-      "delta": -46.25,
-      "delta_pct": -1.429
+      "price": 3141.0,
+      "prev": 3230.25,
+      "delta": -89.25,
+      "delta_pct": -2.763
     }
   },
-  "_ts": "2026-11-09 13:48",
+  "_ts": "2026-11-10 13:24",
   "_health": {
     "ccmn_copper": true,
     "ccmn_aluminum": true,
@@ -55,5 +55,5 @@
     "eurusd": true,
     "history": true
   },
-  "_alert_sig": "2026-11-09|Brent den: -4.2 % (pr\u00e1h \u00b13.0 %) \u00b7 $94.18"
+  "_alert_sig": "2026-11-10|"
 }
