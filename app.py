@@ -10222,8 +10222,8 @@ def _logistics_quote_panel() -> None:
                 )
             elif scope == "intl":
                 st.caption(
-                    "Cena k jednání je nabídka dopravce, mýto a čekání. "
-                    "Česká sazba Kč/km je jen odhad pod tou cenou."
+                    "Výchozí cena se počítá ze silničních kilometrů a nafty. "
+                    "Mýto, čekání nebo pevnou nabídku dopravce můžete doplnit níže."
                 )
 
             st.markdown("#### Parametry nákladu a vozidla")
@@ -10391,14 +10391,15 @@ def _logistics_quote_panel() -> None:
             wait_eur_day = 0.0
             wait_days = int(border_days)
             if scope == "intl":
-                st.markdown("#### Cena k jednání")
+                st.markdown("#### Mýto, čekání a nabídka dopravce")
                 carrier_eur = float(st.number_input(
-                    "Nabídka dopravce (EUR)",
+                    "Nabídka dopravce (EUR, 0 = počítat ze silnice)",
                     min_value=0.0,
                     value=0.0,
                     step=50.0,
                     format="%.0f",
                     key="logistics_carrier_eur",
+                    help="Nechte 0 a cena se spočítá ze silničních kilometrů a nafty. Při zadání částky > 0 se vezme nabídka dopravce.",
                 ))
                 toll_eur = float(st.number_input(
                     "Mýto a poplatky (EUR)",
@@ -10522,25 +10523,11 @@ def _logistics_quote_panel() -> None:
                 else "Kurz ČNB EUR/CZK není k dispozici"
             )
             deal_eur = None
-            if scope == "intl":
-                wait_eur = float(wait_eur_day) * int(wait_days)
-                deal_eur = float(carrier_eur) + float(toll_eur) + wait_eur
-                deal_czk = deal_eur * eur_czk if eur_czk else None
-                d1, d2 = st.columns(2)
-                d1.metric(
-                    "Cena k jednání",
-                    f"{format_num(deal_eur, 0)} EUR",
-                    help="Nabídka dopravce + mýto a poplatky + čekání.",
-                )
-                d2.metric(
-                    "V korunách",
-                    f"{format_num(deal_czk, 0)} Kč" if deal_czk is not None else "—",
-                    help=eur_help,
-                )
-                st.caption(
-                    f"Nabídka {format_num(carrier_eur, 0)} EUR + mýto {format_num(toll_eur, 0)} EUR "
-                    f"+ čekání {format_num(wait_eur_day, 0)} EUR/den × {int(wait_days)} dní."
-                )
+            wait_eur = float(wait_eur_day) * int(wait_days)
+            extra_eur = float(toll_eur) + wait_eur
+            extra_czk = (extra_eur * eur_czk) if eur_czk else 0.0
+            if scope == "intl" and float(carrier_eur) > 0:
+                deal_eur = float(carrier_eur) + extra_eur
             if quote["price_valid"] and price_czk is not None:
                 quote_row = {
                     "saved": now_prague().strftime("%d. %m. %Y %H:%M"),
@@ -10565,14 +10552,69 @@ def _logistics_quote_panel() -> None:
                     quote_row["deal_eur"] = int(round(deal_eur))
                 _remember_log_quote(quote_row)
             if scope == "intl":
-                if quote["price_valid"] and price_czk is not None:
-                    ftl_bit = f" · FTL {format_num(ftl_price, 0)} Kč" if ftl_price else ""
-                    st.caption(
-                        f"Odhad českým vzorcem, bez mýta a čekání: "
-                        f"LTL {format_num(price_czk, 0)} Kč{ftl_bit}."
+                if float(carrier_eur) > 0:
+                    deal_czk = deal_eur * eur_czk if (deal_eur is not None and eur_czk) else None
+                    d1, d2 = st.columns(2)
+                    d1.metric(
+                        "Cena dopravce celkem",
+                        f"{format_num(deal_eur, 0)} EUR",
+                        help="Zadaná nabídka dopravce + mýto a poplatky + čekání.",
                     )
-                elif quote["overload"]:
-                    st.caption("Český odhad za kilometr nejde spočítat — vozidlo je na tuhle váhu malé.")
+                    d2.metric(
+                        "V korunách",
+                        f"{format_num(deal_czk, 0)} Kč" if deal_czk is not None else "—",
+                        help=eur_help,
+                    )
+                    st.caption(
+                        f"Nabídka {format_num(carrier_eur, 0)} EUR + mýto {format_num(toll_eur, 0)} EUR "
+                        f"+ čekání {format_num(wait_eur_day, 0)} EUR/den × {int(wait_days)} dní."
+                    )
+                    if quote["price_valid"] and price_czk is not None:
+                        est_eur_txt = f"{format_num(price_eur, 0)} EUR · " if price_eur is not None else ""
+                        st.caption(
+                            f"Srovnání s odhadem ze silnice a nafty (bez mýta a čekání): "
+                            f"{est_eur_txt}{format_num(price_czk, 0)} Kč."
+                        )
+                elif quote["price_valid"] and price_czk is not None:
+                    intl_ltl_eur = (price_eur + extra_eur) if price_eur is not None else None
+                    intl_ftl_eur = (ftl_eur + extra_eur) if ftl_eur is not None else None
+                    intl_ltl_czk = price_czk + extra_czk
+                    intl_ftl_czk = (ftl_price + extra_czk) if ftl_price is not None else None
+                    p_eur, p_ftl_eur = st.columns(2)
+                    p_czk, p_ftl = st.columns(2)
+                    p_eur.metric(
+                        "Odhad zásilky (LTL v EUR)",
+                        f"{format_num(intl_ltl_eur, 0)} EUR" if intl_ltl_eur is not None else "—",
+                        help="Odhad ze silničních kilometrů a nafty + zadané mýto a čekání.",
+                    )
+                    p_ftl_eur.metric(
+                        "Celé auto (FTL v EUR)",
+                        f"{format_num(intl_ftl_eur, 0)} EUR" if intl_ftl_eur is not None else "—",
+                        help="Celý vůz ze silničních kilometrů a nafty + zadané mýto a čekání.",
+                    )
+                    p_czk.metric(
+                        "Odhad zásilky (CZK)",
+                        f"{format_num(intl_ltl_czk, 0)} Kč",
+                        help=eur_help,
+                    )
+                    p_ftl.metric(
+                        "Celé auto (CZK)",
+                        f"{format_num(intl_ftl_czk, 0)} Kč" if intl_ftl_czk is not None else "—",
+                        help=eur_help,
+                    )
+                    if extra_eur > 0:
+                        st.caption(
+                            f"V odhadu je započteno mýto {format_num(toll_eur, 0)} EUR a čekání "
+                            f"{format_num(wait_eur, 0)} EUR ({format_num(wait_eur_day, 0)} EUR/den × {int(wait_days)} dní). "
+                            "Pevnou nabídku dopravce případně zadejte vlevo."
+                        )
+                    else:
+                        st.caption(
+                            "Odhad ze silničních kilometrů a dnešní nafty (mýto a čekání jsou zatím 0 EUR). "
+                            "Mýto mimo ČR, sazbu za čekání nebo pevnou nabídku dopravce můžete doplnit vlevo."
+                        )
+                else:
+                    st.warning("Vozidlo je na tuhle váhu nebo ložné metry malé. Vyberte větší vůz nebo zadejte nabídku dopravce.")
                 if vehicle_key == "van" and quote["price_valid"]:
                     st.caption("Dodávka se v tom odhadu cení skoro jako celé auto, nejméně z 88 % kilometrů.")
             else:
