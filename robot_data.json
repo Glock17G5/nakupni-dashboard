@@ -1,53 +1,53 @@
 {
   "ccmn": {
-    "copper": 107470.0,
-    "aluminum": 22960.0
+    "copper": 107750.0,
+    "aluminum": 22860.0
   },
   "yf_spot": {
     "HRC=F": {
-      "price": 1353.0,
-      "prev": 1352.0,
-      "delta": 1.0,
-      "delta_pct": 0.074
+      "price": 1432.0,
+      "prev": 1354.0,
+      "delta": 78.0,
+      "delta_pct": 5.761
     },
     "BZ=F": {
-      "price": 94.519997,
-      "prev": 95.839996,
-      "delta": -1.32,
-      "delta_pct": -1.377
+      "price": 93.870003,
+      "prev": 92.440002,
+      "delta": 1.43,
+      "delta_pct": 1.547
     },
     "CL=F": {
-      "price": 87.769997,
-      "prev": 88.559998,
-      "delta": -0.790001,
-      "delta_pct": -0.892
+      "price": 87.150002,
+      "prev": 85.720001,
+      "delta": 1.43,
+      "delta_pct": 1.668
     },
     "EURUSD=X": {
-      "price": 1.101686,
-      "prev": 1.105021,
-      "delta": -0.003336,
-      "delta_pct": -0.302
+      "price": 1.099264,
+      "prev": 1.102487,
+      "delta": -0.003224,
+      "delta_pct": -0.292
     },
     "EURCZK=X": {
-      "price": 24.427999,
-      "prev": 24.377501,
-      "delta": 0.050499,
-      "delta_pct": 0.207
+      "price": 24.387899,
+      "prev": 24.395201,
+      "delta": -0.007301,
+      "delta_pct": -0.03
     },
     "HG=F": {
-      "price": 6.0475,
-      "prev": 6.0795,
-      "delta": -0.032,
-      "delta_pct": -0.526
+      "price": 5.9765,
+      "prev": 5.9975,
+      "delta": -0.021,
+      "delta_pct": -0.35
     },
     "ALI=F": {
-      "price": 3087.25,
-      "prev": 3133.25,
-      "delta": -46.0,
-      "delta_pct": -1.468
+      "price": 2990.0,
+      "prev": 3124.5,
+      "delta": -134.5,
+      "delta_pct": -4.305
     }
   },
-  "_ts": "2026-11-16 13:32",
+  "_ts": "2026-11-17 14:17",
   "_health": {
     "ccmn_copper": true,
     "ccmn_aluminum": true,
@@ -55,5 +55,5 @@
     "eurusd": true,
     "history": true
   },
-  "_alert_sig": "2026-11-16|"
+  "_alert_sig": "2026-11-17|Hlin\u00edk COMEX (ALI=F) den: -4.3 % (pr\u00e1h \u00b13.0 %) \u00b7 2990.0 USD"
 }
