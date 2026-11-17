@@ -250,7 +250,9 @@ header[data-testid="stHeader"] {
 footer { visibility: hidden; }
 [data-testid="stDecoration"] { display: none; }
 [data-testid="stStatusWidget"] { display: none; }
-.st-key-pbcable_theme_store {
+.st-key-pbcable_theme_store,
+.st-key-set_pbcable_log_quotes,
+.st-key-set_pbcable_china_rates {
     height: 0 !important;
     min-height: 0 !important;
     margin: 0 !important;
@@ -5302,9 +5304,12 @@ def _metal_compare_excel_bytes(
     return buf.getvalue()
 
 
-@st.fragment
 def _render_metal_date_compare() -> None:
-    """Nákup: dva zvolené dny ve sbalovacím okně, s Excelem na jednání s dodavatelem."""
+    """Nákup: dva zvolené dny ve sbalovacím okně, s Excelem na jednání s dodavatelem.
+
+    Není samostatný fragment. Změna dne má hned přepočítat cenu pod fakturou.
+    Základ faktury se při tom nepřepisuje, rozepsané řádky zůstávají.
+    """
     default_from = datetime(2026, 8, 18).date()
     default_to = datetime(2026, 9, 24).date()
     shown_from = st.session_state.get("metal_cmp_from", default_from)
@@ -6144,6 +6149,170 @@ def _apply_sales_pricing(
     return out
 
 
+_METAL_CHOICES = ("Měď", "Hliník")
+_METAL_CHOICE_KEY = {"Měď": "copper", "Hliník": "aluminum"}
+_COL_METAL_NAME = "Název"
+_COL_METAL = "Kov"
+_COL_METAL_SHARE = "Podíl kovu (%)"
+_COL_METAL_KOV = "Kov v ceně za 1 j. (EUR)"
+_COL_METAL_FX = "Měna v ceně za 1 j. (EUR)"
+_COL_NEW_PRICE = "Nová nákupní cena za 1 j. (EUR)"
+_COL_PRICE_NOW = "Nákup teď (EUR)"
+_COL_SALE_NOW = "Prodej teď (CZK)"
+_COL_NEW_SALE = "Nový prodej (CZK)"
+_NAKUP_METAL_COLS = (
+    _COL_METAL,
+    _COL_METAL_SHARE,
+    _COL_METAL_KOV,
+    _COL_METAL_FX,
+    _COL_NEW_PRICE,
+    "Nová hodnota řádku (EUR)",
+    "Nový podíl na faktuře",
+    "Doprava do proclení po kovu (EUR)",
+    "Dovoz po Česku po kovu (EUR)",
+    "Základ cla po kovu (EUR)",
+    "Clo po kovu (EUR)",
+    "Deklarace po kovu (EUR)",
+    "Landed po kovu (EUR)",
+    "Landed po kovu za 1 j. (EUR)",
+    "Landed po kovu za 1 j. (CZK)",
+    "Prodej při přirážce po kovu (CZK)",
+    "Prodej při marži po kovu (CZK)",
+    _COL_NEW_SALE,
+)
+
+
+def _metal_pair(metal_key: str, day_from, day_to) -> dict | None:
+    """USD a EUR za tunu ve dvou dnech. Bez ceny nebo kurzu vrací None."""
+    left = _metal_quote_on(metal_key, day_from)
+    right = _metal_quote_on(metal_key, day_to)
+    if not left or not right:
+        return None
+    needed = ("usd", "eur")
+    if any(left.get(key) in (None, 0) or right.get(key) in (None, 0) for key in needed):
+        return None
+    return {
+        "usd1": float(left["usd"]),
+        "usd2": float(right["usd"]),
+        "eur1": float(left["eur"]),
+        "eur2": float(right["eur"]),
+    }
+
+
+def _price_after_metal(price: float, share_pct: float, pair: dict) -> dict[str, float]:
+    """Podíl kovu jede s LME. V eurech je v tom i kurz dolaru. Zbytek ceny stojí."""
+    share = min(max(float(share_pct), 0.0), 100.0) / 100.0
+    usd_ratio = pair["usd2"] / pair["usd1"]
+    eur_ratio = pair["eur2"] / pair["eur1"]
+    kov = float(price) * share * (usd_ratio - 1.0)
+    mena = float(price) * share * (eur_ratio - usd_ratio)
+    return {"kov": kov, "mena": mena, "new_price": float(price) + kov + mena, "share": share}
+
+
+def _landed_metal_choices(invoice: pd.DataFrame) -> pd.DataFrame:
+    """Kov a podíl u každého řádku. Drží se, dokud se nezmění seznam položek."""
+    names = [str(value) for value in invoice[_INVOICE_COL_NAME].tolist()]
+    signature = tuple(names)
+    if (
+        st.session_state.get("_landed_metal_sig") != signature
+        or not isinstance(st.session_state.get("landed_metal_data"), pd.DataFrame)
+    ):
+        old = st.session_state.get("landed_metal_live")
+        rows = []
+        for i, name in enumerate(names):
+            metal = "Měď"
+            share = 100.0
+            if isinstance(old, pd.DataFrame) and i < len(old):
+                raw_metal = str(old.iloc[i].get(_COL_METAL, ""))
+                if raw_metal in _METAL_CHOICES:
+                    metal = raw_metal
+                raw_share = pd.to_numeric(old.iloc[i].get(_COL_METAL_SHARE), errors="coerce")
+                if pd.notna(raw_share):
+                    share = float(min(max(float(raw_share), 0.0), 100.0))
+            rows.append({
+                _COL_METAL_NAME: name,
+                _COL_METAL: metal,
+                _COL_METAL_SHARE: share,
+            })
+        st.session_state.landed_metal_data = pd.DataFrame(rows)
+        st.session_state._landed_metal_sig = signature
+        st.session_state.pop("landed_metal_editor", None)
+    edited = st.data_editor(
+        st.session_state.landed_metal_data.copy(),
+        key="landed_metal_editor",
+        column_config={
+            _COL_METAL_NAME: st.column_config.TextColumn("Název", disabled=True),
+            _COL_METAL: st.column_config.SelectboxColumn(
+                "Kov",
+                options=list(_METAL_CHOICES),
+                required=True,
+                help="S kterou burzou má podíl ceny jet.",
+            ),
+            _COL_METAL_SHARE: st.column_config.NumberColumn(
+                "Podíl kovu (%)",
+                min_value=0.0,
+                max_value=100.0,
+                step=1.0,
+                format="%.0f",
+                help="100 % = celá nákupní cena jede s burzou. Když je v ceně i zpracování, podíl snižte.",
+            ),
+        },
+        disabled=[_COL_METAL_NAME],
+        hide_index=True,
+        use_container_width=True,
+    )
+    st.session_state.landed_metal_live = edited.copy()
+    return edited.reset_index(drop=True)
+
+
+def _invoice_metal_move(
+    invoice: pd.DataFrame,
+    choices: pd.DataFrame,
+    day_from,
+    day_to,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, dict | None]]:
+    """Nová nákupní cena po kovu. Řádek bez burzy nechá původní cenu a označí se."""
+    adjusted = invoice.copy().reset_index(drop=True)
+    pairs: dict[str, dict | None] = {}
+    rows: list[dict] = []
+    for pos, row in adjusted.iterrows():
+        metal = "Měď"
+        share_pct = 100.0
+        if pos < len(choices):
+            raw_metal = str(choices.iloc[pos].get(_COL_METAL, ""))
+            if raw_metal in _METAL_CHOICES:
+                metal = raw_metal
+            raw_share = pd.to_numeric(choices.iloc[pos].get(_COL_METAL_SHARE), errors="coerce")
+            if pd.notna(raw_share):
+                share_pct = float(raw_share)
+        key = _METAL_CHOICE_KEY[metal]
+        if key not in pairs:
+            pairs[key] = _metal_pair(key, day_from, day_to)
+        price = float(row[_INVOICE_COL_PRICE])
+        pair = pairs[key]
+        if pair is None:
+            rows.append({
+                _COL_METAL: metal,
+                _COL_METAL_SHARE: share_pct,
+                _COL_METAL_KOV: None,
+                _COL_METAL_FX: None,
+                _COL_NEW_PRICE: None,
+                "ok": False,
+            })
+            continue
+        moved = _price_after_metal(price, share_pct, pair)
+        adjusted.at[pos, _INVOICE_COL_PRICE] = moved["new_price"]
+        rows.append({
+            _COL_METAL: metal,
+            _COL_METAL_SHARE: share_pct,
+            _COL_METAL_KOV: moved["kov"],
+            _COL_METAL_FX: moved["mena"],
+            _COL_NEW_PRICE: moved["new_price"],
+            "ok": True,
+        })
+    return adjusted, pd.DataFrame(rows), pairs
+
+
 _NAKUP_EXPORT_COLS = (
     _INVOICE_COL_NAME,
     _INVOICE_COL_HS,
@@ -6177,6 +6346,8 @@ def _nakup_excel_bytes(
     margin_pct: float,
     price_mode: str,
     results: pd.DataFrame,
+    day_from,
+    day_to,
 ) -> bytes:
     """Excel nákupu se žlutými vstupy a vzorci.
 
@@ -6213,11 +6384,14 @@ def _nakup_excel_bytes(
     slots = max(n_data + 20, 30)
     last_row = 1 + slots
     hs_lookup_last = 40
+    export_cols = _NAKUP_EXPORT_COLS + _NAKUP_METAL_COLS
     input_names = {
         _INVOICE_COL_NAME,
         _INVOICE_COL_HS,
         _INVOICE_COL_QTY,
         _INVOICE_COL_PRICE,
+        _COL_METAL,
+        _COL_METAL_SHARE,
     }
 
     def _item_formulas(r: int) -> dict[int, str]:
@@ -6243,6 +6417,42 @@ def _nakup_excel_bytes(
             16: f'=IF(O{r}="","",O{r}*(1+Souhrn!$B$10/100))',
             17: f'=IF(OR(O{r}="",Souhrn!$B$10>=100),"",O{r}/(1-Souhrn!$B$10/100))',
             18: f'=IF(O{r}="","",IF(Souhrn!$B$9="Marže",Q{r},P{r}))',
+        }
+
+    def _metal_formulas(r: int) -> dict[int, str]:
+        # S kov, T podíl. U kov, V měna, W nová cena, X hodnota, Y podíl,
+        # Z doprava do proclení, AA dovoz, AB základ cla, AC clo, AD deklarace,
+        # AE landed, AF za 1 j. EUR, AG za 1 j. CZK, AH přirážka, AI marže, AJ prodej.
+        active = f'OR(C{r}="",D{r}="",C{r}=0,D{r}=0)'
+        usd = (
+            f'IF(S{r}="Hliník",'
+            f'IF(OR(Souhrn!$B$29="",Souhrn!$B$29=0),"",Souhrn!$B$30/Souhrn!$B$29),'
+            f'IF(OR(Souhrn!$B$25="",Souhrn!$B$25=0),"",Souhrn!$B$26/Souhrn!$B$25))'
+        )
+        eur = (
+            f'IF(S{r}="Hliník",'
+            f'IF(OR(Souhrn!$B$31="",Souhrn!$B$31=0),"",Souhrn!$B$32/Souhrn!$B$31),'
+            f'IF(OR(Souhrn!$B$27="",Souhrn!$B$27=0),"",Souhrn!$B$28/Souhrn!$B$27))'
+        )
+        ready = f'OR({active},S{r}="",T{r}="",({usd})="",({eur})="")'
+        goods = f"SUM($X$2:$X${last_row})"
+        return {
+            21: f'=IF({ready},"",D{r}*T{r}*(({usd})-1))',
+            22: f'=IF({ready},"",D{r}*T{r}*(({eur})-({usd})))',
+            23: f'=IF(OR(U{r}="",V{r}=""),"",D{r}+U{r}+V{r})',
+            24: f'=IF(W{r}="","",C{r}*W{r})',
+            25: f'=IF(OR(X{r}="",{goods}=0),"",X{r}/{goods})',
+            26: f'=IF(Y{r}="","",Y{r}*Souhrn!$B$4)',
+            27: f'=IF(Y{r}="","",Y{r}*Souhrn!$B$5)',
+            28: f'=IF(X{r}="","",X{r}+Z{r})',
+            29: f'=IF(AB{r}="","",AB{r}*E{r}/100)',
+            30: f'=IF(X{r}="","",IF(Souhrn!$B$7=0,0,Y{r}*Souhrn!$B$6/Souhrn!$B$7))',
+            31: f'=IF(X{r}="","",X{r}+Z{r}+AA{r}+AC{r}+AD{r})',
+            32: f'=IF(OR(AE{r}="",C{r}=0),"",AE{r}/C{r})',
+            33: f'=IF(OR(AF{r}="",Souhrn!$B$7=0),"",AF{r}*Souhrn!$B$7)',
+            34: f'=IF(AG{r}="","",AG{r}*(1+Souhrn!$B$10/100))',
+            35: f'=IF(OR(AG{r}="",Souhrn!$B$10>=100),"",AG{r}/(1-Souhrn!$B$10/100))',
+            36: f'=IF(AG{r}="","",IF(Souhrn!$B$9="Marže",AI{r},AH{r}))',
         }
 
     # B3 clo, B4 doprava do proclení, B5 dovoz po Česku, B6 deklarace, B7 kurz, B9 způsob, B10 %.
@@ -6308,7 +6518,9 @@ def _nakup_excel_bytes(
         "Žluté buňky se přepisují. Doprava do proclení vstupuje do cla, dovoz po Česku jen do landed ceny. "
         "Přirážka je × (1 + procento/100). Marže je ÷ (1 − procento/100). "
         "Sloupec Prodej jede podle způsobu v B9. Clo v % bere prvních 8 číslic HS z listu Sazby cla. "
-        "Ano u vynulovaného cla dá všude 0. Dole na Položkách jsou prázdné řádky."
+        "Ano u vynulovaného cla dá všude 0. Dole na Položkách jsou prázdné řádky. "
+        "Od sloupce Kov se nákupní cena posune jen o podíl kovu mezi dvěma dny. "
+        "Zbytek ceny za jednotku zůstane. 100 % znamená, že s burzou jede celá cena."
     )
     souhrn.merge_cells("A21:B23")
     note_cell = souhrn.cell(21, 1, note)
@@ -6347,11 +6559,48 @@ def _nakup_excel_bytes(
     souhrn.page_margins = PageMargins(left=0.6, right=0.6, top=0.7, bottom=0.7)
     souhrn.oddHeader.left.text = "pbcable — Nákup"
     souhrn.oddFooter.right.text = "Strana &P / &N"
+    copper = _metal_pair("copper", day_from, day_to) or {}
+    aluminum = _metal_pair("aluminum", day_from, day_to) or {}
+    market_rows = [
+        ("Měď USD/t první den", copper.get("usd1")),
+        ("Měď USD/t druhý den", copper.get("usd2")),
+        ("Měď EUR/t první den", copper.get("eur1")),
+        ("Měď EUR/t druhý den", copper.get("eur2")),
+        ("Hliník USD/t první den", aluminum.get("usd1")),
+        ("Hliník USD/t druhý den", aluminum.get("usd2")),
+        ("Hliník EUR/t první den", aluminum.get("eur1")),
+        ("Hliník EUR/t druhý den", aluminum.get("eur2")),
+    ]
+    title = souhrn.cell(24, 1, f"Pohyb kovu {_cz_day(day_from)} → {_cz_day(day_to)}")
+    title.font = label_font
+    souhrn.merge_cells("A24:B24")
+    for i, (label, value) in enumerate(market_rows):
+        row_i = 25 + i
+        left = souhrn.cell(row_i, 1, label)
+        right = souhrn.cell(row_i, 2, None if value is None else float(value))
+        left.font = label_font
+        right.font = body_font
+        left.alignment = mid
+        right.alignment = mid
+        right.number_format = "#,##0.00"
+        right.fill = input_fill
+        right.protection = unlocked
+        for cell in (left, right):
+            cell.border = thin
+    market_note = souhrn.cell(
+        33,
+        1,
+        "Žluté ceny burzy jdou přepsat. Kov je změna dolarové LME. "
+        "Měna je zbytek po přepočtu té části do eur kurzem toho dne.",
+    )
+    market_note.font = note_font
+    market_note.alignment = wrap
+    souhrn.merge_cells("A33:B34")
     souhrn.protection.sheet = True
     souhrn.protection.autoFilter = False
 
     pol = wb.create_sheet("Položky")
-    for c, name in enumerate(_NAKUP_EXPORT_COLS, start=1):
+    for c, name in enumerate(export_cols, start=1):
         cell = pol.cell(1, c, name)
         cell.fill = header_fill
         cell.font = header_font
@@ -6360,8 +6609,9 @@ def _nakup_excel_bytes(
     pol.row_dimensions[1].height = 34
     for r_i in range(2, last_row + 1):
         formulas = _item_formulas(r_i)
+        formulas.update(_metal_formulas(r_i))
         src = results.iloc[r_i - 2] if r_i - 2 < n_data else None
-        for c, name in enumerate(_NAKUP_EXPORT_COLS, start=1):
+        for c, name in enumerate(export_cols, start=1):
             cell = pol.cell(r_i, c)
             cell.font = body_font
             cell.border = thin
@@ -6369,17 +6619,19 @@ def _nakup_excel_bytes(
             if name in input_names:
                 cell.fill = input_fill
                 cell.protection = unlocked
-                if src is not None:
+                if src is not None and name in src.index:
                     val = src[name]
-                    if name in (_INVOICE_COL_NAME, _INVOICE_COL_HS):
+                    if name in (_INVOICE_COL_NAME, _INVOICE_COL_HS, _COL_METAL):
                         cell.value = None if pd.isna(val) else str(val)
+                    elif name == _COL_METAL_SHARE and pd.notna(val):
+                        cell.value = float(val) / 100.0
                     elif pd.notna(val):
                         cell.value = float(val)
             else:
                 cell.value = formulas[c]
                 if r_i % 2 == 0:
                     cell.fill = alt_fill
-            if name == "Podíl na faktuře":
+            if name in ("Podíl na faktuře", "Nový podíl na faktuře", _COL_METAL_SHARE):
                 cell.number_format = "0.00%"
             elif name == _INVOICE_COL_DUTY:
                 cell.number_format = "0.0"
@@ -6387,7 +6639,13 @@ def _nakup_excel_bytes(
                 cell.number_format = "#,##0.00"
             elif name == _INVOICE_COL_PRICE:
                 cell.number_format = "#,##0.000"
-            elif name == _COL_UNIT_EUR:
+            elif name in (
+                _COL_UNIT_EUR,
+                _COL_NEW_PRICE,
+                _COL_METAL_KOV,
+                _COL_METAL_FX,
+                "Landed po kovu za 1 j. (EUR)",
+            ):
                 cell.number_format = "#,##0.0000"
             elif name not in input_names:
                 cell.number_format = "#,##0.00"
@@ -6406,10 +6664,25 @@ def _nakup_excel_bytes(
         _COL_SALE_MARKUP: 26,
         _COL_SALE_MARGIN: 24,
         _COL_SALE: 18,
+        _COL_METAL: 16,
+        _COL_METAL_SHARE: 16,
+        _COL_METAL_KOV: 26,
+        _COL_METAL_FX: 26,
+        _COL_NEW_PRICE: 32,
+        _COL_NEW_SALE: 22,
     }
-    for c, name in enumerate(_NAKUP_EXPORT_COLS, start=1):
-        pol.column_dimensions[get_column_letter(c)].width = widths.get(name, 20)
-    last_col = get_column_letter(len(_NAKUP_EXPORT_COLS))
+    for c, name in enumerate(export_cols, start=1):
+        pol.column_dimensions[get_column_letter(c)].width = widths.get(name, 24)
+    last_col = get_column_letter(len(export_cols))
+    metal_dv = DataValidation(type="list", formula1='"Měď,Hliník"', allow_blank=False)
+    metal_dv.promptTitle = "Kov"
+    metal_dv.prompt = "Měď nebo hliník, podle toho, s čím má podíl ceny jet."
+    metal_dv.errorTitle = "Kov"
+    metal_dv.error = "Napište Měď nebo Hliník."
+    metal_dv.showInputMessage = True
+    metal_dv.showErrorMessage = True
+    metal_dv.add(f"S2:S{last_row}")
+    pol.add_data_validation(metal_dv)
     pol.freeze_panes = "B2"
     pol.auto_filter.ref = f"A1:{last_col}{last_row}"
     pol.page_setup.orientation = "landscape"
@@ -6520,6 +6793,21 @@ def render_landed_cost_pricing() -> None:
     if not eur_czk or eur_czk <= 0:
         st.error(t("Kurz EUR/CZK z ČNB není k dispozici — landed cost nelze spočítat."))
         return
+
+    china_transfer = st.session_state.pop("_china_to_nakup", None)
+    if isinstance(china_transfer, tuple) and len(china_transfer) == 3:
+        tr_customs_eur, tr_inland_eur, tr_label = china_transfer
+        st.session_state["landed_route_i"] = 0
+        st.session_state["landed_transport_eur"] = round(float(tr_customs_eur), 2)
+        st.session_state["landed_inland_eur"] = round(float(tr_inland_eur), 2)
+        st.session_state["_china_to_nakup_msg"] = (
+            f"Přeneseno z Logistiky ({tr_label}): doprava do proclení "
+            f"{format_num(float(tr_customs_eur), 2)} EUR · po proclení "
+            f"{format_num(float(tr_inland_eur), 2)} EUR."
+        )
+    transfer_msg = st.session_state.pop("_china_to_nakup_msg", None)
+    if transfer_msg:
+        st.success(transfer_msg)
 
     c_route, c_fx = st.columns([3, 1])
     with c_route:
@@ -6833,6 +7121,78 @@ def render_landed_cost_pricing() -> None:
     other_sale = _COL_SALE_MARKUP if price_mode == "Marže" else _COL_SALE_MARGIN
     display_cols += [_COL_SALE, other_sale]
 
+    day_from = st.session_state.get("metal_cmp_from", datetime(2026, 8, 18).date())
+    day_to = st.session_state.get("metal_cmp_to", datetime(2026, 9, 24).date())
+    st.subheader("Cena po pohybu kovu")
+    st.caption(
+        f"Dny jsou z porovnání nahoře: {_cz_day(day_from)} → {_cz_day(day_to)}. "
+        "Podíl kovu v nákupní ceně se posune s LME. V eurech je v tom i kurz dolaru. "
+        "Zbytek ceny za jednotku zůstane. Doprava, clo a prodej se pak dopočítají stejně jako výše. "
+        "Prodej je v korunách dnešním kurzem ČNB. 100 % znamená, že s burzou jede celá cena."
+    )
+    metal_choices = _landed_metal_choices(invoice)
+    adjusted, metal_move, metal_pairs = _invoice_metal_move(
+        invoice, metal_choices, day_from, day_to,
+    )
+    results_sales[_COL_METAL] = metal_move[_COL_METAL].to_numpy()
+    results_sales[_COL_METAL_SHARE] = metal_move[_COL_METAL_SHARE].to_numpy()
+    moved_landed = compute_invoice_landed(
+        adjusted,
+        freight_customs_eur,
+        inland_eur,
+        customs_czk,
+        eur_czk,
+        force_zero_duty,
+    )
+    moved_sales = (
+        _apply_sales_pricing(moved_landed, margin_pct, price_mode)
+        if moved_landed is not None else None
+    )
+    move_bits = []
+    for label, key in (("měď", "copper"), ("hliník", "aluminum")):
+        pair = metal_pairs.get(key)
+        if pair:
+            move_bits.append(
+                f"{label} v eurech {_signed_pct(_move_pct(pair['eur2'], pair['eur1']))}"
+            )
+    if move_bits:
+        st.caption("Pohyb burzy mezi těmi dny: " + " · ".join(move_bits) + ".")
+    missing_metal = [
+        label for label, key in (("Měď", "copper"), ("Hliník", "aluminum"))
+        if key in metal_pairs and metal_pairs[key] is None
+    ]
+    if missing_metal:
+        st.warning(
+            "Pro "
+            + " a ".join(missing_metal)
+            + " v těchto dnech není uzavřená cena LME nebo kurz. Novou cenu u nich nepočítám."
+        )
+    move_view = pd.DataFrame({
+        _INVOICE_COL_NAME: results_sales[_INVOICE_COL_NAME].to_numpy(),
+        _COL_METAL: metal_move[_COL_METAL].to_numpy(),
+        _COL_METAL_SHARE: metal_move[_COL_METAL_SHARE].to_numpy(),
+        _COL_PRICE_NOW: results_sales[_INVOICE_COL_PRICE].to_numpy(),
+        _COL_METAL_KOV: metal_move[_COL_METAL_KOV].to_numpy(),
+        _COL_METAL_FX: metal_move[_COL_METAL_FX].to_numpy(),
+        _COL_NEW_PRICE: metal_move[_COL_NEW_PRICE].to_numpy(),
+        _COL_SALE_NOW: results_sales[_COL_SALE].to_numpy(),
+        _COL_NEW_SALE: (
+            moved_sales[_COL_SALE].to_numpy() if moved_sales is not None
+            else [None] * len(metal_move)
+        ),
+    })
+    not_ok = ~metal_move["ok"].astype(bool).to_numpy()
+    if not_ok.any():
+        move_view.loc[not_ok, [
+            _COL_METAL_KOV, _COL_METAL_FX, _COL_NEW_PRICE, _COL_NEW_SALE,
+        ]] = None
+    st.dataframe(
+        move_view,
+        use_container_width=True,
+        hide_index=True,
+        column_config=_landed_column_config(move_view),
+    )
+
     excel_bytes = _nakup_excel_bytes(
         _LANDED_ROUTES[int(route_i)],
         zero_duty,
@@ -6844,6 +7204,8 @@ def render_landed_cost_pricing() -> None:
         margin_pct,
         price_mode,
         results_sales,
+        day_from,
+        day_to,
     )
     st.download_button(
         "⬇️ Stáhnout Excel",
@@ -6851,11 +7213,12 @@ def render_landed_cost_pricing() -> None:
         file_name=f"pbcable_nakup_{now_prague().strftime('%Y-%m-%d')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         key="landed_excel_download",
-        help="Žluté buňky se přepisují. Clo, landed i prodej se dopočítají vzorci.",
+        help="Žluté buňky se přepisují. Clo, landed, prodej i cena po kovu se dopočítají vzorci.",
     )
     st.caption(
         "V Excelu přepište žluté buňky. Doprava do proclení mění clo, dovoz po Česku jen landed cenu. "
-        "Způsob Přirážka nebo Marže přepne sloupec Prodej."
+        "Způsob Přirážka nebo Marže přepne sloupec Prodej. "
+        "Podíl kovu a volba měď nebo hliník přepíšou novou nákupní cenu."
     )
 
     show = results_sales[display_cols].copy()
@@ -10744,13 +11107,27 @@ def _drum_schematic_svg(fd: float, kd: float, l2: float) -> str:
 
 
 _DRUM_BEND_LABELS = {
-    "12 × průměr kabelu (mírnější / VDE)": 12,
-    "15 × průměr kabelu (běžné HELUKABEL)": 15,
-    "20 × průměr kabelu": 20,
-    "25 × průměr kabelu": 25,
-    "30 × průměr kabelu": 30,
-    "40 × průměr kabelu (nejpřísnější)": 40,
+    "12 × průměr — poloměr (mírnější / VDE)": 12,
+    "15 × průměr — poloměr (běžné HELUKABEL)": 15,
+    "20 × průměr — poloměr": 20,
+    "25 × průměr — poloměr": 25,
+    "30 × průměr — poloměr": 30,
+    "40 × průměr — poloměr (nejpřísnější)": 40,
 }
+_DRUM_BEND_DEFAULT = "15 × průměr — poloměr (běžné HELUKABEL)"
+_DRUM_BEND_OLD_LABELS = {
+    "12 × průměr kabelu (mírnější / VDE)": "12 × průměr — poloměr (mírnější / VDE)",
+    "15 × průměr kabelu (běžné HELUKABEL)": _DRUM_BEND_DEFAULT,
+    "20 × průměr kabelu": "20 × průměr — poloměr",
+    "25 × průměr kabelu": "25 × průměr — poloměr",
+    "30 × průměr kabelu": "30 × průměr — poloměr",
+    "40 × průměr kabelu (nejpřísnější)": "40 × průměr — poloměr (nejpřísnější)",
+}
+
+
+def _drum_core_min_mm(bend_n: float, d_cab: float) -> float:
+    """Katalog udává poloměr ohybu. Průměr jádra je dvojnásobek."""
+    return 2.0 * float(bend_n) * float(d_cab)
 
 
 def _drum_preset_labels(ktg_all: list) -> list[str]:
@@ -10805,7 +11182,7 @@ def _drum_inputs_now() -> dict:
         clearance = mult * d_cab
     bend_label = st.session_state.get("drum_bend_factor")
     if bend_label not in _DRUM_BEND_LABELS:
-        bend_label = "15 × průměr kabelu (běžné HELUKABEL)"
+        bend_label = _DRUM_BEND_DEFAULT
     return {
         "fd": fd,
         "kd": kd,
@@ -10827,6 +11204,9 @@ def render_drum_capacity_calculator() -> None:
     Kapacita bubnu + plán návinu po vrstvách + doporučení min. KTG dle ohybu.
     """
     section_header("🪵", t("Kapacita bubnu — co se vejde na buben"))
+    old_bend = st.session_state.get("drum_bend_factor")
+    if old_bend in _DRUM_BEND_OLD_LABELS:
+        st.session_state["drum_bend_factor"] = _DRUM_BEND_OLD_LABELS[old_bend]
 
     _ktg_all = ktg_wood_drums() if ktg_wood_drums is not None else []
     _apply_drum_ktg_preset(_ktg_all)
@@ -10841,7 +11221,7 @@ def render_drum_capacity_calculator() -> None:
     kg_per_km = inp["kg_per_km"]
     empty_mass = inp["empty_mass"]
     max_load = inp["max_load"]
-    kd_min = bend_n * float(d_cab)
+    kd_min = _drum_core_min_mm(bend_n, d_cab)
     bend_ok = kd >= kd_min
 
     cap = None
@@ -10890,7 +11270,8 @@ def render_drum_capacity_calculator() -> None:
             st.markdown(
                 '<div class="warning-box" style="margin:0 0 10px;font-size:1.08rem;line-height:1.35;">'
                 "⚠️ <strong>Jádro je malé pro zvolený ohyb</strong> — "
-                f"{format_num(kd, 0)} mm &lt; {bend_n:g} × kabel = {format_num(kd_min, 0)} mm."
+                f"jádro {format_num(kd, 0)} mm, potřeba {format_num(kd_min, 0)} mm. "
+                f"Katalog {bend_n:g} × je poloměr, průměr jádra je dvojnásobek."
                 f"{limit_note}{fit_note}</div>",
                 unsafe_allow_html=True,
             )
@@ -10906,7 +11287,8 @@ def render_drum_capacity_calculator() -> None:
             st.markdown(
                 '<div class="success-box" style="margin:0 0 10px;font-size:1.02rem;">'
                 f"✅ <strong>Ohyb OK</strong> — jádro {format_num(kd, 0)} mm ≥ "
-                f"{bend_n:g} × kabel = {format_num(kd_min, 0)} mm."
+                f"{format_num(kd_min, 0)} mm. Katalog {bend_n:g} × je poloměr, "
+                "průměr jádra je dvojnásobek."
                 f"{limit_note}</div>",
                 unsafe_allow_html=True,
             )
@@ -11013,8 +11395,12 @@ def render_drum_capacity_calculator() -> None:
             "Ohyb jádra",
             options=list(_DRUM_BEND_LABELS.keys()),
             index=1, key="drum_bend_factor",
-            help="Průměr jádra musí být aspoň N× průměr kabelu, jinak se kabel ohýbá moc těsně.",
+            help=(
+                "Číslo z katalogu je poloměr ohybu. Průměr jádra musí být aspoň "
+                "dvojnásobek, tedy 2 × N × průměr kabelu."
+            ),
         )
+        st.caption("Katalog udává poloměr. Průměr jádra je dvojnásobek.")
         bend_n = _DRUM_BEND_LABELS[bend_label]
         kg_per_km = st.number_input(
             "Kabel [kg/km]",
@@ -11036,17 +11422,17 @@ def render_drum_capacity_calculator() -> None:
             help="Max. hmotnost kabelu na bubnu, bez prázdného bubnu. 0 = nelimitovat.",
         )
 
-    kd_min = bend_n * float(d_cab)
+    kd_min = _drum_core_min_mm(bend_n, d_cab)
     bend_ok = kd >= kd_min
 
     st.markdown(
         f"##### Nejmenší vhodný buben z katalogu "
-        f"(jádro ≥ **{bend_n:g} ×** průměr kabelu = {format_num(kd_min, 0)} mm)"
+        f"(jádro ≥ **{format_num(kd_min, 0)} mm**, tedy 2 × {bend_n:g} × průměr kabelu)"
     )
     if ktg_min_drums_for_bend is None:
         st.caption("Tabulky KTG nejsou nasazené (`helukabel_tables.py`).")
     else:
-        suited = ktg_min_drums_for_bend(float(d_cab), float(bend_n))
+        suited = ktg_min_drums_for_bend(float(d_cab), kd_min / float(d_cab))
         if not suited:
             st.warning(
                 f"Žádný standardní KTG buben nemá jádro ≥ {format_num(kd_min, 0)} mm "
@@ -11198,7 +11584,7 @@ def render_drum_capacity_calculator() -> None:
             # výchozí: nejmenší KTG dle ohybu, jinak 101/10
             default_i = 0
             if ktg_min_drums_for_bend is not None:
-                suited_b = ktg_min_drums_for_bend(float(d_cab), float(bend_n))
+                suited_b = ktg_min_drums_for_bend(float(d_cab), kd_min / float(d_cab))
                 if suited_b:
                     for i, d in enumerate(_ktg_all):
                         if d["label"] == suited_b[0]["label"]:
