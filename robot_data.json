@@ -1,53 +1,53 @@
 {
   "ccmn": {
-    "copper": 107750.0,
-    "aluminum": 22860.0
+    "copper": 107780.0,
+    "aluminum": 22540.0
   },
   "yf_spot": {
     "HRC=F": {
-      "price": 1432.0,
+      "price": 1434.0,
       "prev": 1354.0,
-      "delta": 78.0,
-      "delta_pct": 5.761
+      "delta": 80.0,
+      "delta_pct": 5.908
     },
     "BZ=F": {
-      "price": 93.870003,
-      "prev": 92.440002,
-      "delta": 1.43,
-      "delta_pct": 1.547
+      "price": 89.910004,
+      "prev": 93.139999,
+      "delta": -3.229996,
+      "delta_pct": -3.468
     },
     "CL=F": {
-      "price": 87.150002,
-      "prev": 85.720001,
-      "delta": 1.43,
-      "delta_pct": 1.668
+      "price": 83.860001,
+      "prev": 86.010002,
+      "delta": -2.150002,
+      "delta_pct": -2.5
     },
     "EURUSD=X": {
-      "price": 1.099264,
-      "prev": 1.102487,
-      "delta": -0.003224,
-      "delta_pct": -0.292
+      "price": 1.097574,
+      "prev": 1.09982,
+      "delta": -0.002245,
+      "delta_pct": -0.204
     },
     "EURCZK=X": {
-      "price": 24.387899,
-      "prev": 24.395201,
-      "delta": -0.007301,
-      "delta_pct": -0.03
+      "price": 24.3771,
+      "prev": 24.4009,
+      "delta": -0.0238,
+      "delta_pct": -0.098
     },
     "HG=F": {
-      "price": 5.9765,
-      "prev": 5.9975,
-      "delta": -0.021,
-      "delta_pct": -0.35
+      "price": 5.714,
+      "prev": 5.976,
+      "delta": -0.262,
+      "delta_pct": -4.384
     },
     "ALI=F": {
-      "price": 2990.0,
-      "prev": 3124.5,
-      "delta": -134.5,
-      "delta_pct": -4.305
+      "price": 2924.0,
+      "prev": 3040.75,
+      "delta": -116.75,
+      "delta_pct": -3.84
     }
   },
-  "_ts": "2026-11-17 14:17",
+  "_ts": "2026-11-18 13:51",
   "_health": {
     "ccmn_copper": true,
     "ccmn_aluminum": true,
@@ -55,5 +55,5 @@
     "eurusd": true,
     "history": true
   },
-  "_alert_sig": "2026-11-17|Hlin\u00edk COMEX (ALI=F) den: -4.3 % (pr\u00e1h \u00b13.0 %) \u00b7 2990.0 USD"
+  "_alert_sig": "2026-11-18|Brent den: -3.5 % (pr\u00e1h \u00b13.0 %) \u00b7 $89.91|Hlin\u00edk COMEX (ALI=F) den: -3.8 % (pr\u00e1h \u00b13.0 %) \u00b7 2924.0 USD|M\u011b\u010f COMEX (HG=F) den: -4.4 % (pr\u00e1h \u00b13.0 %) \u00b7 5.714 USD/lb"
 }
