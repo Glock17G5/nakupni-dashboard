@@ -10813,6 +10813,23 @@ def _china_money(label: str, field: str, suggested: float | None, step: float) -
     return value
 
 
+def _china_own_rate(label: str, field: str, default: float, step: float) -> float:
+    """Cena od speditéra. Veřejný index ji nepřepisuje."""
+    if field not in st.session_state:
+        saved = _china_rate_store().get(field)
+        st.session_state[field] = float(saved if saved is not None else default)
+    return float(st.number_input(
+        label,
+        min_value=0.0,
+        value=float(default),
+        step=step,
+        format="%.0f",
+        key=field,
+        on_change=_pin_china_rate,
+        args=(field, f"{field}_pin"),
+    ))
+
+
 def _china_index_for(mode: str, lane: str, indices: dict) -> tuple[float | None, str]:
     if mode == "sea40" and lane == "fbx13":
         value = indices.get("fbx13_usd")
@@ -10831,13 +10848,7 @@ def _china_index_for(mode: str, lane: str, indices: dict) -> tuple[float | None,
         )
         return value, note
     if mode == "rail40":
-        value = indices.get("erai_west_usd")
-        note = (
-            "ERAI West, vlak na západ, 40'. Index je průměr trhu, ne cena vašeho speditéra."
-            if value else
-            "Index ERAI West se nenačetl. Sem patří sazba speditéra za 40'."
-        )
-        return value, note
+        return None, ""
     if mode == "sea20":
         return None, "Veřejný index pro 20' z Číny do Evropy tu není. Sem patří sazba speditéra."
     return None, "Kusovka nemá veřejný index. Sem patří sazba speditéra za 1 W/M."
@@ -10894,10 +10905,15 @@ def _render_china_freight(health_slot) -> None:
         ))
     else:
         pills.append(("warn", "Loď 40'", "index nenačten"))
-    if indices.get("erai_west_usd"):
-        pills.append(("ok", "Vlak 40'", f"ERAI West {format_num(indices['erai_west_usd'], 0)} USD"))
+    erai_usd = indices.get("erai_west_usd")
+    if erai_usd and usd_per_eur:
+        pills.append((
+            "warn",
+            "Vlak 40'",
+            f"index {format_num(float(erai_usd) / usd_per_eur, 0)} EUR, ne vaše cena",
+        ))
     else:
-        pills.append(("warn", "Vlak 40'", "index nenačten"))
+        pills.append(("warn", "Vlak 40'", "počítá se cena od speditéra"))
     health_slot.markdown(_health_html(pills), unsafe_allow_html=True)
 
     fbx_when = ""
@@ -10905,8 +10921,8 @@ def _render_china_freight(health_slot) -> None:
         year, month, day = str(indices["fbx_date"]).split("-")
         fbx_when = f" Index lodi je z {int(day)}. {int(month)}. {year}."
     st.caption(
-        "U 40' se sazba předvyplní veřejným indexem. Přepište ji, až dostanete cenu od speditéra. "
-        "20' a kusovka index nemají."
+        "Loď 40' se předvyplní indexem. Vlak se počítá z ceny, kterou platíte speditérovi, "
+        "vaše vlaky teď jezdí cca 12 000–13 000 EUR za 40'. 20' a kusovka index nemají."
         + fbx_when
     )
     mode = st.radio(
@@ -10933,8 +10949,7 @@ def _render_china_freight(health_slot) -> None:
         with st.container(border=True):
             port_name = st.selectbox("Přístav nebo terminál v Evropě", port_labels, key=port_key)
             port = next(item for item in ports if item[0] == port_name)
-            suggested, index_note = _china_index_for(mode, port[3], indices)
-            st.caption(index_note)
+            rate_in_eur = False
             if mode == "lcl":
                 cbm = float(st.number_input(
                     "Objem (m³)", min_value=0.1, value=5.0, step=0.5, format="%.1f", key="china_cbm",
@@ -10954,13 +10969,38 @@ def _render_china_freight(health_slot) -> None:
                 pieces = float(st.number_input(
                     "Počet kontejnerů", min_value=1, max_value=20, value=1, step=1, key="china_boxes",
                 ))
-                rate_label = "Sazba za 1 kontejner (USD)"
-                field = {
-                    "sea40": "china_sea40_usd",
-                    "sea20": "china_sea20_usd",
-                    "rail40": "china_rail40_usd",
-                }[mode]
-                rate = _china_money(rate_label, field, suggested, 50.0)
+                if mode == "rail40":
+                    erai_usd = indices.get("erai_west_usd")
+                    if erai_usd and usd_per_eur:
+                        st.caption(
+                            "Sem patří cena, kterou platíte za vlak. "
+                            f"Veřejný index ERAI West je teď {format_num(float(erai_usd), 0)} USD "
+                            f"(asi {format_num(float(erai_usd) / usd_per_eur, 0)} EUR) "
+                            "a do výpočtu nevstupuje. To je průměr samotné koleje, ne vaše zásilka."
+                        )
+                    else:
+                        st.caption(
+                            "Sem patří cena, kterou platíte za vlak. "
+                            "Veřejný index koleje se do výpočtu nebere."
+                        )
+                    rate = _china_own_rate(
+                        "Cena vlaku od speditéra (EUR za 40')",
+                        "china_rail40_eur",
+                        12500.0,
+                        100.0,
+                    )
+                    st.caption(
+                        "12 500 EUR je střed vašeho obvyklého rozpětí 12 000–13 000 EUR. "
+                        "U konkrétní zásilky ho přepište nabídkou. "
+                        "Když už v ní je svoz v Číně a terminál, nechte poplatky dole na nule. "
+                        "Svoz z terminálu k vám se počítá zvlášť."
+                    )
+                    rate_in_eur = True
+                else:
+                    suggested, index_note = _china_index_for(mode, port[3], indices)
+                    st.caption(index_note)
+                    field = "china_sea40_usd" if mode == "sea40" else "china_sea20_usd"
+                    rate = _china_money("Sazba za 1 kontejner (USD)", field, suggested, 50.0)
                 units = pieces
                 cbm = 0.0
                 kg = 24000.0
@@ -10973,14 +11013,24 @@ def _render_china_freight(health_slot) -> None:
             )
             origin = 0.0
             if term == "EXW":
-                origin = float(st.number_input(
-                    "Svoz v Číně a vývoz (USD za zásilku)",
-                    min_value=0.0,
-                    value=0.0,
-                    step=50.0,
-                    format="%.0f",
-                    key="china_origin_usd",
-                ))
+                if mode == "rail40":
+                    origin = float(st.number_input(
+                        "Svoz v Číně a vývoz (EUR za zásilku)",
+                        min_value=0.0,
+                        value=0.0,
+                        step=50.0,
+                        format="%.0f",
+                        key="china_rail_origin_eur",
+                    ))
+                else:
+                    origin = float(st.number_input(
+                        "Svoz v Číně a vývoz (USD za zásilku)",
+                        min_value=0.0,
+                        value=0.0,
+                        step=50.0,
+                        format="%.0f",
+                        key="china_origin_usd",
+                    ))
             terminal = float(st.number_input(
                 "Poplatky v přístavu nebo na terminálu (EUR za zásilku)",
                 min_value=0.0,
@@ -11040,9 +11090,11 @@ def _render_china_freight(health_slot) -> None:
                 help="Když je 0, cena peněz se nepočítá. Do dopravy v Nákupu se nepřenáší.",
             ))
 
-    main_usd = float(rate) * float(units)
-    lane_usd = main_usd + float(origin)
-    lane_eur = (lane_usd / usd_per_eur) if usd_per_eur else None
+    if rate_in_eur:
+        lane_eur = float(rate) * float(units) + float(origin)
+    else:
+        lane_usd = float(rate) * float(units) + float(origin)
+        lane_eur = (lane_usd / usd_per_eur) if usd_per_eur else None
     full_truck = mode != "lcl"
     ldm = 13.6 if full_truck else min(13.6, max(0.4, float(cbm) / 3.0))
     with st.spinner("Počítám svoz do Metylovic…"):
@@ -11104,17 +11156,12 @@ def _render_china_freight(health_slot) -> None:
                     f"Cena peněz za {days} dní při {format_num(interest, 1)} % je "
                     f"{format_num(money_eur, 0)} EUR. V dopravě ani v přenosu do Nákupu není."
                 )
-            if mode in ("sea40", "rail40") and usd_per_eur:
+            if mode == "sea40" and usd_per_eur:
                 sea = indices.get("fbx13_usd") if port[3] == "fbx13" else indices.get("fbx11_usd")
-                rail = indices.get("erai_west_usd")
-                bits = []
                 if sea:
-                    bits.append(f"loď {format_num(sea / usd_per_eur, 0)} EUR")
-                if rail:
-                    bits.append(f"vlak {format_num(rail / usd_per_eur, 0)} EUR")
-                if bits:
                     st.caption(
-                        "Index za 1× 40', bez poplatků a svozu: " + " · ".join(bits) + "."
+                        "Index lodi za 1× 40', bez poplatků a svozu: "
+                        f"{format_num(float(sea) / usd_per_eur, 0)} EUR."
                     )
             if (
                 customs_eur is not None
