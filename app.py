@@ -1185,6 +1185,29 @@ footer { visibility: hidden; }
 .data-table-wrap th { color: #F2F5F9; border-bottom: 2px solid #3D4859; padding: 8px 12px; }
 .data-table-wrap td { color: #C9D3E0; border-bottom: 1px solid #262D39; padding: 9px 12px; }
 .data-table-wrap tr:hover td { background: #232A36; }
+.nakup-fit { overflow-x: hidden; padding: 8px 10px; }
+.nakup-fit table { table-layout: fixed; width: 100%; }
+.nakup-fit th, .nakup-fit td {
+    padding: 7px 6px;
+    font-size: 0.82rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.nakup-fit th.num, .nakup-fit td.num {
+    text-align: right;
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+}
+.nakup-fit tfoot td {
+    font-weight: 700;
+    border-top: 2px solid #3D4859;
+    border-bottom: none;
+}
+@media (max-width: 760px) {
+    .nakup-fit { overflow-x: auto; }
+    .nakup-fit table { min-width: 760px; }
+}
 
 .section-divider {
     height: 1px;
@@ -1464,6 +1487,7 @@ p, span, label, .stMarkdown { color: #243140; }
 .data-table-wrap th { color: #17202A; border-bottom-color: #E1E6EE; }
 .data-table-wrap td { color: #243140; border-bottom-color: #EEF1F5; }
 .data-table-wrap tr:hover td { background: #F4F7FB; }
+.nakup-fit tfoot td { border-top-color: #E1E6EE; }
 .section-divider {
     background: linear-gradient(90deg, transparent, #D5DCE6 20%, #D5DCE6 80%, transparent);
 }
@@ -6347,11 +6371,13 @@ def _nakup_excel_bytes(
     results: pd.DataFrame,
     day_from,
     day_to,
+    include_metal: bool = False,
 ) -> bytes:
     """Excel nákupu se žlutými vstupy a vzorci.
 
     Souhrn: B3 clo Ano/Ne, B4 doprava do proclení, B5 dovoz po Česku,
     B6 deklarace CZK, B7 kurz, B9 Přirážka/Marže, B10 procento.
+    Pohyb kovu je v souboru jen když include_metal.
     """
     from io import BytesIO
 
@@ -6383,7 +6409,7 @@ def _nakup_excel_bytes(
     slots = max(n_data + 20, 30)
     last_row = 1 + slots
     hs_lookup_last = 40
-    export_cols = _NAKUP_EXPORT_COLS + _NAKUP_METAL_COLS
+    export_cols = _NAKUP_EXPORT_COLS + (_NAKUP_METAL_COLS if include_metal else ())
     input_names = {
         _INVOICE_COL_NAME,
         _INVOICE_COL_HS,
@@ -6517,10 +6543,13 @@ def _nakup_excel_bytes(
         "Žluté buňky se přepisují. Doprava do proclení vstupuje do cla, dovoz po Česku jen do landed ceny. "
         "Přirážka je × (1 + procento/100). Marže je ÷ (1 − procento/100). "
         "Sloupec Prodej jede podle způsobu v B9. Clo v % bere prvních 8 číslic HS z listu Sazby cla. "
-        "Ano u vynulovaného cla dá všude 0. Dole na Položkách jsou prázdné řádky. "
-        "Od sloupce Kov se nákupní cena posune jen o podíl kovu mezi dvěma dny. "
-        "Zbytek ceny za jednotku zůstane. 100 % znamená, že s burzou jede celá cena."
+        "Ano u vynulovaného cla dá všude 0. Dole na Položkách jsou prázdné řádky."
     )
+    if include_metal:
+        note += (
+            " Od sloupce Kov se nákupní cena posune jen o podíl kovu mezi dvěma dny. "
+            "Zbytek ceny za jednotku zůstane. 100 % znamená, že s burzou jede celá cena."
+        )
     souhrn.merge_cells("A21:B23")
     note_cell = souhrn.cell(21, 1, note)
     note_cell.font = note_font
@@ -6558,43 +6587,44 @@ def _nakup_excel_bytes(
     souhrn.page_margins = PageMargins(left=0.6, right=0.6, top=0.7, bottom=0.7)
     souhrn.oddHeader.left.text = "pbcable — Nákup"
     souhrn.oddFooter.right.text = "Strana &P / &N"
-    copper = _metal_pair("copper", day_from, day_to) or {}
-    aluminum = _metal_pair("aluminum", day_from, day_to) or {}
-    market_rows = [
-        ("Měď USD/t první den", copper.get("usd1")),
-        ("Měď USD/t druhý den", copper.get("usd2")),
-        ("Měď EUR/t první den", copper.get("eur1")),
-        ("Měď EUR/t druhý den", copper.get("eur2")),
-        ("Hliník USD/t první den", aluminum.get("usd1")),
-        ("Hliník USD/t druhý den", aluminum.get("usd2")),
-        ("Hliník EUR/t první den", aluminum.get("eur1")),
-        ("Hliník EUR/t druhý den", aluminum.get("eur2")),
-    ]
-    title = souhrn.cell(24, 1, f"Pohyb kovu {_cz_day(day_from)} → {_cz_day(day_to)}")
-    title.font = label_font
-    souhrn.merge_cells("A24:B24")
-    for i, (label, value) in enumerate(market_rows):
-        row_i = 25 + i
-        left = souhrn.cell(row_i, 1, label)
-        right = souhrn.cell(row_i, 2, None if value is None else float(value))
-        left.font = label_font
-        right.font = body_font
-        left.alignment = mid
-        right.alignment = mid
-        right.number_format = "#,##0.00"
-        right.fill = input_fill
-        right.protection = unlocked
-        for cell in (left, right):
-            cell.border = thin
-    market_note = souhrn.cell(
-        33,
-        1,
-        "Žluté ceny burzy jdou přepsat. Kov je změna dolarové LME. "
-        "Měna je zbytek po přepočtu té části do eur kurzem toho dne.",
-    )
-    market_note.font = note_font
-    market_note.alignment = wrap
-    souhrn.merge_cells("A33:B34")
+    if include_metal:
+        copper = _metal_pair("copper", day_from, day_to) or {}
+        aluminum = _metal_pair("aluminum", day_from, day_to) or {}
+        market_rows = [
+            ("Měď USD/t první den", copper.get("usd1")),
+            ("Měď USD/t druhý den", copper.get("usd2")),
+            ("Měď EUR/t první den", copper.get("eur1")),
+            ("Měď EUR/t druhý den", copper.get("eur2")),
+            ("Hliník USD/t první den", aluminum.get("usd1")),
+            ("Hliník USD/t druhý den", aluminum.get("usd2")),
+            ("Hliník EUR/t první den", aluminum.get("eur1")),
+            ("Hliník EUR/t druhý den", aluminum.get("eur2")),
+        ]
+        title = souhrn.cell(24, 1, f"Pohyb kovu {_cz_day(day_from)} → {_cz_day(day_to)}")
+        title.font = label_font
+        souhrn.merge_cells("A24:B24")
+        for i, (label, value) in enumerate(market_rows):
+            row_i = 25 + i
+            left = souhrn.cell(row_i, 1, label)
+            right = souhrn.cell(row_i, 2, None if value is None else float(value))
+            left.font = label_font
+            right.font = body_font
+            left.alignment = mid
+            right.alignment = mid
+            right.number_format = "#,##0.00"
+            right.fill = input_fill
+            right.protection = unlocked
+            for cell in (left, right):
+                cell.border = thin
+        market_note = souhrn.cell(
+            33,
+            1,
+            "Žluté ceny burzy jdou přepsat. Kov je změna dolarové LME. "
+            "Měna je zbytek po přepočtu té části do eur kurzem toho dne.",
+        )
+        market_note.font = note_font
+        market_note.alignment = wrap
+        souhrn.merge_cells("A33:B34")
     souhrn.protection.sheet = True
     souhrn.protection.autoFilter = False
 
@@ -6608,7 +6638,8 @@ def _nakup_excel_bytes(
     pol.row_dimensions[1].height = 34
     for r_i in range(2, last_row + 1):
         formulas = _item_formulas(r_i)
-        formulas.update(_metal_formulas(r_i))
+        if include_metal:
+            formulas.update(_metal_formulas(r_i))
         src = results.iloc[r_i - 2] if r_i - 2 < n_data else None
         for c, name in enumerate(export_cols, start=1):
             cell = pol.cell(r_i, c)
@@ -6673,15 +6704,16 @@ def _nakup_excel_bytes(
     for c, name in enumerate(export_cols, start=1):
         pol.column_dimensions[get_column_letter(c)].width = widths.get(name, 24)
     last_col = get_column_letter(len(export_cols))
-    metal_dv = DataValidation(type="list", formula1='"Měď,Hliník"', allow_blank=False)
-    metal_dv.promptTitle = "Kov"
-    metal_dv.prompt = "Měď nebo hliník, podle toho, s čím má podíl ceny jet."
-    metal_dv.errorTitle = "Kov"
-    metal_dv.error = "Napište Měď nebo Hliník."
-    metal_dv.showInputMessage = True
-    metal_dv.showErrorMessage = True
-    metal_dv.add(f"S2:S{last_row}")
-    pol.add_data_validation(metal_dv)
+    if include_metal:
+        metal_dv = DataValidation(type="list", formula1='"Měď,Hliník"', allow_blank=False)
+        metal_dv.promptTitle = "Kov"
+        metal_dv.prompt = "Měď nebo hliník, podle toho, s čím má podíl ceny jet."
+        metal_dv.errorTitle = "Kov"
+        metal_dv.error = "Napište Měď nebo Hliník."
+        metal_dv.showInputMessage = True
+        metal_dv.showErrorMessage = True
+        metal_dv.add(f"S2:S{last_row}")
+        pol.add_data_validation(metal_dv)
     pol.freeze_panes = "B2"
     pol.auto_filter.ref = f"A1:{last_col}{last_row}"
     pol.page_setup.orientation = "landscape"
@@ -6748,6 +6780,44 @@ def _nakup_excel_bytes(
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def _nakup_hs_code(label: object) -> str:
+    """V tabulce výsledků stačí kód. Celý popis je ve výběru HS u faktury."""
+    match = re.match(r"(\d{6,10})", str(label or "").strip())
+    return match.group(1) if match else str(label or "").strip()
+
+
+def _nakup_num(value, decimals: int) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    if math.isnan(number) or math.isinf(number):
+        return "—"
+    return format_num(number, decimals)
+
+
+def _nakup_fit_html(columns: list[tuple[str, str, str]], rows: list[list[str]]) -> str:
+    """Tabulka na šířku stránky. Sloupec je (název, šířka, třída)."""
+    cols = "".join(f'<col style="width:{width}">' for _head, width, _kind in columns)
+    heads = "".join(
+        f'<th class="{kind}">{html.escape(head)}</th>'
+        for head, _width, kind in columns
+    )
+    body: list[str] = []
+    for row in rows:
+        cells = []
+        for value, (_head, _width, kind) in zip(row, columns):
+            shown = html.escape(value)
+            cells.append(f'<td class="{kind}" title="{shown}">{shown}</td>')
+        body.append("<tr>" + "".join(cells) + "</tr>")
+    return (
+        '<div class="data-table-wrap nakup-fit"><table>'
+        f"<colgroup>{cols}</colgroup>"
+        f"<thead><tr>{heads}</tr></thead>"
+        f"<tbody>{''.join(body)}</tbody></table></div>"
+    )
 
 
 def _landed_column_config(frame: pd.DataFrame) -> dict:
@@ -7058,25 +7128,6 @@ def render_landed_cost_pricing() -> None:
         st.warning("Celková hodnota zboží na faktuře musí být větší než nula.")
         return
 
-    total_goods = results[_COL_ROW_EUR].sum()
-    total_landed = results[_COL_LANDED].sum()
-    s1, s2, s3 = st.columns(3)
-    s1.metric("Hodnota zboží na faktuře", f"{format_num(total_goods, 2)} EUR")
-    s2.metric("Celkové náklady (landed)", f"{format_num(total_landed, 2)} EUR")
-    s3.metric("Celkem v CZK", f"{format_num(total_landed * eur_czk, 0)} Kč")
-
-    st.markdown("#### Výsledky — Landed Cost po položkách")
-    display_cols = [
-        _INVOICE_COL_NAME,
-        _INVOICE_COL_HS,
-        _INVOICE_COL_QTY,
-        _INVOICE_COL_PRICE,
-        _INVOICE_COL_DUTY,
-        _COL_LANDED,
-        _COL_UNIT_EUR,
-        _COL_UNIT_CZK,
-    ]
-
     st.subheader("Tvorba prodejní ceny")
     c_mode, c_pct = st.columns([1, 1])
     with c_mode:
@@ -7102,80 +7153,84 @@ def render_landed_cost_pricing() -> None:
     st.caption("Přirážka 30 % je cena × 1,30. Marže 30 % je cena ÷ 0,70. Sloupec Prodej jede podle přepínače.")
 
     results_sales = _apply_sales_pricing(results, margin_pct, price_mode)
-    other_sale = _COL_SALE_MARKUP if price_mode == "Marže" else _COL_SALE_MARGIN
-    display_cols += [_COL_SALE, other_sale]
+    include_metal = st.checkbox(
+        "Zahrnout pohyb kovu",
+        value=False,
+        key="landed_include_metal",
+        help="Doplní tabulku nové ceny a do Excelu sloupce kovu. Bez zaškrtnutí tam nejsou.",
+    )
 
     day_from = st.session_state.get("metal_cmp_from", datetime(2026, 8, 18).date())
     day_to = st.session_state.get("metal_cmp_to", datetime(2026, 9, 24).date())
-    st.subheader("Cena po pohybu kovu")
-    st.caption(
-        f"Dny jsou z porovnání nahoře: {_cz_day(day_from)} → {_cz_day(day_to)}. "
-        "Podíl kovu v nákupní ceně se posune s LME. V eurech je v tom i kurz dolaru. "
-        "Zbytek ceny za jednotku zůstane. Doprava, clo a prodej se pak dopočítají stejně jako výše. "
-        "Prodej je v korunách dnešním kurzem ČNB. 100 % znamená, že s burzou jede celá cena."
-    )
-    metal_choices = _landed_metal_choices(invoice)
-    adjusted, metal_move, metal_pairs = _invoice_metal_move(
-        invoice, metal_choices, day_from, day_to,
-    )
-    results_sales[_COL_METAL] = metal_move[_COL_METAL].to_numpy()
-    results_sales[_COL_METAL_SHARE] = metal_move[_COL_METAL_SHARE].to_numpy()
-    moved_landed = compute_invoice_landed(
-        adjusted,
-        freight_customs_eur,
-        inland_eur,
-        customs_czk,
-        eur_czk,
-        force_zero_duty,
-    )
-    moved_sales = (
-        _apply_sales_pricing(moved_landed, margin_pct, price_mode)
-        if moved_landed is not None else None
-    )
-    move_bits = []
-    for label, key in (("měď", "copper"), ("hliník", "aluminum")):
-        pair = metal_pairs.get(key)
-        if pair:
-            move_bits.append(
-                f"{label} v eurech {_signed_pct(_move_pct(pair['eur2'], pair['eur1']))}"
-            )
-    if move_bits:
-        st.caption("Pohyb burzy mezi těmi dny: " + " · ".join(move_bits) + ".")
-    missing_metal = [
-        label for label, key in (("Měď", "copper"), ("Hliník", "aluminum"))
-        if key in metal_pairs and metal_pairs[key] is None
-    ]
-    if missing_metal:
-        st.warning(
-            "Pro "
-            + " a ".join(missing_metal)
-            + " v těchto dnech není uzavřená cena LME nebo kurz. Novou cenu u nich nepočítám."
+    if include_metal:
+        st.caption(
+            f"Dny jsou z porovnání nahoře: {_cz_day(day_from)} → {_cz_day(day_to)}. "
+            "Podíl kovu v nákupní ceně se posune s LME. V eurech je v tom i kurz dolaru. "
+            "Zbytek ceny za jednotku zůstane. Doprava, clo a prodej se pak dopočítají stejně jako výše. "
+            "Prodej je v korunách dnešním kurzem ČNB. 100 % znamená, že s burzou jede celá cena."
         )
-    move_view = pd.DataFrame({
-        _INVOICE_COL_NAME: results_sales[_INVOICE_COL_NAME].to_numpy(),
-        _COL_METAL: metal_move[_COL_METAL].to_numpy(),
-        _COL_METAL_SHARE: metal_move[_COL_METAL_SHARE].to_numpy(),
-        _COL_PRICE_NOW: results_sales[_INVOICE_COL_PRICE].to_numpy(),
-        _COL_METAL_KOV: metal_move[_COL_METAL_KOV].to_numpy(),
-        _COL_METAL_FX: metal_move[_COL_METAL_FX].to_numpy(),
-        _COL_NEW_PRICE: metal_move[_COL_NEW_PRICE].to_numpy(),
-        _COL_SALE_NOW: results_sales[_COL_SALE].to_numpy(),
-        _COL_NEW_SALE: (
-            moved_sales[_COL_SALE].to_numpy() if moved_sales is not None
-            else [None] * len(metal_move)
-        ),
-    })
-    not_ok = ~metal_move["ok"].astype(bool).to_numpy()
-    if not_ok.any():
-        move_view.loc[not_ok, [
-            _COL_METAL_KOV, _COL_METAL_FX, _COL_NEW_PRICE, _COL_NEW_SALE,
-        ]] = None
-    st.dataframe(
-        move_view,
-        use_container_width=True,
-        hide_index=True,
-        column_config=_landed_column_config(move_view),
-    )
+        metal_choices = _landed_metal_choices(invoice)
+        adjusted, metal_move, metal_pairs = _invoice_metal_move(
+            invoice, metal_choices, day_from, day_to,
+        )
+        results_sales[_COL_METAL] = metal_move[_COL_METAL].to_numpy()
+        results_sales[_COL_METAL_SHARE] = metal_move[_COL_METAL_SHARE].to_numpy()
+        moved_landed = compute_invoice_landed(
+            adjusted,
+            freight_customs_eur,
+            inland_eur,
+            customs_czk,
+            eur_czk,
+            force_zero_duty,
+        )
+        moved_sales = (
+            _apply_sales_pricing(moved_landed, margin_pct, price_mode)
+            if moved_landed is not None else None
+        )
+        move_bits = []
+        for label, key in (("měď", "copper"), ("hliník", "aluminum")):
+            pair = metal_pairs.get(key)
+            if pair:
+                move_bits.append(
+                    f"{label} v eurech {_signed_pct(_move_pct(pair['eur2'], pair['eur1']))}"
+                )
+        if move_bits:
+            st.caption("Pohyb burzy mezi těmi dny: " + " · ".join(move_bits) + ".")
+        missing_metal = [
+            label for label, key in (("Měď", "copper"), ("Hliník", "aluminum"))
+            if key in metal_pairs and metal_pairs[key] is None
+        ]
+        if missing_metal:
+            st.warning(
+                "Pro "
+                + " a ".join(missing_metal)
+                + " v těchto dnech není uzavřená cena LME nebo kurz. Novou cenu u nich nepočítám."
+            )
+        move_view = pd.DataFrame({
+            _INVOICE_COL_NAME: results_sales[_INVOICE_COL_NAME].to_numpy(),
+            _COL_METAL: metal_move[_COL_METAL].to_numpy(),
+            _COL_METAL_SHARE: metal_move[_COL_METAL_SHARE].to_numpy(),
+            _COL_PRICE_NOW: results_sales[_INVOICE_COL_PRICE].to_numpy(),
+            _COL_METAL_KOV: metal_move[_COL_METAL_KOV].to_numpy(),
+            _COL_METAL_FX: metal_move[_COL_METAL_FX].to_numpy(),
+            _COL_NEW_PRICE: metal_move[_COL_NEW_PRICE].to_numpy(),
+            _COL_SALE_NOW: results_sales[_COL_SALE].to_numpy(),
+            _COL_NEW_SALE: (
+                moved_sales[_COL_SALE].to_numpy() if moved_sales is not None
+                else [None] * len(metal_move)
+            ),
+        })
+        not_ok = ~metal_move["ok"].astype(bool).to_numpy()
+        if not_ok.any():
+            move_view.loc[not_ok, [
+                _COL_METAL_KOV, _COL_METAL_FX, _COL_NEW_PRICE, _COL_NEW_SALE,
+            ]] = None
+        st.dataframe(
+            move_view,
+            use_container_width=True,
+            hide_index=True,
+            column_config=_landed_column_config(move_view),
+        )
 
     excel_bytes = _nakup_excel_bytes(
         _LANDED_ROUTES[int(route_i)],
@@ -7190,54 +7245,93 @@ def render_landed_cost_pricing() -> None:
         results_sales,
         day_from,
         day_to,
+        include_metal,
     )
+    st.markdown("#### Výsledky")
+    result_cols = [
+        ("Kabel", "22%", ""),
+        ("HS", "10%", "num"),
+        ("Množství", "10%", "num"),
+        ("Cena €", "9%", "num"),
+        ("Clo", "7%", "num"),
+        ("Landed €", "12%", "num"),
+        ("1 j. €", "10%", "num"),
+        ("1 j. Kč", "10%", "num"),
+        ("Prodej Kč", "10%", "num"),
+    ]
+    result_rows = [
+        [
+            str(row[_INVOICE_COL_NAME]),
+            _nakup_hs_code(row[_INVOICE_COL_HS]),
+            _nakup_num(row[_INVOICE_COL_QTY], 0),
+            _nakup_num(row[_INVOICE_COL_PRICE], 2),
+            _nakup_num(row[_INVOICE_COL_DUTY], 1),
+            _nakup_num(row[_COL_LANDED], 2),
+            _nakup_num(row[_COL_UNIT_EUR], 2),
+            _nakup_num(row[_COL_UNIT_CZK], 2),
+            _nakup_num(row[_COL_SALE], 2),
+        ]
+        for _, row in results_sales.iterrows()
+    ]
+    st.markdown(_nakup_fit_html(result_cols, result_rows), unsafe_allow_html=True)
+    st.caption(f"Prodej je při způsobu {price_mode}, {format_num(margin_pct, 1)} %.")
+
+    if price_mode == "Marže" and margin_pct >= 100.0:
+        st.warning("Marže 100 % a více — prodej při marži není definovaný.")
+
+    with st.expander("Detail proporcí (doprava, clo, deklarace)", expanded=False):
+        detail_cols = [
+            ("Kabel", "22%", ""),
+            ("Hodnota €", "13%", "num"),
+            ("Podíl", "9%", "num"),
+            ("Do proclení", "14%", "num"),
+            ("Po Česku", "12%", "num"),
+            ("Základ cla", "12%", "num"),
+            ("Clo €", "9%", "num"),
+            ("Deklarace", "9%", "num"),
+        ]
+        detail_rows = [
+            [
+                str(row[_INVOICE_COL_NAME]),
+                _nakup_num(row[_COL_ROW_EUR], 2),
+                _nakup_num(float(row[_COL_SHARE]) * 100.0, 2) + " %",
+                _nakup_num(row[_COL_FREIGHT_C], 2),
+                _nakup_num(row[_COL_FREIGHT_I], 2),
+                _nakup_num(row[_COL_DUTY_BASE], 2),
+                _nakup_num(row[_COL_DUTY_EUR], 2),
+                _nakup_num(row[_COL_DECL], 2),
+            ]
+            for _, row in results_sales.iterrows()
+        ]
+        st.markdown(_nakup_fit_html(detail_cols, detail_rows), unsafe_allow_html=True)
+
+    st.markdown("#### Souhrn")
+    sum_a, sum_b, sum_c, sum_d = st.columns(4)
+    sum_a.metric("Metráž / ks", _nakup_num(results_sales[_INVOICE_COL_QTY].sum(), 0))
+    sum_b.metric("Zboží", f"{_nakup_num(results_sales[_COL_ROW_EUR].sum(), 2)} EUR")
+    sum_c.metric("Do proclení", f"{_nakup_num(results_sales[_COL_FREIGHT_C].sum(), 2)} EUR")
+    sum_d.metric("Po Česku", f"{_nakup_num(results_sales[_COL_FREIGHT_I].sum(), 2)} EUR")
+    sum_e, sum_f, sum_g, sum_h = st.columns(4)
+    sum_e.metric("Clo", f"{_nakup_num(results_sales[_COL_DUTY_EUR].sum(), 2)} EUR")
+    sum_f.metric("Deklarace", f"{_nakup_num(results_sales[_COL_DECL].sum(), 2)} EUR")
+    sum_g.metric("Landed", f"{_nakup_num(results_sales[_COL_LANDED].sum(), 2)} EUR")
+    sum_h.metric("Landed v Kč", f"{_nakup_num(results_sales[_COL_LANDED].sum() * eur_czk, 0)} Kč")
+
     st.download_button(
         "⬇️ Stáhnout Excel",
         data=excel_bytes,
         file_name=f"pbcable_nakup_{now_prague().strftime('%Y-%m-%d')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         key="landed_excel_download",
-        help="Žluté buňky se přepisují. Clo, landed, prodej i cena po kovu se dopočítají vzorci.",
+        help="Žluté buňky se přepisují. Clo, landed a prodej se dopočítají vzorci.",
     )
-    st.caption(
+    excel_note = (
         "V Excelu přepište žluté buňky. Doprava do proclení mění clo, dovoz po Česku jen landed cenu. "
-        "Způsob Přirážka nebo Marže přepne sloupec Prodej. "
-        "Podíl kovu a volba měď nebo hliník přepíšou novou nákupní cenu."
+        "Způsob Přirážka nebo Marže přepne sloupec Prodej."
     )
-
-    show = results_sales[display_cols].copy()
-    show = show.rename(columns={
-        _INVOICE_COL_QTY: "Množství",
-        _INVOICE_COL_PRICE: "Cena za 1 jednotku (EUR)",
-    })
-    st.dataframe(
-        show,
-        use_container_width=True,
-        hide_index=True,
-        column_config=_landed_column_config(show),
-    )
-
-    if price_mode == "Marže" and margin_pct >= 100.0:
-        st.warning("Marže 100 % a více — prodej při marži není definovaný.")
-
-    with st.expander("🔍 Detail proporcí (doprava, clo, deklarace)", expanded=False):
-        detail_cols = [
-            _INVOICE_COL_NAME,
-            _COL_ROW_EUR,
-            _COL_SHARE,
-            _COL_FREIGHT_C,
-            _COL_FREIGHT_I,
-            _COL_DUTY_BASE,
-            _COL_DUTY_EUR,
-            _COL_DECL,
-        ]
-        detail = results_sales[detail_cols].copy()
-        st.dataframe(
-            detail,
-            use_container_width=True,
-            hide_index=True,
-            column_config=_landed_column_config(detail),
-        )
+    if include_metal:
+        excel_note += " Podíl kovu a volba měď nebo hliník přepíšou novou nákupní cenu."
+    st.caption(excel_note)
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
