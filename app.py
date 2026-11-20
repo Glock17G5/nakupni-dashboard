@@ -1199,6 +1199,11 @@ footer { visibility: hidden; }
     font-family: 'IBM Plex Mono', ui-monospace, monospace;
     font-variant-numeric: tabular-nums;
 }
+.nakup-fit td.stack {
+    white-space: normal;
+    overflow: visible;
+    line-height: 1.35;
+}
 .nakup-fit tfoot td {
     font-weight: 700;
     border-top: 2px solid #3D4859;
@@ -5327,17 +5332,21 @@ def _metal_compare_excel_bytes(
     return buf.getvalue()
 
 
-def _render_metal_date_compare() -> None:
-    """Nákup: dva zvolené dny ve sbalovacím okně, s Excelem na jednání s dodavatelem.
+def _render_metal_date_compare(*, embedded: bool = True) -> None:
+    """Dva dny a Excel na dvě nabídky.
 
-    Není samostatný fragment. Změna dne má hned přepočítat cenu pod fakturou.
-    Základ faktury se při tom nepřepisuje, rozepsané řádky zůstávají.
+    Na vlastní záložce je otevřené. embedded ho schová do sbalovacího okna.
     """
     default_from = datetime(2026, 8, 18).date()
     default_to = datetime(2026, 9, 24).date()
     shown_from = st.session_state.get("metal_cmp_from", default_from)
     shown_to = st.session_state.get("metal_cmp_to", default_to)
-    with st.expander(f"Porovnání dvou dnů · {_metal_cmp_summary(shown_from, shown_to)}", expanded=False):
+    box = (
+        st.expander(f"Porovnání dvou dnů · {_metal_cmp_summary(shown_from, shown_to)}", expanded=False)
+        if embedded
+        else st.container()
+    )
+    with box:
         st.caption(
             "Koruna je euro toho dne krát kurz EUR/CZK z ČNB. "
             "V Excelu se do žlutých buněk doplní obě nabídky a vzorce oddělí kov, kurz a jiné vícenáklady."
@@ -5988,10 +5997,11 @@ def _named_invoice_hs(df: pd.DataFrame | None) -> list[str]:
 def _invoice_duty_refresh(df: pd.DataFrame, *, force_zero: bool) -> pd.DataFrame:
     """Doplní clo podle HS. Nemění ceny ani množství."""
     out = df.copy().reset_index(drop=True)
+    extras = [c for c in out.columns if c not in _DEFAULT_INVOICE_DF.columns]
     for col in _DEFAULT_INVOICE_DF.columns:
         if col not in out.columns:
             out[col] = pd.NA
-    out = out.loc[:, list(_DEFAULT_INVOICE_DF.columns)]
+    out = out.loc[:, list(_DEFAULT_INVOICE_DF.columns) + extras]
     for i, row in out.iterrows():
         name = str(row.get(_INVOICE_COL_NAME, "") or "").strip()
         if name.lower() in ("", "nan", "none"):
@@ -6065,7 +6075,8 @@ def _sanitize_invoice_input(df: pd.DataFrame) -> pd.DataFrame:
     for col in _DEFAULT_INVOICE_DF.columns:
         if col not in out.columns:
             out[col] = _DEFAULT_INVOICE_DF[col].iloc[0] if len(_DEFAULT_INVOICE_DF) else ""
-    out = out[_DEFAULT_INVOICE_DF.columns]
+    extras = [c for c in out.columns if c not in _DEFAULT_INVOICE_DF.columns]
+    out = out[list(_DEFAULT_INVOICE_DF.columns) + extras]
     out[_INVOICE_COL_NAME] = out[_INVOICE_COL_NAME].astype(str).str.strip()
     out[_INVOICE_COL_QTY] = pd.to_numeric(out[_INVOICE_COL_QTY], errors="coerce").fillna(0)
     out[_INVOICE_COL_PRICE] = pd.to_numeric(out[_INVOICE_COL_PRICE], errors="coerce").fillna(0)
@@ -6183,6 +6194,11 @@ _COL_NEW_PRICE = "Nová nákupní cena za 1 j. (EUR)"
 _COL_PRICE_NOW = "Nákup teď (EUR)"
 _COL_SALE_NOW = "Prodej teď (CZK)"
 _COL_NEW_SALE = "Nový prodej (CZK)"
+_COL_KG = "Kg kovu / km"
+_COL_OFFER_DATE = "Datum"
+_COL_RATIO = "Poměr burzy"
+_ORIGINS = ("EU", "Turecko", "Čína", "Ostatní")
+_INCOTERMS = ("EXW", "FOB", "CIF", "DAP")
 _NAKUP_METAL_COLS = (
     _COL_METAL,
     _COL_METAL_SHARE,
@@ -6372,6 +6388,15 @@ def _nakup_excel_bytes(
     day_from,
     day_to,
     include_metal: bool = False,
+    entry_ccy: str = "EUR",
+    usd_czk: float = 0.0,
+    count_customs: float = 1.0,
+    count_inland: float = 1.0,
+    cu_ratio: float = 1.0,
+    al_ratio: float = 1.0,
+    offer_day: str = "",
+    today_label: str = "",
+    incoterm: str = "FOB",
 ) -> bytes:
     """Excel nákupu se žlutými vstupy a vzorci.
 
@@ -6429,10 +6454,10 @@ def _nakup_excel_bytes(
                 f'IFERROR(VLOOKUP(LEFT(B{r},8),\'Sazby cla\'!$A$2:$B${hs_lookup_last},2,FALSE),'
                 f"'Sazby cla'!$E$2)))"
             ),
-            6: f'=IF({active},"",C{r}*D{r})',
+            6: f'=IF({active},"",C{r}*D{r}*Souhrn!$E$3)',
             7: f'=IF(OR(F{r}="",{goods}=0),"",F{r}/{goods})',
-            8: f'=IF(G{r}="","",G{r}*Souhrn!$B$4)',
-            9: f'=IF(G{r}="","",G{r}*Souhrn!$B$5)',
+            8: f'=IF(G{r}="","",G{r}*Souhrn!$B$4*Souhrn!$E$3)',
+            9: f'=IF(G{r}="","",G{r}*Souhrn!$B$5*Souhrn!$E$3)',
             10: f'=IF(F{r}="","",F{r}+H{r})',
             11: f'=IF(J{r}="","",J{r}*E{r}/100)',
             12: f'=IF(F{r}="","",IF(Souhrn!$B$7=0,0,G{r}*Souhrn!$B$6/Souhrn!$B$7))',
@@ -6461,14 +6486,15 @@ def _nakup_excel_bytes(
         )
         ready = f'OR({active},S{r}="",T{r}="",({usd})="",({eur})="")'
         goods = f"SUM($X$2:$X${last_row})"
+        unit_eur = f"(D{r}*Souhrn!$E$3)"
         return {
-            21: f'=IF({ready},"",D{r}*T{r}*(({usd})-1))',
-            22: f'=IF({ready},"",D{r}*T{r}*(({eur})-({usd})))',
-            23: f'=IF(OR(U{r}="",V{r}=""),"",D{r}+U{r}+V{r})',
+            21: f'=IF({ready},"",{unit_eur}*T{r}*(({usd})-1))',
+            22: f'=IF({ready},"",{unit_eur}*T{r}*(({eur})-({usd})))',
+            23: f'=IF(OR(U{r}="",V{r}=""),"",{unit_eur}+U{r}+V{r})',
             24: f'=IF(W{r}="","",C{r}*W{r})',
             25: f'=IF(OR(X{r}="",{goods}=0),"",X{r}/{goods})',
-            26: f'=IF(Y{r}="","",Y{r}*Souhrn!$B$4)',
-            27: f'=IF(Y{r}="","",Y{r}*Souhrn!$B$5)',
+            26: f'=IF(Y{r}="","",Y{r}*Souhrn!$B$4*Souhrn!$E$3)',
+            27: f'=IF(Y{r}="","",Y{r}*Souhrn!$B$5*Souhrn!$E$3)',
             28: f'=IF(X{r}="","",X{r}+Z{r})',
             29: f'=IF(AB{r}="","",AB{r}*E{r}/100)',
             30: f'=IF(X{r}="","",IF(Souhrn!$B$7=0,0,Y{r}*Souhrn!$B$6/Souhrn!$B$7))',
@@ -6485,8 +6511,8 @@ def _nakup_excel_bytes(
     summary_rows: list[tuple[str, object, str]] = [
         ("Trasa", route_label, "text"),
         ("Clo vynulováno (Turecko / A.TR)", "Ano" if zero_duty else "Ne", "input"),
-        ("Doprava do proclení (EUR)", float(freight_customs_eur), "input"),
-        ("Dovoz po Česku (EUR)", float(inland_eur), "input"),
+        (f"Doprava do proclení ({entry_ccy})", float(freight_customs_eur), "input"),
+        (f"Dovoz po Česku ({entry_ccy})", float(inland_eur), "input"),
         ("Poplatek za celní deklaraci a JSD (CZK)", float(customs_czk), "input"),
         ("Kurz EUR/CZK (ČNB)", float(eur_czk), "input"),
         ("Datum kurzu ČNB", str(cnb_date or ""), "text"),
@@ -6539,11 +6565,41 @@ def _nakup_excel_bytes(
         elif i % 2 == 0:
             left.fill = alt_fill
             right.fill = alt_fill
+    if entry_ccy not in _LANDED_CCYS:
+        entry_ccy = "EUR"
+    ccy_label = souhrn.cell(20, 1, "Měna nákupní ceny a dopravy")
+    ccy_value = souhrn.cell(20, 2, entry_ccy)
+    ccy_label.font = label_font
+    ccy_value.font = body_font
+    ccy_value.fill = input_fill
+    ccy_value.protection = unlocked
+    for cell in (ccy_label, ccy_value):
+        cell.border = thin
+        cell.alignment = mid
+    usd_label = souhrn.cell(2, 4, "Kurz USD/CZK (ČNB)")
+    usd_value = souhrn.cell(2, 5, float(usd_czk or 0))
+    fx_label = souhrn.cell(3, 4, "EUR za 1 jednotku měny")
+    fx_value = souhrn.cell(3, 5, '=IF(B20="USD",IF(OR(E2="",E2=0,B7=0),"",E2/B7),IF(B20="CZK",IF(B7=0,"",1/B7),1))')
+    usd_label.font = label_font
+    fx_label.font = label_font
+    usd_value.font = body_font
+    fx_value.font = body_font
+    usd_value.number_format = "0.0000"
+    fx_value.number_format = "0.000000"
+    usd_value.fill = input_fill
+    usd_value.protection = unlocked
+    for cell in (usd_label, usd_value, fx_label, fx_value):
+        cell.border = thin
+        cell.alignment = mid
+    souhrn.column_dimensions["D"].width = 24
+    souhrn.column_dimensions["E"].width = 14
+    souhrn.column_dimensions["F"].width = 16
     note = (
         "Žluté buňky se přepisují. Doprava do proclení vstupuje do cla, dovoz po Česku jen do landed ceny. "
         "Přirážka je × (1 + procento/100). Marže je ÷ (1 − procento/100). "
         "Sloupec Prodej jede podle způsobu v B9. Clo v % bere prvních 8 číslic HS z listu Sazby cla. "
-        "Ano u vynulovaného cla dá všude 0. Dole na Položkách jsou prázdné řádky."
+        "Ano u vynulovaného cla dá všude 0. Dole na Položkách jsou prázdné řádky. "
+        "B20 je měna žluté ceny a dopravy. E3 z ní udělá eura kurzem ČNB."
     )
     if include_metal:
         note += (
@@ -6576,6 +6632,15 @@ def _nakup_excel_bytes(
     mode_dv.showErrorMessage = True
     mode_dv.add("B9")
     souhrn.add_data_validation(mode_dv)
+    ccy_dv = DataValidation(type="list", formula1='"EUR,USD,CZK"', allow_blank=False)
+    ccy_dv.promptTitle = "Měna"
+    ccy_dv.prompt = "Žlutá cena a obě dopravy jsou v této měně. E3 je přepočte na eura."
+    ccy_dv.errorTitle = "Měna"
+    ccy_dv.error = "Napište EUR, USD nebo CZK."
+    ccy_dv.showInputMessage = True
+    ccy_dv.showErrorMessage = True
+    ccy_dv.add("B20")
+    souhrn.add_data_validation(ccy_dv)
     souhrn.column_dimensions["A"].width = 52
     souhrn.column_dimensions["B"].width = 28
     souhrn.freeze_panes = "A2"
@@ -6630,7 +6695,8 @@ def _nakup_excel_bytes(
 
     pol = wb.create_sheet("Položky")
     for c, name in enumerate(export_cols, start=1):
-        cell = pol.cell(1, c, name)
+        header = f"Cena za 1 jednotku ({entry_ccy})" if name == _INVOICE_COL_PRICE else name
+        cell = pol.cell(1, c, header)
         cell.fill = header_fill
         cell.font = header_font
         cell.alignment = wrap
@@ -6654,21 +6720,44 @@ def _nakup_excel_bytes(
                     if name in (_INVOICE_COL_NAME, _INVOICE_COL_HS, _COL_METAL):
                         cell.value = None if pd.isna(val) else str(val)
                     elif name == _COL_METAL_SHARE and pd.notna(val):
-                        cell.value = float(val) / 100.0
+                        cell.value = float(val) / 100.0 if include_metal else float(val)
+                    elif name == _INVOICE_COL_PRICE and pd.notna(val):
+                        if "_entered_ccy" in src.index and pd.notna(src["_entered_ccy"]):
+                            cell.value = round(float(src["_entered_ccy"]), 4)
+                        else:
+                            entered = _nakup_convert(
+                                float(val), "EUR", entry_ccy, float(eur_czk), float(usd_czk or 0),
+                            )
+                            cell.value = float(val) if entered is None else round(float(entered), 4)
                     elif pd.notna(val):
                         cell.value = float(val)
+            elif (
+                name == _COL_RATIO
+                and src is not None
+                and "_row_ratio" in src.index
+                and pd.notna(src["_row_ratio"])
+            ):
+                cell.value = round(float(src["_row_ratio"]), 6)
+                cell.fill = input_fill
+                cell.protection = unlocked
             else:
                 cell.value = formulas[c]
                 if r_i % 2 == 0:
                     cell.fill = alt_fill
-            if name in ("Podíl na faktuře", "Nový podíl na faktuře", _COL_METAL_SHARE):
+            if name in ("Podíl na faktuře", "Nový podíl na faktuře") or (
+                include_metal and name == _COL_METAL_SHARE
+            ):
                 cell.number_format = "0.00%"
+            elif name == _COL_METAL_SHARE:
+                cell.number_format = "0.0"
+            elif name == _COL_RATIO:
+                cell.number_format = "0.0000"
             elif name == _INVOICE_COL_DUTY:
                 cell.number_format = "0.0"
             elif name == _INVOICE_COL_QTY:
                 cell.number_format = "#,##0.00"
             elif name == _INVOICE_COL_PRICE:
-                cell.number_format = "#,##0.000"
+                cell.number_format = "#,##0.00" if entry_ccy == "CZK" else "#,##0.000"
             elif name in (
                 _COL_UNIT_EUR,
                 _COL_NEW_PRICE,
@@ -6677,7 +6766,7 @@ def _nakup_excel_bytes(
                 "Landed po kovu za 1 j. (EUR)",
             ):
                 cell.number_format = "#,##0.0000"
-            elif name not in input_names:
+            elif name not in input_names and name != _COL_RATIO:
                 cell.number_format = "#,##0.00"
     widths = {
         _INVOICE_COL_NAME: 36,
@@ -6798,6 +6887,189 @@ def _nakup_num(value, decimals: int) -> str:
     return format_num(number, decimals)
 
 
+_LANDED_CCYS = ("EUR", "USD", "CZK")
+_LANDED_CCY_MARK = {"EUR": "€", "USD": "$", "CZK": "Kč"}
+
+
+def _nakup_eur_per_unit(ccy: str, eur_czk: float, usd_czk: float) -> float | None:
+    """Kolik eur je jedna jednotka zvolené měny. Kurzy jsou z ČNB, koruny za 1 jednotku."""
+    if ccy == "EUR":
+        return 1.0
+    if not eur_czk:
+        return None
+    if ccy == "CZK":
+        return 1.0 / float(eur_czk)
+    if not usd_czk:
+        return None
+    return float(usd_czk) / float(eur_czk)
+
+
+def _nakup_convert(amount: float, from_ccy: str, to_ccy: str, eur_czk: float, usd_czk: float) -> float | None:
+    src = _nakup_eur_per_unit(from_ccy, eur_czk, usd_czk)
+    dst = _nakup_eur_per_unit(to_ccy, eur_czk, usd_czk)
+    if src is None or not dst:
+        return None
+    return float(amount) * src / dst
+
+
+def _nakup_apply_currency(entry_ccy: str, eur_czk: float, usd_czk: float) -> str:
+    """Přepnutí měny přepočítá rozepsané ceny, aby zůstala stejná hodnota."""
+    if entry_ccy not in _LANDED_CCYS:
+        entry_ccy = "EUR"
+    applied = st.session_state.get("_landed_ccy_applied", "EUR")
+    if applied not in _LANDED_CCYS:
+        applied = "EUR"
+    if entry_ccy == applied:
+        st.session_state["_landed_ccy_applied"] = entry_ccy
+        return entry_ccy
+    src = _nakup_eur_per_unit(applied, eur_czk, usd_czk)
+    dst = _nakup_eur_per_unit(entry_ccy, eur_czk, usd_czk)
+    if src is None or not dst:
+        st.session_state["landed_input_ccy"] = applied
+        return applied
+    factor = src / dst
+    for key in ("landed_transport_eur", "landed_inland_eur"):
+        if key in st.session_state:
+            st.session_state[key] = round(float(st.session_state[key]) * factor, 2)
+    for frame_key in ("landed_invoice_data", "landed_invoice_live"):
+        frame = st.session_state.get(frame_key)
+        if isinstance(frame, pd.DataFrame) and _INVOICE_COL_PRICE in frame.columns:
+            updated = frame.copy()
+            updated[_INVOICE_COL_PRICE] = (
+                pd.to_numeric(updated[_INVOICE_COL_PRICE], errors="coerce") * factor
+            ).round(4)
+            st.session_state[frame_key] = updated
+    st.session_state.pop("landed_invoice_editor", None)
+    st.session_state["_landed_ccy_applied"] = entry_ccy
+    return entry_ccy
+
+
+def _nakup_pair_rates(quote: dict | None, eur_today: float, usd_today: float) -> tuple[float, float]:
+    """EUR/CZK a USD/CZK z kotace dne, jinak dnešní ČNB."""
+    if quote and quote.get("eur_czk") and quote.get("usd_czk"):
+        return float(quote["eur_czk"]), float(quote["usd_czk"])
+    return float(eur_today), float(usd_today)
+
+
+def _nakup_lme_ratio(then_q: dict | None, now_q: dict | None, key: str) -> float:
+    old = None if not then_q else then_q.get(key)
+    new = None if not now_q else now_q.get(key)
+    if not old or not new:
+        return 1.0
+    return float(new) / float(old)
+
+
+def _nakup_entry_ratio(ccy: str, then_q: dict | None, now_q: dict | None) -> float:
+    """Poměr, kterým se v měně nabídky posune podíl kovu."""
+    if ccy == "USD":
+        return _nakup_lme_ratio(then_q, now_q, "usd")
+    if ccy == "CZK":
+        return _nakup_lme_ratio(then_q, now_q, "czk")
+    return _nakup_lme_ratio(then_q, now_q, "eur")
+
+
+def _nakup_move_unit(
+    price: float,
+    ccy: str,
+    share_pct: float,
+    then_q: dict | None,
+    now_q: dict | None,
+    eur_today: float,
+    usd_today: float,
+) -> dict[str, float]:
+    """Tehdejší jednotková cena a dnešní cena po podílu kovu.
+
+    U dolarů a korun se kurz vezme jednou, až na výslednou částku.
+    U eur jede podíl kovu s eurovou LME a zbytek ceny zůstane v eurech.
+    """
+    share = min(max(float(share_pct or 0), 0.0), 100.0) / 100.0
+    eur_then_fx, usd_then_fx = _nakup_pair_rates(then_q, eur_today, usd_today)
+    usd_r = _nakup_lme_ratio(then_q, now_q, "usd")
+    eur_r = _nakup_lme_ratio(then_q, now_q, "eur")
+    czk_r = _nakup_lme_ratio(then_q, now_q, "czk")
+    cross_then = usd_then_fx / eur_then_fx if eur_then_fx else 0.0
+    cross_today = float(usd_today) / float(eur_today) if eur_today else 0.0
+    if ccy == "USD" and cross_then and cross_today:
+        usd_now = float(price) * (1.0 - share + share * usd_r)
+        eur_then = float(price) * cross_then
+        eur_now = usd_now * cross_today
+        kov = float(price) * share * (usd_r - 1.0) * cross_then
+    elif ccy == "CZK" and eur_then_fx and eur_today:
+        czk_now = float(price) * (1.0 - share + share * czk_r)
+        eur_then = float(price) / eur_then_fx
+        eur_now = czk_now / float(eur_today)
+        kov = float(price) * share * (usd_r - 1.0) / eur_then_fx
+    else:
+        if ccy == "CZK" and eur_then_fx:
+            eur_then = float(price) / eur_then_fx
+        elif ccy == "USD" and cross_then:
+            eur_then = float(price) * cross_then
+        else:
+            eur_then = float(price)
+        kov = eur_then * share * (usd_r - 1.0)
+        mena = eur_then * share * (eur_r - usd_r)
+        eur_now = eur_then + kov + mena
+        return {
+            "eur_then": eur_then,
+            "eur_now": eur_now,
+            "czk_then": eur_then * eur_then_fx,
+            "czk_now": eur_now * float(eur_today),
+            "kov": kov,
+            "mena": mena,
+            "ratio": eur_r,
+        }
+    mena = eur_now - eur_then - kov
+    ratio = usd_r if ccy == "USD" else czk_r
+    return {
+        "eur_then": eur_then,
+        "eur_now": eur_now,
+        "czk_then": eur_then * eur_then_fx,
+        "czk_now": eur_now * float(eur_today),
+        "kov": kov,
+        "mena": mena,
+        "ratio": ratio,
+    }
+
+
+def _nakup_share_from_kg(kg_per_km: float, eur_per_m: float, lme_eur_per_t: float) -> float | None:
+    """Podíl kovu z kg na kilometr a z LME toho dne. Nad 100 % se ořízne."""
+    if kg_per_km <= 0 or eur_per_m <= 0 or lme_eur_per_t <= 0:
+        return None
+    metal_eur = float(kg_per_km) * float(lme_eur_per_t) / 1_000_000.0
+    return min(100.0, max(0.0, metal_eur / float(eur_per_m) * 100.0))
+
+
+def _nakup_as_date(value, fallback):
+    """Datum z editoru. Prázdná buňka znamená datum nabídky."""
+    try:
+        if value is None or pd.isna(value):
+            return fallback
+    except (TypeError, ValueError):
+        if value is None:
+            return fallback
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return fallback
+    return parsed.date()
+
+
+def _nakup_ensure_offer_cols(df: pd.DataFrame) -> pd.DataFrame:
+    """Doplní kov, podíl, kg a datum. Prázdný podíl nechá na nabídce."""
+    out = df.copy()
+    if _COL_METAL not in out.columns:
+        out[_COL_METAL] = "Měď"
+    else:
+        metal = out[_COL_METAL].astype(str)
+        out.loc[~metal.isin(list(_METAL_CHOICES)), _COL_METAL] = "Měď"
+    if _COL_METAL_SHARE not in out.columns:
+        out[_COL_METAL_SHARE] = pd.NA
+    if _COL_KG not in out.columns:
+        out[_COL_KG] = pd.NA
+    if _COL_OFFER_DATE not in out.columns:
+        out[_COL_OFFER_DATE] = pd.NaT
+    return out
+
+
 def _nakup_fit_html(columns: list[tuple[str, str, str]], rows: list[list[str]]) -> str:
     """Tabulka na šířku stránky. Sloupec je (název, šířka, třída)."""
     cols = "".join(f'<col style="width:{width}">' for _head, width, _kind in columns)
@@ -6809,8 +7081,10 @@ def _nakup_fit_html(columns: list[tuple[str, str, str]], rows: list[list[str]]) 
     for row in rows:
         cells = []
         for value, (_head, _width, kind) in zip(row, columns):
-            shown = html.escape(value)
-            cells.append(f'<td class="{kind}" title="{shown}">{shown}</td>')
+            lines = str(value).split("\n")
+            shown = "<br>".join(html.escape(line) for line in lines)
+            title = html.escape(" ".join(lines))
+            cells.append(f'<td class="{kind}" title="{title}">{shown}</td>')
         body.append("<tr>" + "".join(cells) + "</tr>")
     return (
         '<div class="data-table-wrap nakup-fit"><table>'
@@ -6841,8 +7115,7 @@ def _landed_column_config(frame: pd.DataFrame) -> dict:
 @st.fragment
 def render_landed_cost_pricing() -> None:
     """Logistika a cenotvorba — faktura (více řádků), landed cost, prodejní ceny."""
-    st.header(t("🚢 Logistika a Prodejní ceny"))
-    _render_metal_date_compare()
+    st.header("Nákup")
 
     cnb = fetch_cnb_rates()
     _health_row([_cnb_health(cnb, ("EUR",))])
@@ -6863,7 +7136,18 @@ def render_landed_cost_pricing() -> None:
         st.error(t("Kurz EUR/CZK z ČNB není k dispozici — landed cost nelze spočítat."))
         return
 
-    c_route, c_fx = st.columns([3, 1])
+    usd_czk = float(((cnb or {}).get("USD") or {}).get("rate") or 0)
+    if "landed_input_ccy" not in st.session_state:
+        st.session_state["landed_input_ccy"] = "EUR"
+    entry_ccy = _nakup_apply_currency(
+        str(st.session_state.get("landed_input_ccy") or "EUR"),
+        float(eur_czk),
+        usd_czk,
+    )
+    ccy_mark = _LANDED_CCY_MARK[entry_ccy]
+    eur_per_unit = _nakup_eur_per_unit(entry_ccy, float(eur_czk), usd_czk)
+
+    c_route, c_ccy, c_fx = st.columns([2.2, 1.7, 1.1])
     with c_route:
         route_i = st.radio(
             t("Trasa"),
@@ -6875,28 +7159,54 @@ def render_landed_cost_pricing() -> None:
         force_zero_duty = _LANDED_ROUTES[int(route_i)] == _ROUTE_TURKEY
         if force_zero_duty:
             st.caption(t("🇹🇷 Turecko: u všech řádků se použije clo **0 %** (A.TR)."))
+    with c_ccy:
+        entry_ccy = st.radio(
+            "Měna ceny a dopravy",
+            _LANDED_CCYS,
+            horizontal=True,
+            key="landed_input_ccy",
+            help="Nákupní cena i obě dopravy se zadávají v této měně. Výpočet je přepočte kurzem ČNB.",
+        )
+        if not isinstance(entry_ccy, str) or entry_ccy not in _LANDED_CCYS:
+            entry_ccy = "EUR"
+        ccy_mark = _LANDED_CCY_MARK[entry_ccy]
+        eur_per_unit = _nakup_eur_per_unit(entry_ccy, float(eur_czk), usd_czk)
     with c_fx:
         st.metric("EUR/CZK (ČNB)", f"{eur_czk:.4f}")
+        if usd_czk:
+            st.caption(f"USD/CZK {usd_czk:.4f}")
+    if eur_per_unit is None:
+        st.error("Pro zadání v dolarech chybí kurz USD/CZK z ČNB.")
+        return
+
     c_freight, c_inland, c_custom = st.columns(3)
     with c_freight:
-        freight_customs_eur = st.number_input(
-            t("Doprava do proclení (EUR)"),
+        freight_args = dict(
             min_value=0.0,
-            value=12_000.0,
             step=100.0,
             format="%.2f",
             key="landed_transport_eur",
-            help="Vstoupí do cla. Patří sem doprava do přístavu nebo na hranici EU.",
+            help="Vstoupí do cla. Patří sem doprava do přístavu nebo na hranici EU. Měna je přepínač nahoře.",
+        )
+        if "landed_transport_eur" not in st.session_state:
+            freight_args["value"] = 12_000.0
+        freight_customs_eur = st.number_input(
+            f"Doprava do proclení ({entry_ccy})",
+            **freight_args,
         )
     with c_inland:
-        inland_eur = st.number_input(
-            t("Dovoz po Česku (EUR)"),
+        inland_args = dict(
             min_value=0.0,
-            value=0.0,
             step=50.0,
             format="%.2f",
             key="landed_inland_eur",
-            help="Jen do landed ceny. Do cla se nepočítá.",
+            help="Jen do landed ceny. Do cla se nepočítá. Měna je přepínač nahoře.",
+        )
+        if "landed_inland_eur" not in st.session_state:
+            inland_args["value"] = 0.0
+        inland_eur = st.number_input(
+            f"Dovoz po Česku ({entry_ccy})",
+            **inland_args,
         )
     with c_custom:
         customs_czk = st.number_input(
@@ -6914,7 +7224,6 @@ def render_landed_cost_pricing() -> None:
         value=False,
         key="landed_atr_zero",
     )
-
     uploaded_file = st.file_uploader(
         t("Nahrát exportní soubor (CSV nebo Excel z Pohody)"),
         type=["csv", "xlsx", "xls"],
@@ -7032,7 +7341,8 @@ def render_landed_cost_pricing() -> None:
 
     st.caption(
         "Import z Pohody nastaví u všech položek výchozí HS kategorii a **clo 3,7 %** (0 % u A.TR). "
-        "Skutečnou sazbu cla upravíte ručním výběrem kategorie v seznamu."
+        "Skutečnou sazbu cla upravíte ručním výběrem kategorie v seznamu. "
+        f"Cenu i dopravu beru v měně {entry_ccy}."
     )
 
     zero_duty = force_zero_duty or is_atr_turkey
@@ -7045,6 +7355,15 @@ def render_landed_cost_pricing() -> None:
         and isinstance(st.session_state.get("landed_invoice_live"), pd.DataFrame)
     ):
         st.session_state.landed_invoice_data = st.session_state.landed_invoice_live.copy()
+    base_invoice = st.session_state.landed_invoice_data
+    base_invoice = base_invoice.loc[:, [c for c in _DEFAULT_INVOICE_DF.columns if c in base_invoice.columns]].copy()
+    for col in _DEFAULT_INVOICE_DF.columns:
+        if col not in base_invoice.columns:
+            base_invoice[col] = pd.NA
+    st.session_state.landed_invoice_data = base_invoice.loc[:, list(_DEFAULT_INVOICE_DF.columns)]
+    if st.session_state.get("_landed_editor_ver") != 5:
+        st.session_state["_landed_editor_ver"] = 5
+        st.session_state.pop("landed_invoice_editor", None)
     invoice_totals = st.empty()
     edited_df = st.data_editor(
         st.session_state.landed_invoice_data.copy(),
@@ -7052,7 +7371,12 @@ def render_landed_cost_pricing() -> None:
         column_config={
             _INVOICE_COL_NAME: st.column_config.TextColumn("Název položky", width="large"),
             _INVOICE_COL_QTY: st.column_config.NumberColumn("Množství", min_value=0.0, format="%.2f"),
-            _INVOICE_COL_PRICE: st.column_config.NumberColumn("Jednotková cena", min_value=0.0, format="%.3f"),
+            _INVOICE_COL_PRICE: st.column_config.NumberColumn(
+                f"Cena za 1 j. ({entry_ccy})",
+                min_value=0.0,
+                format="%.2f" if entry_ccy == "CZK" else "%.3f",
+                help="Částka ve měně zvolené nahoře. Do výpočtu jde přepočet kurzem ČNB.",
+            ),
             _INVOICE_COL_HS: st.column_config.SelectboxColumn(
                 "HS Kód / Nápověda",
                 help="Vyberte HS kód — clo (%) se automaticky přepočítá.",
@@ -7065,7 +7389,7 @@ def render_landed_cost_pricing() -> None:
                 min_value=0.0,
                 max_value=100.0,
                 format="%.1f %%",
-                help="Automaticky z HS kódu. U Turecka (A.TR) nebo trasy 🇹🇷 je 0 %.",
+                help="Automaticky z HS kódu. U Turecka (A.TR) nebo trasy Turecko je 0 %.",
             ),
         },
         disabled=[_INVOICE_COL_DUTY],
@@ -7101,11 +7425,16 @@ def render_landed_cost_pricing() -> None:
     filled = (named != "") & (named.str.lower() != "nan") & (qty_now > 0) & (price_now > 0)
     if filled.any():
         with invoice_totals.container():
-            sum_col1, sum_col2, _sum_col3 = st.columns(3)
+            sum_col1, sum_col2, sum_col3 = st.columns(3)
             sum_col1.metric("Celková metráž / ks", format_num(float(qty_now[filled].sum()), 2))
+            entered_sum = float((qty_now[filled] * price_now[filled]).sum())
             sum_col2.metric(
-                "Celková hodnota položek",
-                f"{format_num(float((qty_now[filled] * price_now[filled]).sum()), 2)} EUR",
+                f"Hodnota položek ({entry_ccy})",
+                f"{format_num(entered_sum, 2)} {ccy_mark}",
+            )
+            sum_col3.metric(
+                "V eurech",
+                f"{format_num(entered_sum * float(eur_per_unit), 2)} €",
             )
             st.markdown("---")
 
@@ -7116,10 +7445,16 @@ def render_landed_cost_pricing() -> None:
         st.info("Přidejte alespoň jeden řádek faktury (název, množství > 0, cena > 0).")
         return
 
+    invoice_eur = invoice.copy()
+    invoice_eur[_INVOICE_COL_PRICE] = pd.to_numeric(
+        invoice_eur[_INVOICE_COL_PRICE], errors="coerce",
+    ) * float(eur_per_unit)
+    freight_eur_calc = float(freight_customs_eur) * float(eur_per_unit)
+    inland_eur_calc = float(inland_eur) * float(eur_per_unit)
     results = compute_invoice_landed(
-        invoice,
-        freight_customs_eur,
-        inland_eur,
+        invoice_eur,
+        freight_eur_calc,
+        inland_eur_calc,
         customs_czk,
         eur_czk,
         force_zero_duty,
@@ -7157,28 +7492,27 @@ def render_landed_cost_pricing() -> None:
         "Zahrnout pohyb kovu",
         value=False,
         key="landed_include_metal",
-        help="Doplní tabulku nové ceny a do Excelu sloupce kovu. Bez zaškrtnutí tam nejsou.",
+        help="Doplní tabulku nové ceny a do Excelu sloupce kovu. Dny se berou ze záložky Porovnání nabídek.",
     )
-
     day_from = st.session_state.get("metal_cmp_from", datetime(2026, 8, 18).date())
     day_to = st.session_state.get("metal_cmp_to", datetime(2026, 9, 24).date())
     if include_metal:
         st.caption(
-            f"Dny jsou z porovnání nahoře: {_cz_day(day_from)} → {_cz_day(day_to)}. "
+            f"Dny jsou ze záložky Porovnání nabídek: {_cz_day(day_from)} → {_cz_day(day_to)}. "
             "Podíl kovu v nákupní ceně se posune s LME. V eurech je v tom i kurz dolaru. "
-            "Zbytek ceny za jednotku zůstane. Doprava, clo a prodej se pak dopočítají stejně jako výše. "
-            "Prodej je v korunách dnešním kurzem ČNB. 100 % znamená, že s burzou jede celá cena."
+            "Zbytek ceny za jednotku zůstane. Doprava, clo a prodej se pak dopočítají stejně. "
+            "Prodej je v korunách dnešním kurzem ČNB."
         )
-        metal_choices = _landed_metal_choices(invoice)
+        metal_choices = _landed_metal_choices(invoice_eur)
         adjusted, metal_move, metal_pairs = _invoice_metal_move(
-            invoice, metal_choices, day_from, day_to,
+            invoice_eur, metal_choices, day_from, day_to,
         )
         results_sales[_COL_METAL] = metal_move[_COL_METAL].to_numpy()
         results_sales[_COL_METAL_SHARE] = metal_move[_COL_METAL_SHARE].to_numpy()
         moved_landed = compute_invoice_landed(
             adjusted,
-            freight_customs_eur,
-            inland_eur,
+            freight_eur_calc,
+            inland_eur_calc,
             customs_czk,
             eur_czk,
             force_zero_duty,
@@ -7202,8 +7536,7 @@ def render_landed_cost_pricing() -> None:
         ]
         if missing_metal:
             st.warning(
-                "Pro "
-                + " a ".join(missing_metal)
+                "Pro " + " a ".join(missing_metal)
                 + " v těchto dnech není uzavřená cena LME nebo kurz. Novou cenu u nich nepočítám."
             )
         move_view = pd.DataFrame({
@@ -7246,76 +7579,145 @@ def render_landed_cost_pricing() -> None:
         day_from,
         day_to,
         include_metal,
+        entry_ccy,
+        usd_czk,
     )
-    st.markdown("#### Výsledky")
-    result_cols = [
-        ("Kabel", "22%", ""),
-        ("HS", "10%", "num"),
-        ("Množství", "10%", "num"),
-        ("Cena €", "9%", "num"),
-        ("Clo", "7%", "num"),
-        ("Landed €", "12%", "num"),
-        ("1 j. €", "10%", "num"),
-        ("1 j. Kč", "10%", "num"),
-        ("Prodej Kč", "10%", "num"),
-    ]
-    result_rows = [
-        [
+
+    def _kc(eur_value) -> str:
+        return _nakup_num(float(eur_value) * float(eur_czk), 2)
+
+    st.markdown("#### Nákupní cena")
+    buy_rows = []
+    for pos, (_, row) in enumerate(results_sales.iterrows()):
+        entered = float(invoice.iloc[pos][_INVOICE_COL_PRICE])
+        buy_rows.append([
             str(row[_INVOICE_COL_NAME]),
             _nakup_hs_code(row[_INVOICE_COL_HS]),
             _nakup_num(row[_INVOICE_COL_QTY], 0),
-            _nakup_num(row[_INVOICE_COL_PRICE], 2),
+            _nakup_num(entered, 2 if entry_ccy == "CZK" else 3),
+            _nakup_num(row[_INVOICE_COL_PRICE], 3),
+            _kc(row[_INVOICE_COL_PRICE]),
+            _nakup_num(row[_COL_ROW_EUR], 2),
+            _kc(row[_COL_ROW_EUR]),
             _nakup_num(row[_INVOICE_COL_DUTY], 1),
+        ])
+    st.markdown(_nakup_fit_html([
+        ("Kabel", "18%", ""),
+        ("HS", "11%", "num"),
+        ("Množství", "10%", "num"),
+        (f"Zadáno {ccy_mark}", "11%", "num"),
+        ("€ / j.", "10%", "num"),
+        ("Kč / j.", "11%", "num"),
+        ("Hodnota €", "12%", "num"),
+        ("Hodnota Kč", "12%", "num"),
+        ("Clo %", "5%", "num"),
+    ], buy_rows), unsafe_allow_html=True)
+
+    st.markdown("#### Landed a prodej")
+    other_sale = _COL_SALE_MARKUP if price_mode == "Marže" else _COL_SALE_MARGIN
+    other_name = "Přirážka" if other_sale == _COL_SALE_MARKUP else "Marže"
+    landed_rows = []
+    other_rows = []
+    for _, row in results_sales.iterrows():
+        landed_rows.append([
+            str(row[_INVOICE_COL_NAME]),
             _nakup_num(row[_COL_LANDED], 2),
-            _nakup_num(row[_COL_UNIT_EUR], 2),
+            _kc(row[_COL_LANDED]),
+            _nakup_num(row[_COL_UNIT_EUR], 3),
             _nakup_num(row[_COL_UNIT_CZK], 2),
+            _nakup_num(float(row[_COL_SALE]) / float(eur_czk), 3),
             _nakup_num(row[_COL_SALE], 2),
-        ]
-        for _, row in results_sales.iterrows()
-    ]
-    st.markdown(_nakup_fit_html(result_cols, result_rows), unsafe_allow_html=True)
-    st.caption(f"Prodej je při způsobu {price_mode}, {format_num(margin_pct, 1)} %.")
+        ])
+        other_rows.append([
+            str(row[_INVOICE_COL_NAME]),
+            _nakup_num(float(row[other_sale]) / float(eur_czk), 3),
+            _nakup_num(row[other_sale], 2),
+        ])
+    st.markdown(_nakup_fit_html([
+        ("Kabel", "22%", ""),
+        ("Landed €", "14%", "num"),
+        ("Landed Kč", "16%", "num"),
+        ("1 j. €", "12%", "num"),
+        ("1 j. Kč", "12%", "num"),
+        ("Prodej €", "12%", "num"),
+        ("Prodej Kč", "12%", "num"),
+    ], landed_rows), unsafe_allow_html=True)
+    st.caption(f"Prodej je {price_mode} {format_num(margin_pct, 1)} %. Druhý způsob je {other_name}.")
+    st.markdown(_nakup_fit_html([
+        ("Kabel", "40%", ""),
+        (f"{other_name} €", "30%", "num"),
+        (f"{other_name} Kč", "30%", "num"),
+    ], other_rows), unsafe_allow_html=True)
 
     if price_mode == "Marže" and margin_pct >= 100.0:
         st.warning("Marže 100 % a více — prodej při marži není definovaný.")
 
-    with st.expander("Detail proporcí (doprava, clo, deklarace)", expanded=False):
-        detail_cols = [
-            ("Kabel", "22%", ""),
-            ("Hodnota €", "13%", "num"),
-            ("Podíl", "9%", "num"),
-            ("Do proclení", "14%", "num"),
-            ("Po Česku", "12%", "num"),
-            ("Základ cla", "12%", "num"),
-            ("Clo €", "9%", "num"),
-            ("Deklarace", "9%", "num"),
-        ]
-        detail_rows = [
-            [
-                str(row[_INVOICE_COL_NAME]),
-                _nakup_num(row[_COL_ROW_EUR], 2),
-                _nakup_num(float(row[_COL_SHARE]) * 100.0, 2) + " %",
-                _nakup_num(row[_COL_FREIGHT_C], 2),
-                _nakup_num(row[_COL_FREIGHT_I], 2),
-                _nakup_num(row[_COL_DUTY_BASE], 2),
-                _nakup_num(row[_COL_DUTY_EUR], 2),
-                _nakup_num(row[_COL_DECL], 2),
-            ]
-            for _, row in results_sales.iterrows()
-        ]
-        st.markdown(_nakup_fit_html(detail_cols, detail_rows), unsafe_allow_html=True)
+    st.markdown("#### Doprava a clo")
+    freight_rows = []
+    duty_rows = []
+    for _, row in results_sales.iterrows():
+        freight_rows.append([
+            str(row[_INVOICE_COL_NAME]),
+            _nakup_num(float(row[_COL_SHARE]) * 100.0, 2) + " %",
+            _nakup_num(row[_COL_FREIGHT_C], 2),
+            _kc(row[_COL_FREIGHT_C]),
+            _nakup_num(row[_COL_FREIGHT_I], 2),
+            _kc(row[_COL_FREIGHT_I]),
+            _nakup_num(row[_COL_DECL], 2),
+            _kc(row[_COL_DECL]),
+        ])
+        duty_rows.append([
+            str(row[_INVOICE_COL_NAME]),
+            _nakup_num(row[_COL_DUTY_BASE], 2),
+            _kc(row[_COL_DUTY_BASE]),
+            _nakup_num(row[_INVOICE_COL_DUTY], 1) + " %",
+            _nakup_num(row[_COL_DUTY_EUR], 2),
+            _kc(row[_COL_DUTY_EUR]),
+        ])
+    st.markdown(_nakup_fit_html([
+        ("Kabel", "18%", ""),
+        ("Podíl", "8%", "num"),
+        ("Proclení €", "12%", "num"),
+        ("Proclení Kč", "14%", "num"),
+        ("Po Česku €", "12%", "num"),
+        ("Po Česku Kč", "14%", "num"),
+        ("Deklarace €", "11%", "num"),
+        ("Deklarace Kč", "11%", "num"),
+    ], freight_rows), unsafe_allow_html=True)
+    st.markdown(_nakup_fit_html([
+        ("Kabel", "22%", ""),
+        ("Základ cla €", "16%", "num"),
+        ("Základ cla Kč", "18%", "num"),
+        ("Clo %", "10%", "num"),
+        ("Clo €", "16%", "num"),
+        ("Clo Kč", "18%", "num"),
+    ], duty_rows), unsafe_allow_html=True)
+
+    def _money_metric(col, label: str, eur_value: float) -> None:
+        col.metric(
+            label,
+            f"{_nakup_num(eur_value, 2)} €",
+            delta=f"{_nakup_num(float(eur_value) * float(eur_czk), 0)} Kč",
+            delta_color="off",
+        )
 
     st.markdown("#### Souhrn")
     sum_a, sum_b, sum_c, sum_d = st.columns(4)
     sum_a.metric("Metráž / ks", _nakup_num(results_sales[_INVOICE_COL_QTY].sum(), 0))
-    sum_b.metric("Zboží", f"{_nakup_num(results_sales[_COL_ROW_EUR].sum(), 2)} EUR")
-    sum_c.metric("Do proclení", f"{_nakup_num(results_sales[_COL_FREIGHT_C].sum(), 2)} EUR")
-    sum_d.metric("Po Česku", f"{_nakup_num(results_sales[_COL_FREIGHT_I].sum(), 2)} EUR")
+    _money_metric(sum_b, "Zboží", float(results_sales[_COL_ROW_EUR].sum()))
+    _money_metric(sum_c, "Do proclení", float(results_sales[_COL_FREIGHT_C].sum()))
+    _money_metric(sum_d, "Po Česku", float(results_sales[_COL_FREIGHT_I].sum()))
     sum_e, sum_f, sum_g, sum_h = st.columns(4)
-    sum_e.metric("Clo", f"{_nakup_num(results_sales[_COL_DUTY_EUR].sum(), 2)} EUR")
-    sum_f.metric("Deklarace", f"{_nakup_num(results_sales[_COL_DECL].sum(), 2)} EUR")
-    sum_g.metric("Landed", f"{_nakup_num(results_sales[_COL_LANDED].sum(), 2)} EUR")
-    sum_h.metric("Landed v Kč", f"{_nakup_num(results_sales[_COL_LANDED].sum() * eur_czk, 0)} Kč")
+    _money_metric(sum_e, "Clo", float(results_sales[_COL_DUTY_EUR].sum()))
+    _money_metric(sum_f, "Deklarace", float(results_sales[_COL_DECL].sum()))
+    _money_metric(sum_g, "Landed", float(results_sales[_COL_LANDED].sum()))
+    qty_sum = float(results_sales[_INVOICE_COL_QTY].sum())
+    sum_h.metric(
+        "Landed za 1 m",
+        f"{_nakup_num(float(results_sales[_COL_LANDED].sum()) / qty_sum, 3)} €",
+        delta=f"{_nakup_num(float(results_sales[_COL_LANDED].sum()) * float(eur_czk) / qty_sum, 2)} Kč",
+        delta_color="off",
+    )
 
     st.download_button(
         "⬇️ Stáhnout Excel",
@@ -7332,8 +7734,19 @@ def render_landed_cost_pricing() -> None:
     if include_metal:
         excel_note += " Podíl kovu a volba měď nebo hliník přepíšou novou nákupní cenu."
     st.caption(excel_note)
-
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+
+def render_offer_compare() -> None:
+    """Dva dny a dvě nabídky. Do nákupní faktury se to neplete."""
+    st.header("Porovnání nabídek")
+    st.caption(
+        "Sem patří tehdy a dnes, nebo kterékoliv dva dny. "
+        "Napíšete dvě ceny a Excel rozdělí rozdíl na kov, kurz a ostatní."
+    )
+    _render_metal_date_compare(embedded=False)
+
+
 
 
 # GPS: Link4Future (IMEI) i Jagich (číslo kontejneru). Seznam spravuje UI.
@@ -12096,6 +12509,7 @@ def main() -> None:
         ("💱 Kurzy", "kurzy", render_fx),
         ("🛢️ Ropa", "ropa", render_oil_plastics),
         ("📦 Nákup", "nakup", render_landed_cost_pricing),
+        ("🤝 Porovnání nabídek", "nabidky", render_offer_compare),
         ("📍 Kontejnery", "kontejnery", render_container_tracking),
         ("🚛 Logistika", "logistika", render_domestic_logistics),
         ("🪵 Kapacita bubnu", "buben", render_drum_capacity_calculator),
