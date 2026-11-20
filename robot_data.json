@@ -1,53 +1,53 @@
 {
   "ccmn": {
-    "copper": 105085.0,
-    "aluminum": 22280.0
+    "copper": 101895.0,
+    "aluminum": 22340.0
   },
   "yf_spot": {
     "HRC=F": {
-      "price": 1403.0,
+      "price": 1371.0,
       "prev": 1352.0,
-      "delta": 51.0,
-      "delta_pct": 3.772
+      "delta": 19.0,
+      "delta_pct": 1.405
     },
     "BZ=F": {
-      "price": 90.309998,
-      "prev": 91.949997,
-      "delta": -1.639999,
-      "delta_pct": -1.784
+      "price": 89.080002,
+      "prev": 91.980003,
+      "delta": -2.900002,
+      "delta_pct": -3.153
     },
     "CL=F": {
-      "price": 83.599998,
-      "prev": 83.260002,
-      "delta": 0.339996,
-      "delta_pct": 0.408
+      "price": 82.379997,
+      "prev": 83.209999,
+      "delta": -0.830002,
+      "delta_pct": -0.997
     },
     "EURUSD=X": {
-      "price": 1.100715,
-      "prev": 1.099288,
-      "delta": 0.001428,
-      "delta_pct": 0.13
+      "price": 1.099505,
+      "prev": 1.097201,
+      "delta": 0.002304,
+      "delta_pct": 0.21
     },
     "EURCZK=X": {
-      "price": 24.422501,
-      "prev": 24.361401,
-      "delta": 0.0611,
-      "delta_pct": 0.251
+      "price": 24.4695,
+      "prev": 24.379999,
+      "delta": 0.0895,
+      "delta_pct": 0.367
     },
     "HG=F": {
-      "price": 5.686,
-      "prev": 5.6595,
-      "delta": 0.0265,
-      "delta_pct": 0.468
+      "price": 5.5255,
+      "prev": 5.625,
+      "delta": -0.0995,
+      "delta_pct": -1.769
     },
     "ALI=F": {
-      "price": 2807.0,
-      "prev": 2919.0,
-      "delta": -112.0,
-      "delta_pct": -3.837
+      "price": 2808.0,
+      "prev": 2839.5,
+      "delta": -31.5,
+      "delta_pct": -1.109
     }
   },
-  "_ts": "2026-11-19 14:20",
+  "_ts": "2026-11-20 13:57",
   "_health": {
     "ccmn_copper": true,
     "ccmn_aluminum": true,
@@ -55,5 +55,5 @@
     "eurusd": true,
     "history": true
   },
-  "_alert_sig": "2026-11-19|Hlin\u00edk COMEX (ALI=F) den: -3.8 % (pr\u00e1h \u00b13.0 %) \u00b7 2807.0 USD"
+  "_alert_sig": "2026-11-20|Brent den: -3.2 % (pr\u00e1h \u00b13.0 %) \u00b7 $89.08|CCMN m\u011b\u010f vs v\u010dera: -3.0 % (pr\u00e1h \u00b13.0 %) \u00b7 101895 CNY/t"
 }
