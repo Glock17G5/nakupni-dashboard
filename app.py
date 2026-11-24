@@ -1212,6 +1212,29 @@ footer { visibility: hidden; }
 .st-key-landed_inland_eur_ccy {
     margin-top: 1.55rem;
 }
+@media (max-width: 720px) {
+    [data-testid="stNumberInput"] input,
+    [data-testid="stTextInput"] input,
+    [data-testid="stDateInput"] input,
+    [data-testid="stSelectbox"] div[data-baseweb="select"] {
+        font-size: 16px !important;
+    }
+    .st-key-nav_groups [data-testid="stHorizontalBlock"] {
+        flex-direction: column !important;
+    }
+    .st-key-nav_groups [data-testid="stHorizontalBlock"] > div {
+        width: 100% !important;
+        flex: 1 1 100% !important;
+    }
+    [data-testid="stHorizontalBlock"]:has([data-testid="stNumberInput"]) {
+        flex-direction: column !important;
+    }
+    [data-testid="stHorizontalBlock"]:has([data-testid="stNumberInput"]) > div {
+        width: 100% !important;
+        flex: 1 1 100% !important;
+        min-width: 0 !important;
+    }
+}
 .nakup-fit tfoot td {
     font-weight: 700;
     border-top: 2px solid #3D4859;
@@ -4323,13 +4346,11 @@ def render_header() -> None:
         '<div class="dash-header"><div class="dash-header-content">'
         f'<div class="dash-brand">{logo_html}'
         '<div>'
-        f'<div class="dash-title"><span>⚡</span> {t("Kabelářský dashboard")}</div>'
-        '<div class="dash-subtitle">Cable Industry Procurement Intelligence Platform</div>'
+        f'<div class="dash-title">{t("Kabelářský dashboard")}</div>'
         '</div></div>'
         f'<div class="dash-meta">{henry_chip}'
-        f'<div class="dash-timestamp"><strong>{t("Poslední aktualizace")}</strong> (CET)<br>'
-        f'{now.strftime("%d.%m.%Y %H:%M")}'
-        '<span class="dash-cache"><br>Cache TTL: <strong>1 hod</strong></span></div></div></div></div>'
+        f'<div class="dash-timestamp"><strong>{t("Poslední aktualizace")}</strong><br>'
+        f'{now.strftime("%d.%m.%Y %H:%M")}</div></div></div></div>'
     )
     st.markdown(header_html, unsafe_allow_html=True)
 
@@ -5399,6 +5420,99 @@ def _render_metal_date_compare(*, embedded: bool = True) -> None:
         )
 
 
+def _metal_price_position(metal_key: str, days: int = 90) -> float | None:
+    """Kde je poslední cena v pásmu min–max za N dní. 0 = dole, 1 = nahoře."""
+    try:
+        df = fetch_westmetall_history(WM_HISTORY_URLS[metal_key])
+        if df is None or df.empty:
+            return None
+        s = pd.to_numeric(df.sort_values("Date")["Close"], errors="coerce").dropna()
+        if len(s) < 10:
+            return None
+        window = s.iloc[-days:] if len(s) > days else s
+        lo = float(window.min())
+        hi = float(window.max())
+        last = float(s.iloc[-1])
+        if hi <= lo:
+            return None
+        return (last - lo) / (hi - lo)
+    except Exception:
+        return None
+
+
+def _metal_buy_verdict(metal_key: str) -> dict | None:
+    """Jednoduchý verdikt kup teď / počkej z RSI, měsíčního výhledu a pozice v pásmu."""
+    rsi = _metal_rsi_value(metal_key)
+    hist = fetch_westmetall_history(WM_HISTORY_URLS[metal_key])
+    fc = _forecast_models(hist)
+    pos = _metal_price_position(metal_key)
+    if rsi is None and fc is None and pos is None:
+        return None
+    score = 0
+    parts: list[str] = []
+    if rsi is not None:
+        if rsi < 30:
+            score += 1
+        elif rsi > 70:
+            score -= 1
+        parts.append(f"RSI {rsi:.0f}")
+    if fc:
+        last = float(fc["last_price"])
+        end = float(fc["ensemble"][-1])
+        if last:
+            pct_month = (end / last - 1.0) * 100.0
+            if pct_month > _FORECAST_DIR_THRESHOLD:
+                score += 1
+            elif pct_month < -_FORECAST_DIR_THRESHOLD:
+                score -= 1
+            parts.append(f"výhled {_signed_pct(pct_month)}/měs")
+    if pos is not None:
+        if pos > 0.70:
+            score -= 1
+            parts.append("u horní hrany pásma")
+        elif pos < 0.30:
+            score += 1
+            parts.append("u dolní hrany pásma")
+        else:
+            parts.append("uprostřed pásma")
+    if score >= 2:
+        verdict, tone = "Nakoupit", "success"
+    elif score == 1:
+        verdict, tone = "Spíš nakoupit", "success"
+    elif score == 0:
+        verdict, tone = "Neutrální — sleduj", "info"
+    elif score == -1:
+        verdict, tone = "Spíš počkat", "warning"
+    else:
+        verdict, tone = "Počkat", "warning"
+    return {"verdict": verdict, "tone": tone, "parts": parts, "score": score}
+
+
+def _render_buy_verdicts() -> None:
+    """Krátký nákupní verdikt pro měď a hliník nad grafy a výhledy."""
+    rows = []
+    for label, key in (("Měď", "copper"), ("Hliník", "aluminum")):
+        verdict = _metal_buy_verdict(key)
+        if verdict:
+            rows.append((label, verdict))
+    if not rows:
+        return
+    st.markdown("#### Nákupní verdikt — kup teď / počkej")
+    st.caption(
+        "Spojuje RSI, měsíční výhled a pozici ceny v pásmu posledních 90 dnů. "
+        "Orientační shrnutí, ne doporučení k obchodu."
+    )
+    cols = st.columns(len(rows))
+    for col, (label, verdict) in zip(cols, rows):
+        msg = f"**{label} → {verdict['verdict']}**\n\n{' · '.join(verdict['parts'])}"
+        if verdict["tone"] == "success":
+            col.success(msg)
+        elif verdict["tone"] == "warning":
+            col.warning(msg)
+        else:
+            col.info(msg)
+
+
 def render_metals() -> None:
     """Sekce 1 – LME kovy, spot CCMN vs LME, historie Westmetall."""
 
@@ -5423,6 +5537,9 @@ def render_metals() -> None:
 
     if not wm_data:
         st.warning(t("Westmetall: LME data se nepodařilo stáhnout — ceny mědi a hliníku nejsou k dispozici."))
+
+    _render_buy_verdicts()
+    st.markdown("<br>", unsafe_allow_html=True)
 
     col_cu, col_al = st.columns(2)
     cu_cfg, al_cfg = _LME_METAL_CARDS
@@ -6502,8 +6619,8 @@ def _nakup_excel_bytes(
             6: f'=IF(OR(E{r}="",Souhrn!$B$7=0),"",E{r}*Souhrn!$B$7)',
             11: f'=IF({active},"",B{r}*E{r})',
             12: f'=IF(OR(K{r}="",{goods}=0),"",K{r}/{goods})',
-            13: f'=IF(L{r}="","",L{r}*Souhrn!$B$4*({fx_customs}))',
-            14: f'=IF(L{r}="","",L{r}*Souhrn!$B$5*({fx_inland}))',
+            13: f'=IF(L{r}="","",L{r}*Souhrn!$B$4*({fx_customs})*IF(Souhrn!$E$16="",1,Souhrn!$E$16))',
+            14: f'=IF(L{r}="","",L{r}*Souhrn!$B$5*({fx_inland})*IF(Souhrn!$E$17="",1,Souhrn!$E$17))',
             16: (
                 f'=IF({active},"",'
                 f'IF(Souhrn!$B$3="Ano",0,'
@@ -6544,8 +6661,8 @@ def _nakup_excel_bytes(
             26: f'=IF(OR(X{r}="",Y{r}=""),"",E{r}+X{r}+Y{r})',
             27: f'=IF(Z{r}="","",B{r}*Z{r})',
             28: f'=IF(OR(AA{r}="",{goods}=0),"",AA{r}/{goods})',
-            29: f'=IF(AB{r}="","",AB{r}*Souhrn!$B$4*({fx_customs}))',
-            30: f'=IF(AB{r}="","",AB{r}*Souhrn!$B$5*({fx_inland}))',
+            29: f'=IF(AB{r}="","",AB{r}*Souhrn!$B$4*({fx_customs})*IF(Souhrn!$E$16="",1,Souhrn!$E$16))',
+            30: f'=IF(AB{r}="","",AB{r}*Souhrn!$B$5*({fx_inland})*IF(Souhrn!$E$17="",1,Souhrn!$E$17))',
             31: f'=IF(AA{r}="","",AA{r}+AC{r})',
             32: f'=IF(AE{r}="","",AE{r}*P{r}/100)',
             33: f'=IF(AA{r}="","",IF(Souhrn!$B$7=0,0,AB{r}*Souhrn!$B$6/Souhrn!$B$7))',
@@ -6652,6 +6769,8 @@ def _nakup_excel_bytes(
     for row_i, label, value in (
         (6, "Měna dopravy do proclení", freight_ccy),
         (7, "Měna dovozu po Česku", inland_ccy),
+        (16, "Doprava do proclení se počítá (1 = ano)", float(count_customs)),
+        (17, "Dovoz po Česku se počítá (1 = ano)", float(count_inland)),
     ):
         left = souhrn.cell(row_i, 4, label)
         right = souhrn.cell(row_i, 5, value)
@@ -6669,6 +6788,7 @@ def _nakup_excel_bytes(
         "Sloupec Prodej jede podle způsobu v B9. Clo v % bere prvních 8 číslic HS z listu Sazby cla. "
         "Ano u vynulovaného cla dá všude 0. Na Položkách je pět prázdných řádků. "
         "Vlevo jsou cena nákup a landed. Clo a rozpis dopravy jsou sbalené od sloupce K. "
+        "E16 a E17 jsou 1 nebo 0: CIF a DAP dopravu do proclení nepočítají, DAP ani dovoz po Česku. "
         "B20 je výchozí měna. Měna řádku a E6/E7 u dopravy ji přebíjejí."
     )
     if include_metal:
@@ -7215,7 +7335,7 @@ def _landed_column_config(frame: pd.DataFrame) -> dict:
 @st.fragment
 def render_landed_cost_pricing() -> None:
     """Logistika a cenotvorba — faktura (více řádků), landed cost, prodejní ceny."""
-    st.header("Nákup")
+    section_header("📦", "Nákup")
 
     cnb = fetch_cnb_rates()
     _health_row([_cnb_health(cnb, ("EUR",))])
@@ -7224,10 +7344,8 @@ def render_landed_cost_pricing() -> None:
 
     st.markdown(
         f'<div class="info-box">'
-        f'{t("Faktura s více řádky · u každé položky i u dopravy vlastní měna · podíl podle hodnoty · "
-        "clo ze zboží a dopravy do proclení · kurz <strong>ČNB</strong>")}'
-        f'{f" ({cnb_date})" if cnb else ""} · '
-        f'{t("Turecko (A.TR) vynutí clo <strong>0 %</strong> na všech řádcích")}'
+        f'{t("Každá položka i doprava má vlastní měnu. Clo je ze zboží a dopravy do proclení. Kurz ČNB")}'
+        f'{f" {cnb_date}." if cnb else "."}'
         f'</div>',
         unsafe_allow_html=True,
     )
@@ -7256,9 +7374,6 @@ def render_landed_cost_pricing() -> None:
             key="landed_route_i",
             horizontal=True,
         )
-        force_zero_duty = _LANDED_ROUTES[int(route_i)] == _ROUTE_TURKEY
-        if force_zero_duty:
-            st.caption(t("🇹🇷 Turecko: u všech řádků se použije clo **0 %** (A.TR)."))
     with c_ccy:
         entry_ccy = st.radio(
             "Výchozí měna",
@@ -7278,6 +7393,43 @@ def render_landed_cost_pricing() -> None:
     if eur_per_unit is None:
         st.error("Pro zadání v dolarech chybí kurz USD/CZK z ČNB.")
         return
+
+    c_origin, c_inco, c_atr = st.columns([1.6, 1, 1.4])
+    with c_origin:
+        origin_kwargs = dict(horizontal=True, key="landed_origin")
+        if "landed_origin" not in st.session_state:
+            origin_kwargs["index"] = _ORIGINS.index("Čína")
+        origin = st.radio("Původ zboží", _ORIGINS, **origin_kwargs)
+        if origin not in _ORIGINS:
+            origin = "Čína"
+    with c_inco:
+        inco_kwargs = dict(
+            key="landed_incoterm",
+            help="CIF už má dopravu do proclení v ceně. DAP má v ceně obě dopravy.",
+        )
+        if "landed_incoterm" not in st.session_state:
+            inco_kwargs["index"] = _INCOTERMS.index("FOB")
+        incoterm = st.selectbox("Dodací parita", _INCOTERMS, **inco_kwargs)
+        if incoterm not in _INCOTERMS:
+            incoterm = "FOB"
+    with c_atr:
+        is_atr_turkey = st.checkbox(
+            "A.TR, clo 0 %",
+            value=False,
+            key="landed_atr_zero",
+            help="Platí jen když je původ Turecko.",
+        )
+    if origin == "EU":
+        st.caption("Původ EU: clo je 0 %.")
+    elif origin == "Turecko" and is_atr_turkey:
+        st.caption("Turecko s A.TR: clo je 0 %.")
+    elif origin == "Turecko":
+        st.caption("Turecko bez A.TR: clo je ze sazby HS.")
+    if incoterm == "CIF":
+        st.caption("CIF: doprava do proclení je v ceně kabelu a do výpočtu nevstupuje.")
+    elif incoterm == "DAP":
+        st.caption("DAP: obě dopravy jsou v ceně kabelu a do výpočtu nevstupují.")
+    zero_duty = origin == "EU" or (origin == "Turecko" and bool(is_atr_turkey))
 
     def _sync_freight_ccy(amount_key: str, ccy_key: str) -> None:
         chosen = st.session_state.get(ccy_key, entry_ccy)
@@ -7347,11 +7499,6 @@ def render_landed_cost_pricing() -> None:
         )
 
     st.markdown(f"#### {t('Import dat z Pohody')}")
-    is_atr_turkey = st.checkbox(
-        t("🇹🇷 Aplikovat nulové clo (Zboží z Turecka s certifikátem A.TR)"),
-        value=False,
-        key="landed_atr_zero",
-    )
     uploaded_file = st.file_uploader(
         t("Nahrát exportní soubor (CSV nebo Excel z Pohody)"),
         type=["csv", "xlsx", "xls"],
@@ -7448,9 +7595,9 @@ def render_landed_cost_pricing() -> None:
             if new_rows:
                 st.session_state.landed_invoice_data = pd.DataFrame(new_rows)
                 st.session_state.landed_invoice_live = st.session_state.landed_invoice_data.copy()
-                st.session_state._landed_zero_applied = bool(force_zero_duty or is_atr_turkey)
+                st.session_state._landed_zero_applied = bool(zero_duty)
                 st.session_state.pop("landed_invoice_editor", None)
-                duty_note = "0 %" if (force_zero_duty or is_atr_turkey) else "3,7 %"
+                duty_note = "0 %" if zero_duty else "3,7 %"
                 st.success(
                     f"Úspěšně nahráno {len(new_rows)} položek. Clo na řádcích je {duty_note}."
                 )
@@ -7472,7 +7619,6 @@ def render_landed_cost_pricing() -> None:
         f"Nový řádek dostane měnu {entry_ccy}. U řádku ji můžete přepsat."
     )
 
-    zero_duty = force_zero_duty or is_atr_turkey
     # Základ tabulky se při psaní ceny nesmí přepisovat. Jinak Streamlit
     # zahodí rozpracované řádky a vrátí původní data.
     # Když uživatel odejde ze sekce, Streamlit smaže stav editoru.
@@ -7486,17 +7632,21 @@ def render_landed_cost_pricing() -> None:
     keep_cols = [c for c in _DEFAULT_INVOICE_DF.columns if c in base_invoice.columns]
     if _INVOICE_COL_CCY in base_invoice.columns:
         keep_cols.append(_INVOICE_COL_CCY)
+    if _COL_KG in base_invoice.columns:
+        keep_cols.append(_COL_KG)
     base_invoice = base_invoice.loc[:, keep_cols].copy()
     for col in _DEFAULT_INVOICE_DF.columns:
         if col not in base_invoice.columns:
             base_invoice[col] = pd.NA
     if _INVOICE_COL_CCY not in base_invoice.columns:
         base_invoice[_INVOICE_COL_CCY] = entry_ccy
+    if _COL_KG not in base_invoice.columns:
+        base_invoice[_COL_KG] = pd.NA
     ccys_now = base_invoice[_INVOICE_COL_CCY].astype(str)
     base_invoice.loc[~ccys_now.isin(list(_LANDED_CCYS)), _INVOICE_COL_CCY] = entry_ccy
     st.session_state.landed_invoice_data = base_invoice
-    if st.session_state.get("_landed_editor_ver") != 6:
-        st.session_state["_landed_editor_ver"] = 6
+    if st.session_state.get("_landed_editor_ver") != 7:
+        st.session_state["_landed_editor_ver"] = 7
         st.session_state.pop("landed_invoice_editor", None)
     invoice_totals = st.empty()
     edited_df = st.data_editor(
@@ -7509,6 +7659,7 @@ def render_landed_cost_pricing() -> None:
             _INVOICE_COL_CCY,
             _INVOICE_COL_HS,
             _INVOICE_COL_DUTY,
+            _COL_KG,
         ],
         column_config={
             _INVOICE_COL_NAME: st.column_config.TextColumn("Název položky", width="large"),
@@ -7537,7 +7688,13 @@ def render_landed_cost_pricing() -> None:
                 min_value=0.0,
                 max_value=100.0,
                 format="%.1f %%",
-                help="Automaticky z HS kódu. U Turecka (A.TR) nebo trasy Turecko je 0 %.",
+                help="Automaticky z HS kódu. EU má 0 %. Turecko má 0 % jen s A.TR.",
+            ),
+            _COL_KG: st.column_config.NumberColumn(
+                "Kg kovu / km",
+                min_value=0.0,
+                format="%.2f",
+                help="Když je vyplněné a je zapnutý pohyb kovu, podíl se dopočítá z LME. Prázdné pole nechá podíl ruční.",
             ),
         },
         disabled=[_INVOICE_COL_DUTY],
@@ -7651,15 +7808,17 @@ def render_landed_cost_pricing() -> None:
     if freight_per is None or inland_per is None:
         st.error("Pro dopravu v dolarech chybí kurz USD/CZK z ČNB.")
         return
-    freight_eur_calc = float(freight_customs_eur) * float(freight_per)
-    inland_eur_calc = float(inland_eur) * float(inland_per)
+    count_customs = 0.0 if incoterm in ("CIF", "DAP") else 1.0
+    count_inland = 0.0 if incoterm == "DAP" else 1.0
+    freight_eur_calc = float(freight_customs_eur) * float(freight_per) * count_customs
+    inland_eur_calc = float(inland_eur) * float(inland_per) * count_inland
     results = compute_invoice_landed(
         invoice_eur,
         freight_eur_calc,
         inland_eur_calc,
         customs_czk,
         eur_czk,
-        force_zero_duty,
+        zero_duty,
     )
     if results is None:
         st.warning("Celková hodnota zboží na faktuře musí být větší než nula.")
@@ -7711,6 +7870,28 @@ def render_landed_cost_pricing() -> None:
             "Prodej je v korunách dnešním kurzem ČNB."
         )
         metal_choices = _landed_metal_choices(invoice_eur)
+        if _COL_KG in invoice.columns:
+            metal_choices = metal_choices.copy()
+            kg_notes = []
+            for i in range(len(invoice_eur)):
+                kg_raw = pd.to_numeric(pd.Series([invoice.iloc[i].get(_COL_KG)]), errors="coerce").iloc[0]
+                if pd.isna(kg_raw) or float(kg_raw) <= 0:
+                    continue
+                metal_name = str(metal_choices.iloc[i].get(_COL_METAL, "Měď"))
+                metal_key = _METAL_CHOICE_KEY.get(metal_name, "copper")
+                pair = _metal_pair(metal_key, day_from, day_to)
+                unit_eur = float(invoice_eur.iloc[i][_INVOICE_COL_PRICE])
+                share = _nakup_share_from_kg(
+                    float(kg_raw), unit_eur, 0.0 if not pair else float(pair["eur1"]),
+                )
+                if share is None:
+                    continue
+                metal_choices.at[i, _COL_METAL_SHARE] = share
+                kg_notes.append(
+                    f"{invoice.iloc[i][_INVOICE_COL_NAME]} {share:.0f} % z {float(kg_raw):.1f} kg/km"
+                )
+            if kg_notes:
+                st.caption("Podíl kovu z hmotnosti: " + " · ".join(kg_notes) + ".")
         adjusted, metal_move, metal_pairs = _invoice_metal_move(
             invoice_eur, metal_choices, day_from, day_to,
         )
@@ -7722,7 +7903,7 @@ def render_landed_cost_pricing() -> None:
             inland_eur_calc,
             customs_czk,
             eur_czk,
-            force_zero_duty,
+            zero_duty,
         )
         moved_sales = (
             _apply_sales_pricing(moved_landed, margin_pct, price_mode)
@@ -7773,7 +7954,7 @@ def render_landed_cost_pricing() -> None:
         )
 
     excel_bytes = _nakup_excel_bytes(
-        _LANDED_ROUTES[int(route_i)],
+        _LANDED_ROUTES[int(route_i)] + f" · {origin} · {incoterm}",
         zero_duty,
         freight_customs_eur,
         inland_eur,
@@ -7790,6 +7971,8 @@ def render_landed_cost_pricing() -> None:
         usd_czk,
         freight_ccy=str(freight_ccy),
         inland_ccy=str(inland_ccy),
+        count_customs=count_customs,
+        count_inland=count_inland,
     )
 
     def _kc(eur_value) -> str:
@@ -7825,6 +8008,83 @@ def render_landed_cost_pricing() -> None:
         ("Clo %", "5%", "num"),
     ], buy_rows), unsafe_allow_html=True)
 
+    # Dekodér kovu: kolik z nákupní ceny je čistý kov podle LME dnes.
+    _metal_data = st.session_state.get("landed_metal_data")
+
+    def _row_metal_name(pos: int) -> str:
+        if isinstance(_metal_data, pd.DataFrame) and pos < len(_metal_data):
+            raw = str(_metal_data.iloc[pos].get(_COL_METAL, ""))
+            if raw in _METAL_CHOICE_KEY:
+                return raw
+        return "Měď"
+
+    _today = now_prague().date()
+    _lme_today: dict[str, float | None] = {}
+    _lme_date = None
+    for _mkey in ("copper", "aluminum"):
+        _q = _metal_quote_on(_mkey, _today)
+        if _q and _q.get("eur"):
+            _lme_today[_mkey] = float(_q["eur"])
+            if _q.get("price_date"):
+                _lme_date = _q["price_date"]
+        else:
+            _lme_today[_mkey] = None
+
+    dec_rows = []
+    below_metal = False
+    for pos, (_, row) in enumerate(results_sales.iterrows()):
+        kg_raw = pd.to_numeric(pd.Series([invoice.iloc[pos].get(_COL_KG)]), errors="coerce").iloc[0]
+        if pd.isna(kg_raw) or float(kg_raw) <= 0:
+            continue
+        metal_name = _row_metal_name(pos)
+        mkey = _METAL_CHOICE_KEY.get(metal_name, "copper")
+        eur_per_t = _lme_today.get(mkey)
+        unit_eur = float(row[_INVOICE_COL_PRICE])
+        if not eur_per_t or unit_eur <= 0:
+            continue
+        metal_eur = float(kg_raw) * float(eur_per_t) / 1_000_000.0
+        share = metal_eur / unit_eur * 100.0
+        rest = unit_eur - metal_eur
+        if share > 100.0:
+            below_metal = True
+        dec_rows.append([
+            str(row[_INVOICE_COL_NAME]),
+            metal_name,
+            _nakup_num(float(kg_raw), 1),
+            _nakup_num(metal_eur, 3),
+            _nakup_num(share, 0) + " %",
+            _nakup_num(rest, 3),
+            _nakup_num(100.0 - share, 0) + " %",
+        ])
+
+    if dec_rows:
+        st.markdown("#### Kov v ceně (prémie nad LME)")
+        lme_bits = []
+        for _lbl, _mkey in (("měď", "copper"), ("hliník", "aluminum")):
+            v = _lme_today.get(_mkey)
+            if v:
+                lme_bits.append(f"{_lbl} {_nakup_num(v, 0)} €/t")
+        date_str = _cz_day(_lme_date) if _lme_date else "?"
+        st.caption(
+            "Kolik z nákupní ceny je čistý kov podle LME a kolik zbytek (výroba + plasty + marže). "
+            + (f"LME k {date_str}: " + " · ".join(lme_bits) + ". " if lme_bits else "")
+            + "Kov u řádku se bere z „Zahrnout pohyb kovu“, jinak měď."
+        )
+        st.markdown(_nakup_fit_html([
+            ("Kabel", "24%", ""),
+            ("Kov", "12%", ""),
+            ("kg/km", "12%", "num"),
+            ("Kov €/j.", "13%", "num"),
+            ("Podíl kovu", "13%", "num"),
+            ("Zbytek €/j.", "13%", "num"),
+            ("Zbytek", "13%", "num"),
+        ], dec_rows), unsafe_allow_html=True)
+        if below_metal:
+            st.warning(
+                "U některého řádku je kov podle LME dražší než nákupní cena — "
+                "dodavatel účtuje míň než dnešní burza, nebo je špatně kg/km či měna."
+            )
+
     st.markdown("#### Landed a prodej")
     other_sale = _COL_SALE_MARKUP if price_mode == "Marže" else _COL_SALE_MARGIN
     other_name = "Přirážka" if other_sale == _COL_SALE_MARKUP else "Marže"
@@ -7854,56 +8114,56 @@ def render_landed_cost_pricing() -> None:
         ("Prodej €", "12%", "num"),
         ("Prodej Kč", "12%", "num"),
     ], landed_rows), unsafe_allow_html=True)
-    st.caption(f"Prodej je {price_mode} {format_num(margin_pct, 1)} %. Druhý způsob je {other_name}.")
-    st.markdown(_nakup_fit_html([
-        ("Kabel", "40%", ""),
-        (f"{other_name} €", "30%", "num"),
-        (f"{other_name} Kč", "30%", "num"),
-    ], other_rows), unsafe_allow_html=True)
+    st.caption(f"Prodej je {price_mode} {format_num(margin_pct, 1)} %.")
 
     if price_mode == "Marže" and margin_pct >= 100.0:
         st.warning("Marže 100 % a více — prodej při marži není definovaný.")
 
-    st.markdown("#### Doprava a clo")
-    freight_rows = []
-    duty_rows = []
-    for _, row in results_sales.iterrows():
-        freight_rows.append([
-            str(row[_INVOICE_COL_NAME]),
-            _nakup_num(float(row[_COL_SHARE]) * 100.0, 2) + " %",
-            _nakup_num(row[_COL_FREIGHT_C], 2),
-            _kc(row[_COL_FREIGHT_C]),
-            _nakup_num(row[_COL_FREIGHT_I], 2),
-            _kc(row[_COL_FREIGHT_I]),
-            _nakup_num(row[_COL_DECL], 2),
-            _kc(row[_COL_DECL]),
-        ])
-        duty_rows.append([
-            str(row[_INVOICE_COL_NAME]),
-            _nakup_num(row[_COL_DUTY_BASE], 2),
-            _kc(row[_COL_DUTY_BASE]),
-            _nakup_num(row[_INVOICE_COL_DUTY], 1) + " %",
-            _nakup_num(row[_COL_DUTY_EUR], 2),
-            _kc(row[_COL_DUTY_EUR]),
-        ])
-    st.markdown(_nakup_fit_html([
-        ("Kabel", "18%", ""),
-        ("Podíl", "8%", "num"),
-        ("Proclení €", "12%", "num"),
-        ("Proclení Kč", "14%", "num"),
-        ("Po Česku €", "12%", "num"),
-        ("Po Česku Kč", "14%", "num"),
-        ("Deklarace €", "11%", "num"),
-        ("Deklarace Kč", "11%", "num"),
-    ], freight_rows), unsafe_allow_html=True)
-    st.markdown(_nakup_fit_html([
-        ("Kabel", "22%", ""),
-        ("Základ cla €", "16%", "num"),
-        ("Základ cla Kč", "18%", "num"),
-        ("Clo %", "10%", "num"),
-        ("Clo €", "16%", "num"),
-        ("Clo Kč", "18%", "num"),
-    ], duty_rows), unsafe_allow_html=True)
+    with st.expander("Rozpis dopravy, cla a druhého prodeje", expanded=False):
+        st.markdown(_nakup_fit_html([
+            ("Kabel", "40%", ""),
+            (f"{other_name} €", "30%", "num"),
+            (f"{other_name} Kč", "30%", "num"),
+        ], other_rows), unsafe_allow_html=True)
+        freight_rows = []
+        duty_rows = []
+        for _, row in results_sales.iterrows():
+            freight_rows.append([
+                str(row[_INVOICE_COL_NAME]),
+                _nakup_num(float(row[_COL_SHARE]) * 100.0, 2) + " %",
+                _nakup_num(row[_COL_FREIGHT_C], 2),
+                _kc(row[_COL_FREIGHT_C]),
+                _nakup_num(row[_COL_FREIGHT_I], 2),
+                _kc(row[_COL_FREIGHT_I]),
+                _nakup_num(row[_COL_DECL], 2),
+                _kc(row[_COL_DECL]),
+            ])
+            duty_rows.append([
+                str(row[_INVOICE_COL_NAME]),
+                _nakup_num(row[_COL_DUTY_BASE], 2),
+                _kc(row[_COL_DUTY_BASE]),
+                _nakup_num(row[_INVOICE_COL_DUTY], 1) + " %",
+                _nakup_num(row[_COL_DUTY_EUR], 2),
+                _kc(row[_COL_DUTY_EUR]),
+            ])
+        st.markdown(_nakup_fit_html([
+            ("Kabel", "18%", ""),
+            ("Podíl", "8%", "num"),
+            ("Proclení €", "12%", "num"),
+            ("Proclení Kč", "14%", "num"),
+            ("Po Česku €", "12%", "num"),
+            ("Po Česku Kč", "14%", "num"),
+            ("Deklarace €", "11%", "num"),
+            ("Deklarace Kč", "11%", "num"),
+        ], freight_rows), unsafe_allow_html=True)
+        st.markdown(_nakup_fit_html([
+            ("Kabel", "22%", ""),
+            ("Základ cla €", "16%", "num"),
+            ("Základ cla Kč", "18%", "num"),
+            ("Clo %", "10%", "num"),
+            ("Clo €", "16%", "num"),
+            ("Clo Kč", "18%", "num"),
+        ], duty_rows), unsafe_allow_html=True)
 
     def _money_metric(col, label: str, eur_value: float) -> None:
         col.metric(
@@ -7947,16 +8207,150 @@ def render_landed_cost_pricing() -> None:
     if include_metal:
         excel_note += " Podíl kovu a volba měď nebo hliník přepíšou novou nákupní cenu."
     st.caption(excel_note)
+
+    with st.expander("Přednákupní kontrola — než potvrdíš objednávku", expanded=False):
+        st.caption("Rychlý checklist, ať na nic nezapomeneš. Odškrtnutí se drží jen v prohlížeči.")
+        _checklist = [
+            ("chk_validity", "Platnost nabídky ještě běží"),
+            ("chk_moq", "Minimální odběr (MOQ) splněn"),
+            ("chk_lead", "Dodací lhůta sedí na náš termín"),
+            ("chk_drum", "Kabel se vejde na buben(y)"),
+            ("chk_pay", "Platební podmínky OK (záloha / splatnost)"),
+            ("chk_incoterm", "Incoterm — jasné, kdo platí dopravu, clo a pojištění"),
+            ("chk_ccy", "Měna a kurz ověřené"),
+            ("chk_cert", "Certifikáty / schválení (pokud je třeba)"),
+        ]
+        done = 0
+        col_l, col_r = st.columns(2)
+        for i, (ckey, clabel) in enumerate(_checklist):
+            target = col_l if i % 2 == 0 else col_r
+            if target.checkbox(clabel, key=ckey):
+                done += 1
+        total = len(_checklist)
+        if done == total:
+            st.success(f"Hotovo — {done}/{total}. Můžeš objednat.")
+        elif done == 0:
+            st.info(f"Zatím nic neodškrtnuto (0/{total}).")
+        else:
+            st.warning(f"Odškrtnuto {done}/{total}. Zbývá dořešit zbytek.")
+
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
 
-def render_offer_compare() -> None:
-    """Dva dny a dvě nabídky. Do nákupní faktury se to neplete."""
-    st.header("Porovnání nabídek")
+def _render_offer_scorecard() -> None:
+    """Víc nabídek vedle sebe. Vítěz a procentní rozdíl přepočtené na koruny."""
+    cnb = fetch_cnb_rates()
+    eur_czk = _get_eur_czk_rate(cnb)
+    usd_czk = float(((cnb or {}).get("USD") or {}).get("rate") or 0)
+    st.markdown("#### Srovnání nabídek vedle sebe")
+    if not eur_czk or eur_czk <= 0:
+        st.info("Kurz ČNB není k dispozici, nemůžu přepočítat nabídky na koruny.")
+        return
     st.caption(
-        "Sem patří tehdy a dnes, nebo kterékoliv dva dny. "
-        "Napíšete dvě ceny a Excel rozdělí rozdíl na kov, kurz a ostatní."
+        "Zadej landed cenu a měnu u každé nabídky. Přepočet kurzem ČNB (€ "
+        + format_num(eur_czk, 3) + " Kč"
+        + (f", $ {format_num(usd_czk, 3)} Kč" if usd_czk else "")
+        + "). Vítěz je nejlevnější v korunách."
     )
+    if not isinstance(st.session_state.get("offer_scorecard_data"), pd.DataFrame):
+        st.session_state["offer_scorecard_data"] = pd.DataFrame([
+            {"Nabídka": "Dodavatel A", "Landed cena": 0.0, "Měna": "EUR",
+             "Dodání (dny)": 0, "MOQ": "", "Platnost do": ""},
+            {"Nabídka": "Dodavatel B", "Landed cena": 0.0, "Měna": "USD",
+             "Dodání (dny)": 0, "MOQ": "", "Platnost do": ""},
+        ])
+    edited = st.data_editor(
+        st.session_state["offer_scorecard_data"],
+        key="offer_scorecard_editor",
+        num_rows="dynamic",
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Nabídka": st.column_config.TextColumn("Nabídka", width="medium"),
+            "Landed cena": st.column_config.NumberColumn("Landed cena", min_value=0.0, format="%.2f"),
+            "Měna": st.column_config.SelectboxColumn("Měna", options=list(_LANDED_CCYS), width="small"),
+            "Dodání (dny)": st.column_config.NumberColumn("Dodání (dny)", min_value=0, step=1),
+            "MOQ": st.column_config.TextColumn("MOQ", width="small"),
+            "Platnost do": st.column_config.TextColumn("Platnost do", width="small"),
+        },
+    )
+    st.session_state["offer_scorecard_data"] = edited
+
+    rows = []
+    for _, r in edited.iterrows():
+        val = pd.to_numeric(pd.Series([r.get("Landed cena")]), errors="coerce").iloc[0]
+        if pd.isna(val) or float(val) <= 0:
+            continue
+        ccy = str(r.get("Měna") or "EUR")
+        if ccy not in _LANDED_CCYS:
+            ccy = "EUR"
+        if ccy == "CZK":
+            czk = float(val)
+        elif ccy == "USD":
+            if not usd_czk:
+                continue
+            czk = float(val) * usd_czk
+        else:
+            czk = float(val) * eur_czk
+        lead_raw = pd.to_numeric(pd.Series([r.get("Dodání (dny)")]), errors="coerce").iloc[0]
+        rows.append({
+            "name": str(r.get("Nabídka") or "—"),
+            "czk": czk,
+            "ccy": ccy,
+            "val": float(val),
+            "lead": lead_raw,
+            "moq": str(r.get("MOQ") or ""),
+            "valid": str(r.get("Platnost do") or ""),
+        })
+    if len(rows) < 2:
+        st.caption("Zadej aspoň dvě nabídky s cenou, ať je co porovnat.")
+        return
+
+    best = min(rows, key=lambda x: x["czk"])
+    worst = max(rows, key=lambda x: x["czk"])
+    out_rows = []
+    for r in rows:
+        gap = (r["czk"] / best["czk"] - 1.0) * 100.0
+        gap_str = "— vítěz" if r is best else f"+{format_num(gap, 2)} %"
+        lead_str = f"{int(r['lead'])} d" if pd.notna(r["lead"]) and float(r["lead"]) > 0 else "—"
+        out_rows.append([
+            r["name"],
+            f"{_nakup_num(r['val'], 2)} {_LANDED_CCY_MARK[r['ccy']]}",
+            _nakup_num(r["czk"], 0) + " Kč",
+            gap_str,
+            lead_str,
+            r["moq"] or "—",
+            r["valid"] or "—",
+        ])
+    st.markdown(_nakup_fit_html([
+        ("Nabídka", "20%", ""),
+        ("Landed", "16%", "num"),
+        ("Landed Kč", "16%", "num"),
+        ("Rozdíl", "12%", "num"),
+        ("Dodání", "10%", "num"),
+        ("MOQ", "13%", ""),
+        ("Platnost", "13%", ""),
+    ], out_rows), unsafe_allow_html=True)
+    saving = worst["czk"] - best["czk"]
+    if saving > 0:
+        st.success(
+            f"Nejlevnější: {best['name']} — {_nakup_num(best['czk'], 0)} Kč. "
+            f"Proti nejdražší ušetříš {_nakup_num(saving, 0)} Kč."
+        )
+    else:
+        st.success(f"Nejlevnější: {best['name']} — {_nakup_num(best['czk'], 0)} Kč.")
+
+
+def render_offer_compare() -> None:
+    """Víc nabídek vedle sebe nebo pohyb kovu mezi dvěma dny. Do faktury se to neplete."""
+    section_header("🤝", "Porovnání nabídek")
+    st.caption(
+        "Srovnej víc nabídek vedle sebe (vítěz v Kč), nebo porovnej cenu kovu mezi dvěma dny."
+    )
+    _render_offer_scorecard()
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("#### Tehdy vs dnes (pohyb kovu)")
+    st.caption("Napíšeš dvě ceny a Excel rozdělí rozdíl na kov, kurz a ostatní.")
     _render_metal_date_compare(embedded=False)
 
 
@@ -12538,17 +12932,17 @@ def render_tools_and_tips() -> None:
         '<div class="info-box" style="margin-bottom:14px;">'
         + t(
             "Hned nahoře hledejte <strong>kód kabelu</strong> nebo <strong>buben KTG</strong>. "
-            "Pod tím jsou kalkulačky (fill factor, kapacita bubnu) a celý katalog HELUKABEL."
+            "Pod tím je kalkulačka fill factor a celý katalog HELUKABEL. "
+            "Kapacita bubnu má teď vlastní sekci 🪵."
         )
         + "</div>",
         unsafe_allow_html=True,
     )
     _render_helu_quick_find()
 
-    _tool_ids = ("fill", "drum", "helu")
+    _tool_ids = ("fill", "helu")
     _tool_labels = {
         "fill": t("Fill factor — průřez vodiče z průměru"),
-        "drum": t("Kapacita bubnu — co se vejde na buben"),
         "helu": t("Technické tabulky HELUKABEL (katalog)"),
     }
     tool_id = st.selectbox(
@@ -12562,8 +12956,6 @@ def render_tools_and_tips() -> None:
 
     if tool_id == "fill":
         render_fill_factor_calculator()
-    elif tool_id == "drum":
-        render_drum_capacity_calculator()
     elif tool_id == "helu":
         if render_helukabel_catalog is None:
             st.error(
@@ -12585,19 +12977,12 @@ def render_footer() -> None:
     now = now_prague()
     st.markdown(f"""
     <div class="dash-footer">
-        <div>⚡ {t("Kabelářský Nákupní Dashboard")} &nbsp;·&nbsp; v2.0.0 &nbsp;·&nbsp; Python + Streamlit</div>
         <div>
-            {t("Zdroje: westmetall.com (LME Cash) &nbsp;·&nbsp; ČNB &nbsp;·&nbsp; "
-            "Yahoo Finance (grafy, ropa BZ=F) &nbsp;·&nbsp; Link4Future / Jagich (GPS kontejnerů)")}
-        </div>
-        <div>
-            {t("Generováno:")} {now.strftime("%d.%m.%Y %H:%M:%S")} &nbsp;·&nbsp;
-            Cache TTL: 3600 s &nbsp;·&nbsp;
-            {t("Bez placených API klíčů")} &nbsp;·&nbsp; {t("Bez SQL databází")}
+            {t("Zdroje: Westmetall, ČNB, Yahoo, Link4Future / Jagich")}
+            &nbsp;·&nbsp; {now.strftime("%d.%m.%Y %H:%M")}
         </div>
         <div style="margin-top:6px;">
-            {t("⚠️ Veškeré ceny a výpočty jsou orientační. Neslouží jako investiční poradenství. "
-            "Data jsou stahována z veřejně dostupných zdrojů a mohou se zpozdit nebo být nepřesná.")}
+            {t("Ceny a výpočty jsou orientační. Nejsou investiční poradenství. Data z veřejných zdrojů se mohou zpozdit.")}
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -12642,6 +13027,8 @@ _PAGE_ALIASES = {
     "Kurzy": "💱 Kurzy",
     "Ropa": "🛢️ Ropa",
     "Nákup": "📦 Nákup",
+    "Porovnání nabídek": "🤝 Nabídky",
+    "Nabídky": "🤝 Nabídky",
     "Kontejnery": "📍 Kontejnery",
     "Logistika": "🚛 Logistika",
     "Buben": "🪵 Kapacita bubnu",
@@ -12711,6 +13098,38 @@ def _set_ui_theme(mode: str) -> None:
         store["pbcable_theme"] = mode
 
 
+def _render_section_nav(page_specs: list, page_key: str) -> str:
+    """Tři skupiny sekcí. Aktivní tlačítko je vyplněné."""
+    groups = (
+        ("Trh", ("kovy", "kurzy", "ropa")),
+        ("Práce", ("nakup", "nabidky", "logistika", "buben")),
+        ("Provoz", ("kontejnery", "nastroje")),
+    )
+    by_id = {page_id: label for label, page_id, _fn in page_specs}
+    current = st.session_state.get(page_key)
+    if not isinstance(current, str) or current not in {label for label, _pid, _fn in page_specs}:
+        current = page_specs[0][0]
+        st.session_state[page_key] = current
+    with st.container(key="nav_groups"):
+        columns = st.columns(3)
+        for column, (title, ids) in zip(columns, groups):
+            labels = [by_id[page_id] for page_id in ids if page_id in by_id]
+            if not labels:
+                continue
+            with column:
+                st.markdown(f'<div class="nakup-kicker">{title}</div>', unsafe_allow_html=True)
+                for label in labels:
+                    if st.button(
+                        label,
+                        key=f"{page_key}__{label}",
+                        type="primary" if label == current else "secondary",
+                        use_container_width=True,
+                    ):
+                        st.session_state[page_key] = label
+                        st.rerun()
+    return str(st.session_state.get(page_key) or page_specs[0][0])
+
+
 def main() -> None:
     """Hlavní funkce – sestaví celý dashboard voláním dílčích render funkcí."""
     _sync_ui_theme()
@@ -12722,7 +13141,7 @@ def main() -> None:
         ("💱 Kurzy", "kurzy", render_fx),
         ("🛢️ Ropa", "ropa", render_oil_plastics),
         ("📦 Nákup", "nakup", render_landed_cost_pricing),
-        ("🤝 Porovnání nabídek", "nabidky", render_offer_compare),
+        ("🤝 Nabídky", "nabidky", render_offer_compare),
         ("📍 Kontejnery", "kontejnery", render_container_tracking),
         ("🚛 Logistika", "logistika", render_domestic_logistics),
         ("🪵 Kapacita bubnu", "buben", render_drum_capacity_calculator),
@@ -12764,25 +13183,7 @@ def main() -> None:
 
     renderers = {label: fn for label, _page_id, fn in page_specs}
     page_ids = {label: page_id for label, page_id, _fn in page_specs}
-    picker = getattr(st, "segmented_control", None)
-    if picker is not None:
-        page = picker(
-            "Sekce",
-            tabs_list,
-            default=tabs_list[0],
-            key=page_key,
-            label_visibility="collapsed",
-        )
-    else:
-        page = st.radio(
-            "Sekce",
-            tabs_list,
-            horizontal=True,
-            key=page_key,
-            label_visibility="collapsed",
-        )
-    if not isinstance(page, str):
-        page = tabs_list[0]
+    page = _render_section_nav(page_specs, page_key)
     st.session_state[page_memory] = page
     if st.session_state.get("_dash_hold"):
         _kick_section_paint()
