@@ -1,53 +1,53 @@
 {
   "ccmn": {
-    "copper": 98090.0,
-    "aluminum": 22540.0
+    "copper": 97860.0,
+    "aluminum": 22630.0
   },
   "yf_spot": {
     "HRC=F": {
-      "price": 1401.0,
+      "price": 1429.0,
       "prev": 1352.0,
-      "delta": 49.0,
-      "delta_pct": 3.624
+      "delta": 77.0,
+      "delta_pct": 5.695
     },
     "BZ=F": {
-      "price": 86.730003,
-      "prev": 92.57,
-      "delta": -5.839996,
-      "delta_pct": -6.309
+      "price": 87.309998,
+      "prev": 89.370003,
+      "delta": -2.060005,
+      "delta_pct": -2.305
     },
     "CL=F": {
-      "price": 80.550003,
-      "prev": 83.980003,
-      "delta": -3.43,
-      "delta_pct": -4.084
+      "price": 80.540001,
+      "prev": 80.169998,
+      "delta": 0.370003,
+      "delta_pct": 0.462
     },
     "EURUSD=X": {
-      "price": 1.090513,
-      "prev": 1.096972,
-      "delta": -0.00646,
-      "delta_pct": -0.589
+      "price": 1.096371,
+      "prev": 1.097153,
+      "delta": -0.000782,
+      "delta_pct": -0.071
     },
     "EURCZK=X": {
-      "price": 24.426201,
-      "prev": 24.411501,
-      "delta": 0.0147,
-      "delta_pct": 0.06
+      "price": 24.4058,
+      "prev": 24.454,
+      "delta": -0.048201,
+      "delta_pct": -0.197
     },
     "HG=F": {
-      "price": 5.6595,
-      "prev": 5.477,
-      "delta": 0.1825,
-      "delta_pct": 3.332
+      "price": 5.458,
+      "prev": 5.627,
+      "delta": -0.169,
+      "delta_pct": -3.003
     },
     "ALI=F": {
-      "price": 2810.0,
-      "prev": 2860.0,
-      "delta": -50.0,
-      "delta_pct": -1.748
+      "price": 2761.0,
+      "prev": 2897.5,
+      "delta": -136.5,
+      "delta_pct": -4.711
     }
   },
-  "_ts": "2026-11-23 15:52",
+  "_ts": "2026-11-24 15:45",
   "_health": {
     "ccmn_copper": true,
     "ccmn_aluminum": true,
@@ -55,5 +55,5 @@
     "eurusd": true,
     "history": true
   },
-  "_alert_sig": "2026-11-23|Brent den: -6.3 % (pr\u00e1h \u00b13.0 %) \u00b7 $86.73|CCMN m\u011b\u010f vs v\u010dera: -3.7 % (pr\u00e1h \u00b13.0 %) \u00b7 98090 CNY/t|M\u011b\u010f COMEX (HG=F) den: +3.3 % (pr\u00e1h \u00b13.0 %) \u00b7 5.6595 USD/lb"
+  "_alert_sig": "2026-11-24|Hlin\u00edk COMEX (ALI=F) den: -4.7 % (pr\u00e1h \u00b13.0 %) \u00b7 2761.0 USD|M\u011b\u010f COMEX (HG=F) den: -3.0 % (pr\u00e1h \u00b13.0 %) \u00b7 5.458 USD/lb"
 }
