@@ -6362,26 +6362,54 @@ def _invoice_metal_move(
     return adjusted, pd.DataFrame(rows), pairs
 
 
+_COL_BUY_EUR = "Nákup €/j."
+_COL_BUY_CZK = "Nákup Kč/j."
 _NAKUP_EXPORT_COLS = (
     _INVOICE_COL_NAME,
-    _INVOICE_COL_HS,
     _INVOICE_COL_QTY,
+    _INVOICE_COL_CCY,
     _INVOICE_COL_PRICE,
-    _INVOICE_COL_DUTY,
+    _COL_BUY_EUR,
+    _COL_BUY_CZK,
+    _COL_UNIT_EUR,
+    _COL_UNIT_CZK,
+    _COL_SALE,
+    _COL_LANDED,
     _COL_ROW_EUR,
     _COL_SHARE,
     _COL_FREIGHT_C,
     _COL_FREIGHT_I,
+    _INVOICE_COL_HS,
+    _INVOICE_COL_DUTY,
     _COL_DUTY_BASE,
     _COL_DUTY_EUR,
     _COL_DECL,
-    _COL_LANDED,
-    _COL_UNIT_EUR,
-    _COL_UNIT_CZK,
     _COL_SALE_MARKUP,
     _COL_SALE_MARGIN,
-    _COL_SALE,
 )
+_NAKUP_EXCEL_HEADERS = {
+    _INVOICE_COL_NAME: "Kabel",
+    _INVOICE_COL_QTY: "Množství",
+    _INVOICE_COL_CCY: "Měna",
+    _INVOICE_COL_PRICE: "Cena nákup",
+    _COL_BUY_EUR: "Nákup €/j.",
+    _COL_BUY_CZK: "Nákup Kč/j.",
+    _COL_UNIT_EUR: "Landed €/j.",
+    _COL_UNIT_CZK: "Landed Kč/j.",
+    _COL_SALE: "Prodej Kč/j.",
+    _COL_LANDED: "Landed celkem €",
+    _COL_ROW_EUR: "Hodnota řádku €",
+    _COL_SHARE: "Podíl",
+    _COL_FREIGHT_C: "Doprava do proclení €",
+    _COL_FREIGHT_I: "Dovoz po Česku €",
+    _INVOICE_COL_HS: "HS",
+    _INVOICE_COL_DUTY: "Clo %",
+    _COL_DUTY_BASE: "Základ cla €",
+    _COL_DUTY_EUR: "Clo €",
+    _COL_DECL: "Deklarace €",
+    _COL_SALE_MARKUP: "Přirážka Kč/j.",
+    _COL_SALE_MARGIN: "Marže Kč/j.",
+}
 
 
 def _nakup_excel_bytes(
@@ -6443,11 +6471,10 @@ def _nakup_excel_bytes(
     unlocked = Protection(locked=False)
 
     n_data = int(len(results))
-    slots = max(n_data + 20, 30)
+    slots = n_data + 5
     last_row = 1 + slots
     hs_lookup_last = 40
-    export_cols = _NAKUP_EXPORT_COLS + (_NAKUP_METAL_COLS if include_metal else ()) + (_INVOICE_COL_CCY,)
-    ccy_letter = get_column_letter(len(export_cols))
+    export_cols = _NAKUP_EXPORT_COLS + (_NAKUP_METAL_COLS if include_metal else ())
     input_names = {
         _INVOICE_COL_NAME,
         _INVOICE_COL_HS,
@@ -6465,65 +6492,69 @@ def _nakup_excel_bytes(
         )
 
     def _item_formulas(r: int) -> dict[int, str]:
-        goods = f"SUM($F$2:$F${last_row})"
-        active = f'OR(C{r}="",D{r}="",C{r}=0,D{r}=0)'
+        goods = f"SUM($K$2:$K${last_row})"
+        active = f'OR(B{r}="",D{r}="",B{r}=0,D{r}=0)'
+        fx_row = _fx_expr(f"C{r}")
+        fx_customs = _fx_expr("Souhrn!$E$6")
+        fx_inland = _fx_expr("Souhrn!$E$7")
         return {
-            5: (
+            5: f'=IF({active},"",D{r}*({fx_row}))',
+            6: f'=IF(OR(E{r}="",Souhrn!$B$7=0),"",E{r}*Souhrn!$B$7)',
+            11: f'=IF({active},"",B{r}*E{r})',
+            12: f'=IF(OR(K{r}="",{goods}=0),"",K{r}/{goods})',
+            13: f'=IF(L{r}="","",L{r}*Souhrn!$B$4*({fx_customs}))',
+            14: f'=IF(L{r}="","",L{r}*Souhrn!$B$5*({fx_inland}))',
+            16: (
                 f'=IF({active},"",'
                 f'IF(Souhrn!$B$3="Ano",0,'
-                f'IFERROR(VLOOKUP(LEFT(B{r},8),\'Sazby cla\'!$A$2:$B${hs_lookup_last},2,FALSE),'
+                f'IFERROR(VLOOKUP(LEFT(O{r},8),\'Sazby cla\'!$A$2:$B${hs_lookup_last},2,FALSE),'
                 f"'Sazby cla'!$E$2)))"
             ),
-            6: f'=IF({active},"",C{r}*D{r}*({_fx_expr(f"{ccy_letter}{r}")}))',
-            7: f'=IF(OR(F{r}="",{goods}=0),"",F{r}/{goods})',
-            8: f'=IF(G{r}="","",G{r}*Souhrn!$B$4*({_fx_expr("Souhrn!$E$6")}))',
-            9: f'=IF(G{r}="","",G{r}*Souhrn!$B$5*({_fx_expr("Souhrn!$E$7")}))',
-            10: f'=IF(F{r}="","",F{r}+H{r})',
-            11: f'=IF(J{r}="","",J{r}*E{r}/100)',
-            12: f'=IF(F{r}="","",IF(Souhrn!$B$7=0,0,G{r}*Souhrn!$B$6/Souhrn!$B$7))',
-            13: f'=IF(F{r}="","",F{r}+H{r}+I{r}+K{r}+L{r})',
-            14: f'=IF(OR(M{r}="",C{r}=0),"",M{r}/C{r})',
-            15: f'=IF(OR(N{r}="",Souhrn!$B$7=0),"",N{r}*Souhrn!$B$7)',
-            16: f'=IF(O{r}="","",O{r}*(1+Souhrn!$B$10/100))',
-            17: f'=IF(OR(O{r}="",Souhrn!$B$10>=100),"",O{r}/(1-Souhrn!$B$10/100))',
-            18: f'=IF(O{r}="","",IF(Souhrn!$B$9="Marže",Q{r},P{r}))',
+            17: f'=IF(K{r}="","",K{r}+M{r})',
+            18: f'=IF(Q{r}="","",Q{r}*P{r}/100)',
+            19: f'=IF(K{r}="","",IF(Souhrn!$B$7=0,0,L{r}*Souhrn!$B$6/Souhrn!$B$7))',
+            10: f'=IF(K{r}="","",K{r}+M{r}+N{r}+R{r}+S{r})',
+            7: f'=IF(OR(J{r}="",B{r}=0),"",J{r}/B{r})',
+            8: f'=IF(OR(G{r}="",Souhrn!$B$7=0),"",G{r}*Souhrn!$B$7)',
+            20: f'=IF(H{r}="","",H{r}*(1+Souhrn!$B$10/100))',
+            21: f'=IF(OR(H{r}="",Souhrn!$B$10>=100),"",H{r}/(1-Souhrn!$B$10/100))',
+            9: f'=IF(H{r}="","",IF(Souhrn!$B$9="Marže",U{r},T{r}))',
         }
 
     def _metal_formulas(r: int) -> dict[int, str]:
-        # S kov, T podíl. U kov, V měna, W nová cena, X hodnota, Y podíl,
-        # Z doprava do proclení, AA dovoz, AB základ cla, AC clo, AD deklarace,
-        # AE landed, AF za 1 j. EUR, AG za 1 j. CZK, AH přirážka, AI marže, AJ prodej.
-        active = f'OR(C{r}="",D{r}="",C{r}=0,D{r}=0)'
+        # Od sloupce V: kov, podíl, pohyb, nová cena a clo po kovu.
+        active = f'OR(B{r}="",D{r}="",B{r}=0,D{r}=0)'
         usd = (
-            f'IF(S{r}="Hliník",'
+            f'IF(V{r}="Hliník",'
             f'IF(OR(Souhrn!$B$29="",Souhrn!$B$29=0),"",Souhrn!$B$30/Souhrn!$B$29),'
             f'IF(OR(Souhrn!$B$25="",Souhrn!$B$25=0),"",Souhrn!$B$26/Souhrn!$B$25))'
         )
         eur = (
-            f'IF(S{r}="Hliník",'
+            f'IF(V{r}="Hliník",'
             f'IF(OR(Souhrn!$B$31="",Souhrn!$B$31=0),"",Souhrn!$B$32/Souhrn!$B$31),'
             f'IF(OR(Souhrn!$B$27="",Souhrn!$B$27=0),"",Souhrn!$B$28/Souhrn!$B$27))'
         )
-        ready = f'OR({active},S{r}="",T{r}="",({usd})="",({eur})="")'
-        goods = f"SUM($X$2:$X${last_row})"
-        unit_eur = f"(D{r}*({_fx_expr(f'{ccy_letter}{r}')}))"
+        ready = f'OR({active},V{r}="",W{r}="",({usd})="",({eur})="")'
+        goods = f"SUM($AA$2:$AA${last_row})"
+        fx_customs = _fx_expr("Souhrn!$E$6")
+        fx_inland = _fx_expr("Souhrn!$E$7")
         return {
-            21: f'=IF({ready},"",{unit_eur}*T{r}*(({usd})-1))',
-            22: f'=IF({ready},"",{unit_eur}*T{r}*(({eur})-({usd})))',
-            23: f'=IF(OR(U{r}="",V{r}=""),"",{unit_eur}+U{r}+V{r})',
-            24: f'=IF(W{r}="","",C{r}*W{r})',
-            25: f'=IF(OR(X{r}="",{goods}=0),"",X{r}/{goods})',
-            26: f'=IF(Y{r}="","",Y{r}*Souhrn!$B$4*Souhrn!$E$3)',
-            27: f'=IF(Y{r}="","",Y{r}*Souhrn!$B$5*Souhrn!$E$3)',
-            28: f'=IF(X{r}="","",X{r}+Z{r})',
-            29: f'=IF(AB{r}="","",AB{r}*E{r}/100)',
-            30: f'=IF(X{r}="","",IF(Souhrn!$B$7=0,0,Y{r}*Souhrn!$B$6/Souhrn!$B$7))',
-            31: f'=IF(X{r}="","",X{r}+Z{r}+AA{r}+AC{r}+AD{r})',
-            32: f'=IF(OR(AE{r}="",C{r}=0),"",AE{r}/C{r})',
-            33: f'=IF(OR(AF{r}="",Souhrn!$B$7=0),"",AF{r}*Souhrn!$B$7)',
-            34: f'=IF(AG{r}="","",AG{r}*(1+Souhrn!$B$10/100))',
-            35: f'=IF(OR(AG{r}="",Souhrn!$B$10>=100),"",AG{r}/(1-Souhrn!$B$10/100))',
-            36: f'=IF(AG{r}="","",IF(Souhrn!$B$9="Marže",AI{r},AH{r}))',
+            24: f'=IF({ready},"",E{r}*W{r}*(({usd})-1))',
+            25: f'=IF({ready},"",E{r}*W{r}*(({eur})-({usd})))',
+            26: f'=IF(OR(X{r}="",Y{r}=""),"",E{r}+X{r}+Y{r})',
+            27: f'=IF(Z{r}="","",B{r}*Z{r})',
+            28: f'=IF(OR(AA{r}="",{goods}=0),"",AA{r}/{goods})',
+            29: f'=IF(AB{r}="","",AB{r}*Souhrn!$B$4*({fx_customs}))',
+            30: f'=IF(AB{r}="","",AB{r}*Souhrn!$B$5*({fx_inland}))',
+            31: f'=IF(AA{r}="","",AA{r}+AC{r})',
+            32: f'=IF(AE{r}="","",AE{r}*P{r}/100)',
+            33: f'=IF(AA{r}="","",IF(Souhrn!$B$7=0,0,AB{r}*Souhrn!$B$6/Souhrn!$B$7))',
+            34: f'=IF(AA{r}="","",AA{r}+AC{r}+AD{r}+AF{r}+AG{r})',
+            35: f'=IF(OR(AH{r}="",B{r}=0),"",AH{r}/B{r})',
+            36: f'=IF(OR(AI{r}="",Souhrn!$B$7=0),"",AI{r}*Souhrn!$B$7)',
+            37: f'=IF(AJ{r}="","",AJ{r}*(1+Souhrn!$B$10/100))',
+            38: f'=IF(OR(AJ{r}="",Souhrn!$B$10>=100),"",AJ{r}/(1-Souhrn!$B$10/100))',
+            39: f'=IF(AJ{r}="","",IF(Souhrn!$B$9="Marže",AL{r},AK{r}))',
         }
 
     # B3 clo, B4 doprava do proclení, B5 dovoz po Česku, B6 deklarace, B7 kurz, B9 způsob, B10 %.
@@ -6538,13 +6569,13 @@ def _nakup_excel_bytes(
         ("Datum kurzu ČNB", str(cnb_date or ""), "text"),
         ("Způsob prodejní ceny", mode, "input"),
         ("Procento prodejní ceny (%)", float(margin_pct), "input"),
-        ("Celková metráž / ks", f"=SUM(Položky!C2:C{last_row})", "calc"),
-        ("Hodnota zboží (EUR)", f"=SUM(Položky!F2:F{last_row})", "calc"),
-        ("Doprava do proclení celkem (EUR)", f"=SUM(Položky!H2:H{last_row})", "calc"),
-        ("Dovoz po Česku celkem (EUR)", f"=SUM(Položky!I2:I{last_row})", "calc"),
-        ("Clo celkem (EUR)", f"=SUM(Položky!K2:K{last_row})", "calc"),
-        ("Deklarace celkem (EUR)", f"=SUM(Položky!L2:L{last_row})", "calc"),
-        ("Celkové náklady landed (EUR)", f"=SUM(Položky!M2:M{last_row})", "calc"),
+        ("Celková metráž / ks", f"=SUM(Položky!B2:B{last_row})", "calc"),
+        ("Hodnota zboží (EUR)", f"=SUM(Položky!K2:K{last_row})", "calc"),
+        ("Doprava do proclení celkem (EUR)", f"=SUM(Položky!M2:M{last_row})", "calc"),
+        ("Dovoz po Česku celkem (EUR)", f"=SUM(Položky!N2:N{last_row})", "calc"),
+        ("Clo celkem (EUR)", f"=SUM(Položky!R2:R{last_row})", "calc"),
+        ("Deklarace celkem (EUR)", f"=SUM(Položky!S2:S{last_row})", "calc"),
+        ("Celkové náklady landed (EUR)", f"=SUM(Položky!J2:J{last_row})", "calc"),
         ("Celkem landed (CZK)", '=IF(B7=0,"",B17*B7)', "calc"),
         ("Vygenerováno", now_prague().strftime("%d.%m.%Y %H:%M"), "text"),
     ]
@@ -6636,8 +6667,9 @@ def _nakup_excel_bytes(
         "Žluté buňky se přepisují. Doprava do proclení vstupuje do cla, dovoz po Česku jen do landed ceny. "
         "Přirážka je × (1 + procento/100). Marže je ÷ (1 − procento/100). "
         "Sloupec Prodej jede podle způsobu v B9. Clo v % bere prvních 8 číslic HS z listu Sazby cla. "
-        "Ano u vynulovaného cla dá všude 0. Dole na Položkách jsou prázdné řádky. "
-        "B20 je výchozí měna. Měna řádku a E6/E7 u dopravy ji přebíjejí. E3 je jen orientační přepočet výchozí měny."
+        "Ano u vynulovaného cla dá všude 0. Na Položkách je pět prázdných řádků. "
+        "Vlevo jsou cena nákup a landed. Clo a rozpis dopravy jsou sbalené od sloupce K. "
+        "B20 je výchozí měna. Měna řádku a E6/E7 u dopravy ji přebíjejí."
     )
     if include_metal:
         note += (
@@ -6737,13 +6769,13 @@ def _nakup_excel_bytes(
 
     pol = wb.create_sheet("Položky")
     for c, name in enumerate(export_cols, start=1):
-        header = "Cena za 1 jednotku" if name == _INVOICE_COL_PRICE else name
+        header = _NAKUP_EXCEL_HEADERS.get(name, name)
         cell = pol.cell(1, c, header)
         cell.fill = header_fill
         cell.font = header_font
         cell.alignment = wrap
         cell.border = thin
-    pol.row_dimensions[1].height = 34
+    pol.row_dimensions[1].height = 22
     for r_i in range(2, last_row + 1):
         formulas = _item_formulas(r_i)
         if include_metal:
@@ -6803,28 +6835,25 @@ def _nakup_excel_bytes(
                 cell.number_format = "#,##0.00"
             elif name == _INVOICE_COL_PRICE:
                 cell.number_format = "#,##0.00" if entry_ccy == "CZK" else "#,##0.000"
-            elif name in (
-                _COL_UNIT_EUR,
-                _COL_NEW_PRICE,
-                _COL_METAL_KOV,
-                _COL_METAL_FX,
-                "Landed po kovu za 1 j. (EUR)",
-            ):
+            elif name in (_COL_BUY_EUR, _COL_UNIT_EUR, _COL_NEW_PRICE, _COL_METAL_KOV, _COL_METAL_FX, "Landed po kovu za 1 j. (EUR)"):
                 cell.number_format = "#,##0.0000"
             elif name not in input_names and name != _COL_RATIO:
                 cell.number_format = "#,##0.00"
     widths = {
-        _INVOICE_COL_NAME: 36,
-        _INVOICE_COL_HS: 44,
-        _INVOICE_COL_QTY: 16,
-        _INVOICE_COL_PRICE: 22,
-        _INVOICE_COL_DUTY: 16,
+        _INVOICE_COL_NAME: 32,
+        _INVOICE_COL_HS: 18,
+        _INVOICE_COL_QTY: 12,
+        _INVOICE_COL_CCY: 10,
+        _INVOICE_COL_PRICE: 14,
+        _COL_BUY_EUR: 14,
+        _COL_BUY_CZK: 14,
+        _INVOICE_COL_DUTY: 10,
         _COL_SHARE: 16,
         _COL_FREIGHT_C: 26,
         _COL_FREIGHT_I: 24,
-        _COL_UNIT_EUR: 32,
-        _COL_UNIT_CZK: 32,
-        _COL_LANDED: 28,
+        _COL_UNIT_EUR: 14,
+        _COL_UNIT_CZK: 14,
+        _COL_LANDED: 16,
         _COL_SALE_MARKUP: 26,
         _COL_SALE_MARGIN: 24,
         _COL_SALE: 18,
@@ -6846,15 +6875,20 @@ def _nakup_excel_bytes(
         metal_dv.error = "Napište Měď nebo Hliník."
         metal_dv.showInputMessage = True
         metal_dv.showErrorMessage = True
-        metal_dv.add(f"S2:S{last_row}")
+        metal_dv.add(f"V2:V{last_row}")
         pol.add_data_validation(metal_dv)
     row_ccy_dv = DataValidation(type="list", formula1='"EUR,USD,CZK"', allow_blank=False)
     row_ccy_dv.promptTitle = "Měna řádku"
     row_ccy_dv.prompt = "Cena v tomto sloupci je v této měně. EUR, USD nebo CZK."
     row_ccy_dv.showInputMessage = True
     row_ccy_dv.showErrorMessage = True
-    row_ccy_dv.add(f"{ccy_letter}2:{ccy_letter}{last_row}")
+    row_ccy_dv.add(f"C2:C{last_row}")
     pol.add_data_validation(row_ccy_dv)
+    for col_i in range(11, 22):
+        grouped = pol.column_dimensions[get_column_letter(col_i)]
+        grouped.outlineLevel = 1
+        grouped.hidden = True
+    pol.sheet_properties.outlinePr.summaryRight = True
     pol.freeze_panes = "B2"
     pol.auto_filter.ref = f"A1:{last_col}{last_row}"
     pol.page_setup.orientation = "landscape"
@@ -7906,7 +7940,8 @@ def render_landed_cost_pricing() -> None:
         help="Žluté buňky se přepisují. Clo, landed a prodej se dopočítají vzorci.",
     )
     excel_note = (
-        "V Excelu přepište žluté buňky. Doprava do proclení mění clo, dovoz po Česku jen landed cenu. "
+        "V Excelu přepište žluté buňky. Vlevo je cena nákup a landed, clo je sbalené vpravo. "
+        "Doprava do proclení mění clo, dovoz po Česku jen landed cenu. "
         "Způsob Přirážka nebo Marže přepne sloupec Prodej."
     )
     if include_metal:
