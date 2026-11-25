@@ -6371,9 +6371,15 @@ def _invoice_duty_refresh(df: pd.DataFrame, *, force_zero: bool) -> pd.DataFrame
         if name.lower() in ("", "nan", "none"):
             continue
         hs_raw = row.get(_INVOICE_COL_HS, "")
-        if pd.isna(hs_raw) or str(hs_raw).strip().lower() in ("", "nan", "none"):
-            continue
-        normalized = _normalize_hs_label(hs_raw)
+        blank_hs = (
+            hs_raw is None
+            or (not isinstance(hs_raw, str) and pd.isna(hs_raw))
+            or str(hs_raw).strip().lower() in ("", "nan", "none", "<na>")
+        )
+        if blank_hs:
+            normalized = _DEFAULT_IMPORT_HS_LABEL
+        else:
+            normalized = _normalize_hs_label(hs_raw)
         out.at[i, _INVOICE_COL_HS] = normalized
         out.at[i, _INVOICE_COL_DUTY] = float(
             _duty_for_hs_label(normalized, force_zero=force_zero)
@@ -7716,6 +7722,54 @@ def _nakup_memory_match(
     return None, None
 
 
+def _invoice_editor_fingerprint(df: pd.DataFrame) -> tuple:
+    """Řádky, podle kterých poznáme, jestli editor vrátil nová čísla."""
+    rows = []
+    for _, row in df.reset_index(drop=True).iterrows():
+        rows.append((
+            str(row.get(_INVOICE_COL_NAME, "")),
+            str(row.get(_INVOICE_COL_QTY, "")),
+            str(row.get(_INVOICE_COL_PRICE, "")),
+            str(row.get(_INVOICE_COL_CCY, "")),
+            str(row.get(_INVOICE_COL_HS, "")),
+        ))
+    return tuple(rows)
+
+
+def _apply_invoice_editor_state(base: pd.DataFrame, state: dict) -> pd.DataFrame:
+    """Doplní úpravy z editoru, když návratová tabulka zůstala na starých číslech."""
+    out = base.copy().reset_index(drop=True)
+    for key, changes in (state.get("edited_rows") or {}).items():
+        try:
+            row_i = int(key)
+        except (TypeError, ValueError):
+            continue
+        if row_i < 0 or row_i >= len(out) or not isinstance(changes, dict):
+            continue
+        for col, value in changes.items():
+            if col in out.columns:
+                out.at[row_i, col] = value
+    deleted: list[int] = []
+    for key in state.get("deleted_rows") or []:
+        try:
+            deleted.append(int(key))
+        except (TypeError, ValueError):
+            continue
+    for row_i in sorted(deleted, reverse=True):
+        if 0 <= row_i < len(out):
+            out = out.drop(index=out.index[row_i])
+    out = out.reset_index(drop=True)
+    for added in state.get("added_rows") or []:
+        if not isinstance(added, dict):
+            continue
+        row = {col: pd.NA for col in out.columns}
+        for col, value in added.items():
+            if col in row:
+                row[col] = value
+        out = pd.concat([out, pd.DataFrame([row])], ignore_index=True)
+    return out.reset_index(drop=True)
+
+
 @st.fragment
 def render_landed_cost_pricing() -> None:
     """Logistika a cenotvorba — faktura (více řádků), landed cost, prodejní ceny."""
@@ -8000,7 +8054,8 @@ def render_landed_cost_pricing() -> None:
     st.caption(
         "Import z Pohody nastaví u všech položek výchozí HS kategorii a **clo 3,7 %** (0 % u A.TR). "
         "Skutečnou sazbu cla upravíte ručním výběrem kategorie v seznamu. "
-        f"Nový řádek dostane měnu {entry_ccy}. U řádku ji můžete přepsat."
+        f"Nový řádek dostane měnu {entry_ccy} a výchozí HS. "
+        "Součty se přepočítají, když odejdeš z buňky (Enter nebo kliknutí jinam)."
     )
 
     # Základ tabulky se při psaní ceny nesmí přepisovat. Jinak Streamlit
@@ -8032,7 +8087,7 @@ def render_landed_cost_pricing() -> None:
     if st.session_state.get("_landed_editor_ver") != 7:
         st.session_state["_landed_editor_ver"] = 7
         st.session_state.pop("landed_invoice_editor", None)
-    invoice_totals = st.empty()
+    invoice_totals = st.container()
     edited_df = st.data_editor(
         st.session_state.landed_invoice_data.copy(),
         key="landed_invoice_editor",
@@ -8057,15 +8112,15 @@ def render_landed_cost_pricing() -> None:
             _INVOICE_COL_CCY: st.column_config.SelectboxColumn(
                 "Měna",
                 options=list(_LANDED_CCYS),
-                required=True,
-                help="EUR, USD nebo CZK jen pro tento řádek.",
+                default=entry_ccy,
+                help="EUR, USD nebo CZK jen pro tento řádek. Nový řádek dostane výchozí měnu.",
             ),
             _INVOICE_COL_HS: st.column_config.SelectboxColumn(
                 "HS Kód / Nápověda",
-                help="Vyberte HS kód — clo (%) se automaticky přepočítá.",
+                help="Clo se dopočítá z kategorie. Nový řádek dostane výchozí HS, můžeš ho přepsat.",
                 width="large",
                 options=_HS_SELECTBOX_OPTIONS,
-                required=True,
+                default=_DEFAULT_IMPORT_HS_LABEL,
             ),
             _INVOICE_COL_DUTY: st.column_config.NumberColumn(
                 "Aplikované clo (%)",
@@ -8088,6 +8143,22 @@ def render_landed_cost_pricing() -> None:
     )
 
     edited_df = edited_df.reset_index(drop=True)
+    editor_state = st.session_state.get("landed_invoice_editor")
+    source_fp = _invoice_editor_fingerprint(st.session_state.landed_invoice_data)
+    if (
+        isinstance(editor_state, dict)
+        and _invoice_editor_fingerprint(edited_df) == source_fp
+        and (
+            editor_state.get("edited_rows")
+            or editor_state.get("added_rows")
+            or editor_state.get("deleted_rows")
+        )
+    ):
+        recovered = _apply_invoice_editor_state(
+            st.session_state.landed_invoice_data, editor_state,
+        )
+        if _invoice_editor_fingerprint(recovered) != source_fp:
+            edited_df = recovered
     if _INVOICE_COL_CCY not in edited_df.columns:
         edited_df[_INVOICE_COL_CCY] = entry_ccy
     edited_ccy = edited_df[_INVOICE_COL_CCY].astype(str)
@@ -8125,15 +8196,13 @@ def render_landed_cost_pricing() -> None:
         if _fragment_only_run():
             st.rerun(scope="fragment")
         st.rerun()
-    # Překreslit základ jen když se změní HS nebo nulové clo. Změna ceny
-    # základ nemění, takže rozepsané řádky zůstanou.
-    same_hs = _named_invoice_hs(edited_df) == _named_invoice_hs(
-        st.session_state.landed_invoice_data
-    )
+    # Základ tabulky se při změně množství a ceny nepřepisuje.
+    # Jinak Streamlit tabulku sestaví znovu a vrátí staré řádky.
+    # Clo se počítá z aktuálního editoru, ne až po dalším překreslení.
     known_zero = st.session_state.get("_landed_zero_applied")
-    if same_hs and known_zero is None:
+    if known_zero is None:
         st.session_state._landed_zero_applied = zero_duty
-    elif not same_hs or known_zero != zero_duty:
+    elif known_zero != zero_duty:
         refreshed = _invoice_duty_refresh(edited_df, force_zero=zero_duty)
         st.session_state.landed_invoice_data = refreshed
         st.session_state.landed_invoice_live = refreshed.copy()
@@ -8150,7 +8219,7 @@ def render_landed_cost_pricing() -> None:
     named = edited_df[_INVOICE_COL_NAME].astype(str).str.strip()
     filled = (named != "") & (named.str.lower() != "nan") & (qty_now > 0) & (price_now > 0)
     if filled.any():
-        with invoice_totals.container():
+        with invoice_totals:
             sum_col1, sum_col2 = st.columns(2)
             sum_col1.metric("Celková metráž / ks", format_num(float(qty_now[filled].sum()), 2))
             entered_sum_eur = 0.0
