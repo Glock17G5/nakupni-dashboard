@@ -7403,7 +7403,6 @@ def _nakup_apply_currency(entry_ccy: str, eur_czk: float, usd_czk: float) -> str
             updated[_INVOICE_COL_PRICE] = prices
             st.session_state[frame_key] = updated
     st.session_state.pop("landed_invoice_editor", None)
-    _clear_nakup_row_widgets()
     st.session_state["_landed_ccy_applied"] = entry_ccy
     return entry_ccy
 
@@ -7723,196 +7722,6 @@ def _nakup_memory_match(
     return None, None
 
 
-_NAKUP_ROW_ID = "_row_id"
-
-
-def _nakup_row_key(row_id: str, field: str) -> str:
-    return f"nakup_r_{row_id}_{field}"
-
-
-def _clear_nakup_row_widgets() -> None:
-    """Zapomene rozepsaná pole. Další běh je vezme znovu z tabulky."""
-    for key in list(st.session_state.keys()):
-        if isinstance(key, str) and (key.startswith("nakup_r_") or key.startswith("nakup_del_")):
-            st.session_state.pop(key, None)
-
-
-def _new_nakup_row_id() -> str:
-    seq = int(st.session_state.get("_nakup_row_seq", 0)) + 1
-    st.session_state["_nakup_row_seq"] = seq
-    return f"r{seq}"
-
-
-def _nakup_hs_blank(value) -> bool:
-    if value is None:
-        return True
-    if not isinstance(value, str):
-        try:
-            if pd.isna(value):
-                return True
-        except (TypeError, ValueError):
-            return True
-    return str(value).strip().lower() in ("", "nan", "none", "<na>")
-
-
-def _nakup_rerun() -> None:
-    if _fragment_only_run():
-        st.rerun(scope="fragment")
-    st.rerun()
-
-
-def _ensure_nakup_rows(df: pd.DataFrame, entry_ccy: str) -> pd.DataFrame:
-    """Doplní měnu, kg a stálé číslo řádku. Číslo řádku drží pole i po smazání jiného."""
-    out = df.copy().reset_index(drop=True)
-    for col in list(_DEFAULT_INVOICE_DF.columns) + [_INVOICE_COL_CCY, _COL_KG, _NAKUP_ROW_ID]:
-        if col not in out.columns:
-            out[col] = pd.NA
-    ccys = out[_INVOICE_COL_CCY].astype(str)
-    out.loc[~ccys.isin(list(_LANDED_CCYS)), _INVOICE_COL_CCY] = entry_ccy
-    ids: list[str] = []
-    for value in out[_NAKUP_ROW_ID].tolist():
-        text = "" if _nakup_hs_blank(value) else str(value).strip()
-        if not text:
-            text = _new_nakup_row_id()
-        ids.append(text)
-    out[_NAKUP_ROW_ID] = ids
-    return out
-
-
-def _seed_nakup_widget(key: str, value) -> None:
-    if key not in st.session_state:
-        st.session_state[key] = value
-
-
-def _nakup_num_or(value, fallback: float) -> float:
-    parsed = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
-    if pd.isna(parsed):
-        return fallback
-    return float(parsed)
-
-
-def _render_nakup_rows(
-    df: pd.DataFrame,
-    entry_ccy: str,
-    zero_duty: bool,
-    eur_czk: float,
-    usd_czk: float,
-) -> pd.DataFrame:
-    """Položky jako samostatná pole. Každá změna hned jde do výpočtu."""
-    work = _ensure_nakup_rows(df, entry_ccy)
-    records: list[dict] = []
-    delete_id = None
-    for pos, row in work.iterrows():
-        rid = str(row[_NAKUP_ROW_ID])
-        name_key = _nakup_row_key(rid, "name")
-        qty_key = _nakup_row_key(rid, "qty")
-        price_key = _nakup_row_key(rid, "price")
-        ccy_key = _nakup_row_key(rid, "ccy")
-        hs_key = _nakup_row_key(rid, "hs")
-        kg_key = _nakup_row_key(rid, "kg")
-        prev_ccy_key = _nakup_row_key(rid, "ccy_prev")
-
-        name_default = str(row.get(_INVOICE_COL_NAME) or "")
-        if name_default.strip().lower() in ("nan", "none"):
-            name_default = ""
-        ccy_default = str(row.get(_INVOICE_COL_CCY) or entry_ccy)
-        if ccy_default not in _LANDED_CCYS:
-            ccy_default = entry_ccy
-        hs_default = row.get(_INVOICE_COL_HS)
-        hs_default = _DEFAULT_IMPORT_HS_LABEL if _nakup_hs_blank(hs_default) else _normalize_hs_label(hs_default)
-        if hs_default not in _HS_SELECTBOX_OPTIONS:
-            hs_default = _DEFAULT_IMPORT_HS_LABEL
-
-        _seed_nakup_widget(name_key, name_default)
-        _seed_nakup_widget(qty_key, _nakup_num_or(row.get(_INVOICE_COL_QTY), 0.0))
-        _seed_nakup_widget(price_key, round(_nakup_num_or(row.get(_INVOICE_COL_PRICE), 0.0), 4))
-        _seed_nakup_widget(ccy_key, ccy_default)
-        if hs_key in st.session_state and st.session_state[hs_key] not in _HS_SELECTBOX_OPTIONS:
-            st.session_state[hs_key] = hs_default
-        _seed_nakup_widget(hs_key, hs_default)
-        _seed_nakup_widget(kg_key, _nakup_num_or(row.get(_COL_KG), 0.0))
-        _seed_nakup_widget(prev_ccy_key, st.session_state.get(ccy_key, ccy_default))
-
-        st.markdown(f"**Položka {int(pos) + 1}**")
-        name_col, del_col = st.columns([5, 1])
-        with name_col:
-            name = st.text_input("Název", key=name_key)
-        with del_col:
-            st.markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
-            if st.button("Smazat", key=f"nakup_del_{rid}"):
-                delete_id = rid
-        qty_col, price_col, ccy_col = st.columns([1.2, 1.2, 0.9])
-        with ccy_col:
-            ccy = st.selectbox("Měna", list(_LANDED_CCYS), key=ccy_key)
-        prev_ccy = str(st.session_state.get(prev_ccy_key) or ccy)
-        if prev_ccy in _LANDED_CCYS and ccy in _LANDED_CCYS and prev_ccy != ccy:
-            src = _nakup_eur_per_unit(prev_ccy, float(eur_czk), float(usd_czk))
-            dst = _nakup_eur_per_unit(ccy, float(eur_czk), float(usd_czk))
-            if src and dst and price_key in st.session_state:
-                st.session_state[price_key] = round(float(st.session_state[price_key]) * src / dst, 4)
-        st.session_state[prev_ccy_key] = ccy
-        with qty_col:
-            qty = st.number_input("Množství", min_value=0.0, step=1.0, format="%.2f", key=qty_key)
-        with price_col:
-            price = st.number_input("Cena za 1 j.", min_value=0.0, step=0.001, format="%.3f", key=price_key)
-        hs_col, duty_col, kg_col = st.columns([2.2, 0.9, 1.1])
-        with hs_col:
-            hs = st.selectbox("HS kód", list(_HS_SELECTBOX_OPTIONS), key=hs_key)
-        duty = _duty_for_hs_label(str(hs), force_zero=zero_duty)
-        with duty_col:
-            st.metric("Clo", f"{duty:.1f} %")
-        with kg_col:
-            kg = st.number_input(
-                "Kg kovu / km",
-                min_value=0.0,
-                step=0.1,
-                format="%.2f",
-                key=kg_key,
-                help="0 znamená, že hmotnost kovu není zadaná.",
-            )
-        records.append({
-            _NAKUP_ROW_ID: rid,
-            _INVOICE_COL_NAME: str(name or "").strip(),
-            _INVOICE_COL_QTY: float(qty),
-            _INVOICE_COL_PRICE: float(price),
-            _INVOICE_COL_CCY: ccy if ccy in _LANDED_CCYS else entry_ccy,
-            _INVOICE_COL_HS: hs if hs in _HS_SELECTBOX_OPTIONS else _DEFAULT_IMPORT_HS_LABEL,
-            _INVOICE_COL_DUTY: float(duty),
-            _COL_KG: float(kg) if float(kg) > 0 else pd.NA,
-        })
-
-    if delete_id:
-        kept = [rec for rec in records if rec[_NAKUP_ROW_ID] != delete_id]
-        for field in ("name", "qty", "price", "ccy", "hs", "kg", "ccy_prev"):
-            st.session_state.pop(_nakup_row_key(delete_id, field), None)
-        st.session_state.pop(f"nakup_del_{delete_id}", None)
-        saved = pd.DataFrame(kept)
-        st.session_state.landed_invoice_data = saved
-        st.session_state.landed_invoice_live = saved.copy()
-        _nakup_rerun()
-
-    if st.button("Přidat řádek", key="nakup_add_row"):
-        records.append({
-            _NAKUP_ROW_ID: _new_nakup_row_id(),
-            _INVOICE_COL_NAME: "",
-            _INVOICE_COL_QTY: 0.0,
-            _INVOICE_COL_PRICE: 0.0,
-            _INVOICE_COL_CCY: entry_ccy,
-            _INVOICE_COL_HS: _DEFAULT_IMPORT_HS_LABEL,
-            _INVOICE_COL_DUTY: 0.0 if zero_duty else _DEFAULT_INVOICE_DUTY,
-            _COL_KG: pd.NA,
-        })
-        saved = pd.DataFrame(records)
-        st.session_state.landed_invoice_data = saved
-        st.session_state.landed_invoice_live = saved.copy()
-        _nakup_rerun()
-
-    if not records:
-        return pd.DataFrame(columns=list(_DEFAULT_INVOICE_DF.columns) + [_INVOICE_COL_CCY, _COL_KG, _NAKUP_ROW_ID])
-    return pd.DataFrame(records)
-
-
-@st.fragment
 def render_landed_cost_pricing() -> None:
     """Logistika a cenotvorba — faktura (více řádků), landed cost, prodejní ceny."""
     section_header("📦", "Nákup")
@@ -8177,7 +7986,6 @@ def render_landed_cost_pricing() -> None:
                 st.session_state.landed_invoice_live = st.session_state.landed_invoice_data.copy()
                 st.session_state._landed_zero_applied = bool(zero_duty)
                 st.session_state.pop("landed_invoice_editor", None)
-                _clear_nakup_row_widgets()
                 duty_note = "0 %" if zero_duty else "3,7 %"
                 st.success(
                     f"Úspěšně nahráno {len(new_rows)} položek. Clo na řádcích je {duty_note}."
@@ -8190,50 +7998,113 @@ def render_landed_cost_pricing() -> None:
 
     st.markdown('<div class="nakup-kicker">Položky</div>', unsafe_allow_html=True)
     st.markdown("#### Položky faktury")
-    if "landed_invoice_data" not in st.session_state:
+    st.caption(t("Na telefonu posuňte tabulku do strany. Nový řádek přidáš plusem dole v tabulce."))
+    if (
+        "landed_invoice_data" not in st.session_state
+        or "landed_invoice_editor" not in st.session_state
+    ):
+        source = st.session_state.get("landed_invoice_data")
         live_invoice = st.session_state.get("landed_invoice_live")
-        if isinstance(live_invoice, pd.DataFrame) and not live_invoice.empty:
-            st.session_state.landed_invoice_data = live_invoice.copy()
+        if not isinstance(source, pd.DataFrame) or source.empty:
+            source = live_invoice if isinstance(live_invoice, pd.DataFrame) and not live_invoice.empty else _DEFAULT_INVOICE_DF.copy()
+        prepared = source.copy().reset_index(drop=True)
+        if "_row_id" in prepared.columns:
+            prepared = prepared.drop(columns=["_row_id"])
+        for col in _DEFAULT_INVOICE_DF.columns:
+            if col not in prepared.columns:
+                prepared[col] = pd.NA
+        if _INVOICE_COL_CCY not in prepared.columns:
+            prepared[_INVOICE_COL_CCY] = entry_ccy
         else:
-            st.session_state.landed_invoice_data = _DEFAULT_INVOICE_DF.copy()
+            ccys_now = prepared[_INVOICE_COL_CCY].astype(str)
+            prepared.loc[~ccys_now.isin(list(_LANDED_CCYS)), _INVOICE_COL_CCY] = entry_ccy
+        if _COL_KG not in prepared.columns:
+            prepared[_COL_KG] = pd.NA
+        st.session_state.landed_invoice_data = prepared
 
     st.caption(
         "Import z Pohody nastaví u všech položek výchozí HS kategorii a **clo 3,7 %** (0 % u A.TR). "
         "Skutečnou sazbu cla upravíte výběrem kategorie. "
         f"Nový řádek dostane měnu {entry_ccy}. "
-        "Součet a landed cena se přepočítají hned po změně pole."
+        "Po úpravě buňky odejdi Enterem nebo kliknutím jinam, součet i doprava se přepočítají."
     )
-    invoice_totals = st.container()
-    edited_full = _render_nakup_rows(
+    edited_df = st.data_editor(
         st.session_state.landed_invoice_data,
-        entry_ccy,
-        bool(zero_duty),
-        float(eur_czk),
-        float(usd_czk),
+        key="landed_invoice_editor",
+        column_order=[
+            _INVOICE_COL_NAME,
+            _INVOICE_COL_QTY,
+            _INVOICE_COL_PRICE,
+            _INVOICE_COL_CCY,
+            _INVOICE_COL_HS,
+            _INVOICE_COL_DUTY,
+            _COL_KG,
+        ],
+        column_config={
+            _INVOICE_COL_NAME: st.column_config.TextColumn("Název položky", width="large"),
+            _INVOICE_COL_QTY: st.column_config.NumberColumn("Množství", min_value=0.0, format="%.2f"),
+            _INVOICE_COL_PRICE: st.column_config.NumberColumn(
+                "Cena za 1 j.",
+                min_value=0.0,
+                format="%.3f",
+                help="Částka v měně ze sloupce Měna.",
+            ),
+            _INVOICE_COL_CCY: st.column_config.SelectboxColumn(
+                "Měna",
+                options=list(_LANDED_CCYS),
+                default=entry_ccy,
+            ),
+            _INVOICE_COL_HS: st.column_config.SelectboxColumn(
+                "HS Kód / Nápověda",
+                width="large",
+                options=_HS_SELECTBOX_OPTIONS,
+                default=_DEFAULT_IMPORT_HS_LABEL,
+                help="Clo se dopočítá z kategorie.",
+            ),
+            _INVOICE_COL_DUTY: st.column_config.NumberColumn(
+                "Aplikované clo (%)",
+                min_value=0.0,
+                max_value=100.0,
+                format="%.1f %%",
+            ),
+            _COL_KG: st.column_config.NumberColumn(
+                "Kg kovu / km",
+                min_value=0.0,
+                format="%.2f",
+                help="Prázdné nebo 0 znamená, že hmotnost kovu není zadaná.",
+            ),
+        },
+        disabled=[_INVOICE_COL_DUTY],
+        num_rows="dynamic",
+        hide_index=True,
+        use_container_width=True,
     )
-    st.session_state.landed_invoice_data = edited_full
-    st.session_state.landed_invoice_live = edited_full.copy()
-    edited_df = edited_full.drop(columns=[_NAKUP_ROW_ID], errors="ignore")
     edited_df = edited_df.reset_index(drop=True)
+    if "_row_id" in edited_df.columns:
+        edited_df = edited_df.drop(columns=["_row_id"])
+    if _INVOICE_COL_CCY not in edited_df.columns:
+        edited_df[_INVOICE_COL_CCY] = entry_ccy
+    edited_ccy = edited_df[_INVOICE_COL_CCY].astype(str)
+    edited_df.loc[~edited_ccy.isin(list(_LANDED_CCYS)), _INVOICE_COL_CCY] = entry_ccy
+    st.session_state.landed_invoice_live = edited_df.copy()
 
     qty_now = pd.to_numeric(edited_df[_INVOICE_COL_QTY], errors="coerce").fillna(0)
     price_now = pd.to_numeric(edited_df[_INVOICE_COL_PRICE], errors="coerce").fillna(0)
     named = edited_df[_INVOICE_COL_NAME].astype(str).str.strip()
     filled = (named != "") & (named.str.lower() != "nan") & (qty_now > 0) & (price_now > 0)
     if filled.any():
-        with invoice_totals:
-            sum_col1, sum_col2 = st.columns(2)
-            sum_col1.metric("Celková metráž / ks", format_num(float(qty_now[filled].sum()), 2))
-            entered_sum_eur = 0.0
-            row_ccy = edited_df[_INVOICE_COL_CCY].astype(str) if _INVOICE_COL_CCY in edited_df.columns else None
-            for i in edited_df.index[filled]:
-                ccy = entry_ccy if row_ccy is None else str(row_ccy.at[i])
-                if ccy not in _LANDED_CCYS:
-                    ccy = entry_ccy
-                per = _nakup_eur_per_unit(ccy, float(eur_czk), usd_czk) or 0.0
-                entered_sum_eur += float(qty_now.at[i]) * float(price_now.at[i]) * per
-            sum_col2.metric("Hodnota v eurech", f"{format_num(entered_sum_eur, 2)} €")
-            st.markdown("---")
+        sum_col1, sum_col2 = st.columns(2)
+        sum_col1.metric("Celková metráž / ks", format_num(float(qty_now[filled].sum()), 2))
+        entered_sum_eur = 0.0
+        row_ccy = edited_df[_INVOICE_COL_CCY].astype(str) if _INVOICE_COL_CCY in edited_df.columns else None
+        for i in edited_df.index[filled]:
+            ccy = entry_ccy if row_ccy is None else str(row_ccy.at[i])
+            if ccy not in _LANDED_CCYS:
+                ccy = entry_ccy
+            per = _nakup_eur_per_unit(ccy, float(eur_czk), usd_czk) or 0.0
+            entered_sum_eur += float(qty_now.at[i]) * float(price_now.at[i]) * per
+        sum_col2.metric("Hodnota v eurech", f"{format_num(entered_sum_eur, 2)} €")
+        st.markdown("---")
 
     invoice = _sanitize_invoice_input(
         _apply_duty_from_hs_column(edited_df, force_zero=zero_duty)
