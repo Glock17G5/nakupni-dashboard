@@ -4508,12 +4508,23 @@ def _render_metal_correlation(cfg: dict, robot: pd.DataFrame, period_lbl: str) -
         )
         return
 
+    close = pd.to_numeric(merged["Close"], errors="coerce")
+    proxy = pd.to_numeric(merged["Proxy_USD"], errors="coerce")
+    merged["Spread_pct"] = (proxy - close) / close.where(close != 0) * 100.0
+    merged = merged.dropna(subset=["Spread_pct"]).reset_index(drop=True)
+    if merged.empty:
+        st.warning(f"Rozdíl v procentech pro {cfg['metal_label']} nejde spočítat.")
+        return
+
+    is_china = str(proxy_label).startswith("CCMN")
+    spread_name = "Rozdíl Čína − LME (%)" if is_china else "Rozdíl proxy − LME (%)"
+    who = "Čína" if is_china else "Proxy"
     fig = interactive_line_chart(
         merged,
         f"{cfg['lme_name']} — vs {proxy_label} · {period_lbl}",
         color=cfg["color"],
         y_label="USD/t",
-        height=320,
+        height=340,
         y_column="Close",
         extra_traces=[{
             "y": merged["Proxy_USD"],
@@ -4526,7 +4537,48 @@ def _render_metal_correlation(cfg: dict, robot: pd.DataFrame, period_lbl: str) -
         y_tickformat=",.0f",
     )
     if fig is not None:
+        spread = pd.to_numeric(merged["Spread_pct"], errors="coerce")
+        s_min = float(spread.min())
+        s_max = float(spread.max())
+        pad = max((s_max - s_min) * 0.15, 0.4)
+        fig.add_trace(go.Scatter(
+            x=merged["Date"],
+            y=spread,
+            mode="lines",
+            name=spread_name,
+            yaxis="y2",
+            line=dict(color="#2DD4BF", width=1.8),
+            hovertemplate="<b>%{x|%d.%m.%Y}</b><br>Rozdíl: %{y:+.2f} %<extra></extra>",
+        ))
+        fig.add_hline(
+            y=0,
+            yref="y2",
+            line_width=1,
+            line_dash="dot",
+            line_color="rgba(45,212,191,0.45)",
+            annotation_text="",
+        )
+        fig.update_layout(
+            margin=dict(l=10, r=52, t=48, b=12),
+            yaxis2=dict(
+                title=dict(text="Rozdíl %", font=dict(size=10, color="#2DD4BF")),
+                overlaying="y",
+                side="right",
+                showgrid=False,
+                zeroline=False,
+                tickfont=dict(family="IBM Plex Mono, monospace", size=10, color="#2DD4BF"),
+                tickformat="+.1f",
+                range=[min(s_min, 0.0) - pad, max(s_max, 0.0) + pad],
+                autorange=False,
+            ),
+        )
         _show_plotly(fig)
+        st.caption(
+            f"{who} proti LME: teď {_signed_pct(float(spread.iloc[-1]))} · "
+            f"průměr {_signed_pct(float(spread.mean()))} · "
+            f"od {_signed_pct(s_min)} do {_signed_pct(s_max)}. "
+            "Záporné znamená, že je levnější než LME. Pravá osa je v procentech."
+        )
 
 
 def _render_historical_correlation() -> None:
@@ -4535,7 +4587,7 @@ def _render_historical_correlation() -> None:
     st.markdown(
         "<div style='font-family:Inter, system-ui, sans-serif;font-size:0.75rem;font-weight:700;"
         "color:#8D99AB;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>"
-        f"Historická korelace — LME vs Čína ({period_lbl}, USD/t)</div>",
+        f"Historická korelace — LME vs Čína ({period_lbl}, USD/t a rozdíl v %)</div>",
         unsafe_allow_html=True,
     )
 
@@ -5488,6 +5540,36 @@ def _metal_buy_verdict(metal_key: str) -> dict | None:
     return {"verdict": verdict, "tone": tone, "parts": parts, "score": score}
 
 
+def _verdict_data_trust() -> tuple[str, bool]:
+    """Jak jsou data k verdiktu čerstvá. Druhá hodnota = ukázat varování."""
+    bits: list[str] = []
+    warn = False
+    wm = fetch_westmetall() or {}
+    asof = (wm.get("copper") or {}).get("asof_cs") or (wm.get("aluminum") or {}).get("asof_cs")
+    if asof:
+        bits.append(f"LME k {asof}")
+    else:
+        bits.append("LME bez data")
+        warn = True
+    cnb = fetch_cnb_rates() or {}
+    cnb_date = cnb.get("_date")
+    if cnb_date:
+        bits.append(f"ČNB {cnb_date}")
+    else:
+        bits.append("ČNB chybí")
+        warn = True
+    stale = _robot_stale_bdays()
+    if stale is None:
+        bits.append("data robota chybí")
+        warn = True
+    elif stale > _ROBOT_STALE_BDAYS:
+        bits.append(f"robot je {stale} obchodních dní starý")
+        warn = True
+    else:
+        bits.append(f"robot čerstvý ({stale} obch. dní)")
+    return " · ".join(bits), warn
+
+
 def _render_buy_verdicts() -> None:
     """Krátký nákupní verdikt pro měď a hliník nad grafy a výhledy."""
     rows = []
@@ -5497,11 +5579,18 @@ def _render_buy_verdicts() -> None:
             rows.append((label, verdict))
     if not rows:
         return
+    trust, trust_warn = _verdict_data_trust()
     st.markdown("#### Nákupní verdikt — kup teď / počkej")
     st.caption(
         "Spojuje RSI, měsíční výhled a pozici ceny v pásmu posledních 90 dnů. "
-        "Orientační shrnutí, ne doporučení k obchodu."
+        "Orientační shrnutí, ne doporučení k obchodu. "
+        + trust + "."
     )
+    if trust_warn:
+        st.warning(
+            "Verdikt mědi a hliníku jede z LME. "
+            "Čína a část dalších řad je z robota a ta teď není čerstvá."
+        )
     cols = st.columns(len(rows))
     for col, (label, verdict) in zip(cols, rows):
         msg = f"**{label} → {verdict['verdict']}**\n\n{' · '.join(verdict['parts'])}"
@@ -5779,6 +5868,152 @@ def render_fx() -> None:
 #  SEKCE 3: ROPA A PLASTY
 # ──────────────────────────────────────────────────────────────────────────────
 
+_CABLE_RECIPES: dict[str, dict[str, float]] = {
+    "Měděný silový": {"copper": 62.0, "aluminum": 0.0, "pvc": 18.0, "xlpe": 15.0, "lldpe": 5.0},
+    "Hliníkový silový": {"copper": 0.0, "aluminum": 55.0, "pvc": 25.0, "xlpe": 15.0, "lldpe": 5.0},
+    "Solární Cu + XLPE": {"copper": 70.0, "aluminum": 0.0, "pvc": 0.0, "xlpe": 30.0, "lldpe": 0.0},
+}
+_CABLE_PARTS: tuple[tuple[str, str], ...] = (
+    ("copper", "Měď"),
+    ("aluminum", "Hliník"),
+    ("pvc", "PVC"),
+    ("xlpe", "XLPE"),
+    ("lldpe", "LLDPE"),
+)
+
+
+def _cable_index(weights: dict[str, float], moves: dict[str, float | None]) -> dict | None:
+    """Vážený pohyb receptury. Srovná ho s pohybem jen kovu ve stejné receptuře."""
+    total = sum(float(weights.get(key) or 0.0) for key, _label in _CABLE_PARTS)
+    if total <= 0:
+        return None
+    used = 0.0
+    index_acc = 0.0
+    metal_w = 0.0
+    metal_acc = 0.0
+    rows: list[dict] = []
+    for key, label in _CABLE_PARTS:
+        weight = float(weights.get(key) or 0.0)
+        move = moves.get(key)
+        share = weight / total * 100.0
+        if weight > 0 and move is not None:
+            used += weight
+            index_acc += weight * float(move)
+            if key in ("copper", "aluminum"):
+                metal_w += weight
+                metal_acc += weight * float(move)
+        rows.append({"label": label, "weight": weight, "share": share, "move": move})
+    if used <= 0:
+        return None
+    index = index_acc / used
+    metal = metal_acc / metal_w if metal_w > 0 else None
+    gap = None if metal is None else index - metal
+    return {
+        "index": index,
+        "metal": metal,
+        "gap": gap,
+        "used_pct": used / total * 100.0,
+        "rows": rows,
+    }
+
+
+def _render_cable_price_index(brent_now: float | None) -> None:
+    """Jestli se cena kabelu hýbe jinak než samotný kov v receptuře."""
+    st.markdown("#### Index ceny kabelu")
+    st.caption(
+        "Váhy jsou podíl suroviny v ceně kabelu. Za 30 dní srovná pohyb receptury "
+        "s pohybem jen mědi a hliníku v ní. Plasty jsou model z Brentu, ne burza."
+    )
+    preset_names = list(_CABLE_RECIPES)
+    preset = st.selectbox("Receptura", preset_names, key="cable_recipe")
+    if preset not in _CABLE_RECIPES:
+        preset = preset_names[0]
+    if st.session_state.get("_cable_recipe_applied") != preset:
+        for key, value in _CABLE_RECIPES[preset].items():
+            st.session_state[f"cable_w_{key}"] = float(value)
+        st.session_state["_cable_recipe_applied"] = preset
+        st.rerun()
+    weight_cols = st.columns(len(_CABLE_PARTS))
+    weights: dict[str, float] = {}
+    for col, (key, label) in zip(weight_cols, _CABLE_PARTS):
+        weights[key] = float(col.number_input(
+            f"{label} %",
+            min_value=0.0,
+            max_value=100.0,
+            step=1.0,
+            key=f"cable_w_{key}",
+        ))
+    brent_new = _brent_close_n_days_ago(_PLASTIC_LAG_DAYS) or brent_now
+    brent_old = _brent_close_n_days_ago(_PLASTIC_LAG_DAYS + 30)
+    plastic_note = "Plasty berou Brent se zpožděním 6 týdnů, a ten stejný posun o 30 dní zpátky."
+    if brent_old is None:
+        brent_new = brent_now
+        brent_old = _brent_close_n_days_ago(30)
+        plastic_note = "Historie se zpožděním chybí, plasty jedou z dnešního Brentu proti Brentu před 30 dny."
+    moves: dict[str, float | None] = {
+        "copper": _wm_trend_pct("copper", 30),
+        "aluminum": _wm_trend_pct("aluminum", 30),
+    }
+    now_p = calc_plastic_prices(brent_new)
+    old_p = calc_plastic_prices(brent_old)
+    for key in ("pvc", "xlpe", "lldpe"):
+        if not now_p or not old_p or key not in now_p or key not in old_p:
+            moves[key] = None
+            continue
+        old_price = float(old_p[key]["price"])
+        if old_price <= 0:
+            moves[key] = None
+            continue
+        moves[key] = (float(now_p[key]["price"]) / old_price - 1.0) * 100.0
+    built = _cable_index(weights, moves)
+    if built is None:
+        st.info("Dej aspoň jedné složce váhu a počkej na data, ať je co srovnat.")
+        return
+    c_idx, c_metal, c_gap = st.columns(3)
+    c_idx.metric("Kabel za 30 dní", _signed_pct(built["index"]))
+    c_metal.metric(
+        "Jen kov v receptuře",
+        _signed_pct(built["metal"]) if built["metal"] is not None else "—",
+    )
+    c_gap.metric(
+        "Rozdíl proti kovu",
+        _signed_pct(built["gap"]) if built["gap"] is not None else "—",
+    )
+    metal_weight = float(weights.get("copper") or 0) + float(weights.get("aluminum") or 0)
+    if built["metal"] is None and metal_weight > 0:
+        st.info("Pohyb mědi nebo hliníku teď chybí. Index je jen ze složek, které mají data.")
+    elif built["metal"] is None:
+        st.info("V receptuře není měď ani hliník. Index je jen z plastů, s kovem ho nesrovnávám.")
+    elif abs(float(built["gap"])) < 0.15:
+        st.success("Kabel se za 30 dní hýbe skoro stejně jako kov v receptuře.")
+    elif float(built["gap"]) > 0:
+        st.warning("Kabel jde nahoru víc než samotný kov. Táhnou ho ostatní složky, ne jen burza.")
+    else:
+        st.info("Kabel je níž než samotný kov. Ostatní složky ho brzdí.")
+    if built["used_pct"] < 99.5:
+        st.caption(f"Do indexu šlo {format_num(built['used_pct'], 0)} % vah. Zbytek nemá pohyb za 30 dní.")
+    table_rows = []
+    for row in built["rows"]:
+        if row["weight"] <= 0:
+            continue
+        move = row["move"]
+        contribution = None if move is None else row["share"] / 100.0 * float(move)
+        table_rows.append([
+            row["label"],
+            _nakup_num(row["weight"], 0) + " %",
+            _signed_pct(move),
+            _signed_pct(contribution),
+        ])
+    if table_rows:
+        st.markdown(_nakup_fit_html([
+            ("Složka", "25%", ""),
+            ("Váha", "25%", "num"),
+            ("Pohyb 30 dní", "25%", "num"),
+            ("Příspěvek", "25%", "num"),
+        ], table_rows), unsafe_allow_html=True)
+    st.caption(plastic_note)
+
+
 def render_oil_plastics() -> None:
     """Sekce 3 – ropa Brent/WTI, proxy model cen plastů, SMA 20/50, predikce."""
 
@@ -5910,6 +6145,8 @@ def render_oil_plastics() -> None:
         unsafe_allow_html=True,
     )
 
+    st.markdown("<br>", unsafe_allow_html=True)
+    _render_cable_price_index(brent_price)
     st.markdown("<br>", unsafe_allow_html=True)
 
     period_lbl = get_chart_period_label()
@@ -7332,6 +7569,153 @@ def _landed_column_config(frame: pd.DataFrame) -> dict:
     return cfg
 
 
+def _nakup_margin_from_sale(landed_czk: float, sale_czk: float) -> tuple[float, float] | None:
+    """Z landed a cílové prodejní ceny vrátí přirážku a marži v procentech."""
+    if landed_czk <= 0 or sale_czk <= 0:
+        return None
+    markup = (sale_czk / landed_czk - 1.0) * 100.0
+    margin = (1.0 - landed_czk / sale_czk) * 100.0
+    return markup, margin
+
+
+def _nakup_landed_czk(
+    invoice: pd.DataFrame,
+    entry_ccy: str,
+    freight_amt: float,
+    freight_ccy: str,
+    inland_amt: float,
+    inland_ccy: str,
+    customs_czk: float,
+    eur_czk: float,
+    usd_czk: float,
+    zero_duty: bool,
+    count_customs: float,
+    count_inland: float,
+) -> float | None:
+    """Celkový landed v Kč při zadaných kurzech. Ceny na faktuře zůstávají ve své měně."""
+    if eur_czk <= 0:
+        return None
+    prices: list[float] = []
+    for _, row in invoice.iterrows():
+        ccy = str(row.get(_INVOICE_COL_CCY, entry_ccy))
+        if ccy not in _LANDED_CCYS:
+            ccy = entry_ccy
+        per = _nakup_eur_per_unit(ccy, float(eur_czk), float(usd_czk))
+        if per is None:
+            return None
+        prices.append(float(row[_INVOICE_COL_PRICE]) * per)
+    work = invoice.copy()
+    work[_INVOICE_COL_PRICE] = pd.Series(prices, index=work.index)
+    freight_unit = freight_ccy if freight_ccy in _LANDED_CCYS else entry_ccy
+    inland_unit = inland_ccy if inland_ccy in _LANDED_CCYS else entry_ccy
+    freight_per = _nakup_eur_per_unit(freight_unit, float(eur_czk), float(usd_czk))
+    inland_per = _nakup_eur_per_unit(inland_unit, float(eur_czk), float(usd_czk))
+    if freight_per is None or inland_per is None:
+        return None
+    calc = compute_invoice_landed(
+        work,
+        float(freight_amt) * freight_per * float(count_customs),
+        float(inland_amt) * inland_per * float(count_inland),
+        float(customs_czk),
+        float(eur_czk),
+        zero_duty,
+    )
+    if calc is None:
+        return None
+    return float(calc[_COL_LANDED].sum()) * float(eur_czk)
+
+
+_NAKUP_MEM_KEY = "pbcable_nakup_memory_v1"
+_NAKUP_MEM_STATE = "nakup_memory_rows"
+_NAKUP_MEM_HYDRATED = "nakup_memory_hydrated"
+
+
+def _nakup_memory_parse(raw) -> list[dict] | None:
+    """None = prohlížeč ještě nic neposlal. Prázdný seznam je platný."""
+    if raw is None:
+        return None
+    data = raw
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return None
+        try:
+            data = json.loads(text)
+        except Exception:
+            return []
+    if not isinstance(data, list):
+        return []
+    out: list[dict] = []
+    for item in data:
+        if isinstance(item, dict) and isinstance(item.get("rows"), list):
+            out.append(item)
+    return out[:8]
+
+
+def _nakup_memory_rows() -> list[dict]:
+    """Poslední nákupy z prohlížeče. Nejdřív počká, až se úložiště načte."""
+    if st.session_state.get(_NAKUP_MEM_HYDRATED):
+        cached = st.session_state.get(_NAKUP_MEM_STATE) or []
+        return list(cached) if isinstance(cached, list) else []
+    ls = _gps_local_storage()
+    if ls is None:
+        st.session_state[_NAKUP_MEM_HYDRATED] = True
+        st.session_state.setdefault(_NAKUP_MEM_STATE, [])
+        cached = st.session_state.get(_NAKUP_MEM_STATE) or []
+        return list(cached) if isinstance(cached, list) else []
+    try:
+        raw = ls.getItem(_NAKUP_MEM_KEY)
+    except Exception:
+        raw = None
+    parsed = _nakup_memory_parse(raw)
+    if parsed is None:
+        cached = st.session_state.get(_NAKUP_MEM_STATE) or []
+        return list(cached) if isinstance(cached, list) else []
+    st.session_state[_NAKUP_MEM_STATE] = parsed
+    st.session_state[_NAKUP_MEM_HYDRATED] = True
+    return list(parsed)
+
+
+def _nakup_memory_save(items: list[dict]) -> None:
+    """Uloží nejvýš 8 nákupů do relace a do prohlížeče. Na disk ani na GitHub ne."""
+    kept = list(items[:8])
+    st.session_state[_NAKUP_MEM_STATE] = kept
+    st.session_state[_NAKUP_MEM_HYDRATED] = True
+    ls = _gps_local_storage()
+    if ls is None:
+        return
+    try:
+        ls.setItem(_NAKUP_MEM_KEY, json.dumps(kept, ensure_ascii=False))
+    except Exception:
+        pass
+
+
+def _nakup_memory_match(
+    name: str,
+    items: list[dict],
+    *,
+    skip_close_to: float | None = None,
+) -> tuple[dict | None, dict | None]:
+    """Nejnovější uložený řádek se stejným názvem. Stejnou cenu přeskočí."""
+    key = str(name or "").strip().casefold()
+    if not key:
+        return None, None
+    for item in items:
+        for row in item.get("rows") or []:
+            if str(row.get("name") or "").strip().casefold() != key:
+                continue
+            prev = row.get("landed_czk")
+            if skip_close_to and prev not in (None, ""):
+                try:
+                    prev_f = float(prev)
+                except (TypeError, ValueError):
+                    prev_f = 0.0
+                if prev_f and abs(prev_f - float(skip_close_to)) / float(skip_close_to) < 0.002:
+                    continue
+            return item, row
+    return None, None
+
+
 @st.fragment
 def render_landed_cost_pricing() -> None:
     """Logistika a cenotvorba — faktura (více řádků), landed cost, prodejní ceny."""
@@ -8119,6 +8503,41 @@ def render_landed_cost_pricing() -> None:
     if price_mode == "Marže" and margin_pct >= 100.0:
         st.warning("Marže 100 % a více — prodej při marži není definovaný.")
 
+    with st.expander("Marže z cílové prodejní ceny", expanded=False):
+        st.caption(
+            "Zadej cenu, za kterou chceš prodávat. Ukáže, jaká je z ní přirážka a marže "
+            "proti landed ceně té položky."
+        )
+        target_options = list(range(len(results_sales)))
+        target_i = st.selectbox(
+            "Položka",
+            target_options,
+            format_func=lambda i: str(results_sales.iloc[i][_INVOICE_COL_NAME]),
+            key="landed_target_row",
+        )
+        if not isinstance(target_i, int) or target_i not in target_options:
+            target_i = 0
+        landed_unit = float(results_sales.iloc[target_i][_COL_UNIT_CZK])
+        target_sale = st.number_input(
+            "Cílová prodejní cena (Kč / j.)",
+            min_value=0.0,
+            step=0.1,
+            format="%.2f",
+            key="landed_target_sale",
+        )
+        priced = _nakup_margin_from_sale(landed_unit, float(target_sale))
+        if priced is None:
+            st.caption(f"Landed je {_nakup_num(landed_unit, 2)} Kč/j. Zadej cílovou cenu nad nulu.")
+        else:
+            markup_pct, margin_back = priced
+            back_a, back_b, back_c = st.columns(3)
+            back_a.metric("Landed Kč/j.", f"{_nakup_num(landed_unit, 2)} Kč")
+            back_b.metric("Přirážka", f"{_nakup_num(markup_pct, 1)} %")
+            back_c.metric("Marže", f"{_nakup_num(margin_back, 1)} %")
+            st.caption("Přirážka je (prodej − landed) / landed. Marže je (prodej − landed) / prodej.")
+            if float(target_sale) <= landed_unit:
+                st.warning("Cílová cena je na landed nebo pod ním. Prodával bys bez marže, nebo se ztrátou.")
+
     with st.expander("Rozpis dopravy, cla a druhého prodeje", expanded=False):
         st.markdown(_nakup_fit_html([
             ("Kabel", "40%", ""),
@@ -8191,6 +8610,59 @@ def render_landed_cost_pricing() -> None:
         delta_color="off",
     )
 
+    with st.expander("Co udělá pohyb kurzu", expanded=False):
+        st.caption(
+            "Ceny v nabídce zůstanou. Pohybuje se jen kurz a s ním landed v korunách. "
+            "Položka v korunách se nemění. Euro jede s EUR/CZK, dolar s USD/CZK."
+        )
+        deal_ccys = {str(freight_ccy), str(inland_ccy)}
+        if _INVOICE_COL_CCY in invoice.columns:
+            deal_ccys.update(str(value) for value in invoice[_INVOICE_COL_CCY].tolist())
+        base_czk = _nakup_landed_czk(
+            invoice, entry_ccy, freight_customs_eur, str(freight_ccy),
+            inland_eur, str(inland_ccy), customs_czk, float(eur_czk), float(usd_czk),
+            zero_duty, count_customs, count_inland,
+        )
+
+        def _fx_rows(label: str, shocked_eur: float, shocked_usd: float) -> list[str] | None:
+            if base_czk is None:
+                return None
+            moved = _nakup_landed_czk(
+                invoice, entry_ccy, freight_customs_eur, str(freight_ccy),
+                inland_eur, str(inland_ccy), customs_czk, shocked_eur, shocked_usd,
+                zero_duty, count_customs, count_inland,
+            )
+            if moved is None:
+                return None
+            diff = moved - base_czk
+            sign = "+" if diff > 0 else ""
+            return [label, _nakup_num(moved, 0) + " Kč", f"{sign}{_nakup_num(diff, 0)} Kč"]
+
+        fx_rows: list[list[str]] = []
+        for pct in (-3, -1, 1, 3):
+            row = _fx_rows(f"EUR/CZK {pct:+d} %", float(eur_czk) * (1.0 + pct / 100.0), float(usd_czk))
+            if row:
+                fx_rows.append(row)
+        if "USD" in deal_ccys and usd_czk:
+            for pct in (-3, -1, 1, 3):
+                row = _fx_rows(
+                    f"USD/CZK {pct:+d} %",
+                    float(eur_czk),
+                    float(usd_czk) * (1.0 + pct / 100.0),
+                )
+                if row:
+                    fx_rows.append(row)
+        elif "USD" not in deal_ccys:
+            st.caption("Dolar v téhle nabídce není, USD/CZK s ní nepohne.")
+        if fx_rows:
+            st.markdown(_nakup_fit_html([
+                ("Pohyb kurzu", "40%", ""),
+                ("Landed Kč", "30%", "num"),
+                ("Rozdíl", "30%", "num"),
+            ], fx_rows), unsafe_allow_html=True)
+        else:
+            st.info("Pohyb kurzu teď nejde dopočítat.")
+
     st.download_button(
         "⬇️ Stáhnout Excel",
         data=excel_bytes,
@@ -8233,6 +8705,104 @@ def render_landed_cost_pricing() -> None:
             st.info(f"Zatím nic neodškrtnuto (0/{total}).")
         else:
             st.warning(f"Odškrtnuto {done}/{total}. Zbývá dořešit zbytek.")
+
+    with st.expander("Paměť posledních nákupů", expanded=False):
+        st.caption(
+            "Uloží se do prohlížeče na tomhle počítači, nejvýš 8 výpočtů. "
+            "Na jiném zařízení to neuvidíš. Na disk ani na GitHub to nejde."
+        )
+        memory_note = st.text_input(
+            "Poznámka (dodavatel)",
+            key="nakup_memory_note",
+            placeholder="třeba Helukabel, nabídka 24.11.",
+        )
+        if st.button("Uložit tento nákup", key="nakup_memory_save"):
+            snap_rows = []
+            for pos, (_, row) in enumerate(results_sales.iterrows()):
+                ccy = entry_ccy
+                if _INVOICE_COL_CCY in invoice.columns and pos < len(invoice):
+                    raw_ccy = str(invoice.iloc[pos].get(_INVOICE_COL_CCY, entry_ccy))
+                    if raw_ccy in _LANDED_CCYS:
+                        ccy = raw_ccy
+                price = float(invoice.iloc[pos][_INVOICE_COL_PRICE]) if pos < len(invoice) else 0.0
+                kg_value = None
+                if _COL_KG in invoice.columns and pos < len(invoice):
+                    kg_raw = pd.to_numeric(pd.Series([invoice.iloc[pos].get(_COL_KG)]), errors="coerce").iloc[0]
+                    if pd.notna(kg_raw) and float(kg_raw) > 0:
+                        kg_value = round(float(kg_raw), 2)
+                snap_rows.append({
+                    "name": str(row[_INVOICE_COL_NAME]),
+                    "qty": float(row[_INVOICE_COL_QTY]),
+                    "ccy": ccy,
+                    "price": round(price, 4),
+                    "landed_czk": round(float(row[_COL_UNIT_CZK]), 2),
+                    "kg": kg_value,
+                })
+            snap = {
+                "at": now_prague().strftime("%d.%m.%Y %H:%M"),
+                "note": str(memory_note or "").strip()[:80],
+                "landed_czk": round(float(results_sales[_COL_LANDED].sum()) * float(eur_czk), 2),
+                "rows": snap_rows,
+            }
+            _nakup_memory_save([snap] + _nakup_memory_rows())
+            st.success("Uloženo do prohlížeče.")
+        memory = _nakup_memory_rows()
+        if not memory:
+            st.caption("Zatím nic uloženého.")
+        else:
+            memory_rows = []
+            for item in memory:
+                names = ", ".join(
+                    str(row.get("name") or "")
+                    for row in (item.get("rows") or [])
+                    if str(row.get("name") or "").strip()
+                )
+                memory_rows.append([
+                    str(item.get("at") or "—"),
+                    str(item.get("note") or "—"),
+                    _nakup_num(item.get("landed_czk"), 0) + " Kč",
+                    names or "—",
+                ])
+            st.markdown(_nakup_fit_html([
+                ("Kdy", "18%", ""),
+                ("Poznámka", "22%", ""),
+                ("Landed", "18%", "num"),
+                ("Položky", "42%", ""),
+            ], memory_rows), unsafe_allow_html=True)
+            compare_rows = []
+            for _, row in results_sales.iterrows():
+                found, prev = _nakup_memory_match(
+                    str(row[_INVOICE_COL_NAME]),
+                    memory,
+                    skip_close_to=float(row[_COL_UNIT_CZK]),
+                )
+                if not found or not prev or prev.get("landed_czk") in (None, 0):
+                    continue
+                now_unit = float(row[_COL_UNIT_CZK])
+                then_unit = float(prev["landed_czk"])
+                gap = (now_unit / then_unit - 1.0) * 100.0 if then_unit else None
+                compare_rows.append([
+                    str(row[_INVOICE_COL_NAME]),
+                    _nakup_num(now_unit, 2) + " Kč",
+                    _nakup_num(then_unit, 2) + " Kč",
+                    _signed_pct(gap),
+                    str(found.get("at") or "—"),
+                ])
+            if compare_rows:
+                st.markdown("**Stejný kabel minule**")
+                st.markdown(_nakup_fit_html([
+                    ("Kabel", "28%", ""),
+                    ("Teď Kč/j.", "18%", "num"),
+                    ("Minule Kč/j.", "18%", "num"),
+                    ("Rozdíl", "16%", "num"),
+                    ("Uloženo", "20%", ""),
+                ], compare_rows), unsafe_allow_html=True)
+            else:
+                st.caption("U uložených nákupů není kabel se stejným názvem.")
+            if st.checkbox("Chci smazat uložené nákupy", key="nakup_memory_arm"):
+                if st.button("Smazat uložené", key="nakup_memory_clear"):
+                    _nakup_memory_save([])
+                    st.info("Uložené nákupy jsou pryč.")
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
