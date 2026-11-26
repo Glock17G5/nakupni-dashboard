@@ -3205,6 +3205,22 @@ def _brent_close_n_days_ago(days: int) -> float | None:
         return None
 
 
+def _brent_lagged_delta(days: int) -> float | None:
+    """Denní změna Brentu v období před N kalendářními dny (sedí se zpožděnou cenou plastů)."""
+    try:
+        df = _yf_history("BZ=F")
+        if df is None or df.empty:
+            return None
+        out = df.dropna(subset=["Close", "Date"]).sort_values("Date")
+        cutoff = pd.to_datetime(out["Date"].max()) - pd.Timedelta(days=days)
+        past = out[pd.to_datetime(out["Date"]) <= cutoff]
+        if len(past) < 2:
+            return None
+        return float(past["Close"].iloc[-1]) - float(past["Close"].iloc[-2])
+    except Exception:
+        return None
+
+
 def calc_plastic_prices(brent_usd: float | None) -> dict | None:
     """
     Lineární proxy cen kabelových plastů z Brent [USD/t].
@@ -4412,15 +4428,18 @@ def render_global_controls() -> tuple[str, str]:
             st.session_state.chart_period_label = p_choice
             st.session_state.chart_period_yf = CHART_PERIODS[p_choice]
     with c_info:
+        eurusd_src = "ČNB" if cnb_cross("EUR", "USD") else "Yahoo"
         rate_txt = (
-            f"EUR/USD (Yahoo): <strong style='color:#0D6EFD;'>{eurusd:.4f}</strong>"
+            f"EUR/USD ({eurusd_src}): <strong style='color:#0D6EFD;'>{eurusd:.4f}</strong>"
             if eurusd
             else f"EUR/USD: <strong style='color:#ef4444;'>{t('nedostupný')}</strong>"
         )
+        hint_sources = t(
+            "LME Cash, zásoby &amp; historie měď/hliník: <strong>Westmetall</strong> · "
+            "Kurzy CZK: <strong>ČNB</strong> · ostatní grafy: <strong>Yahoo</strong>"
+        )
         st.markdown(
-            f'<div class="currency-bar-hint">{rate_txt}<br>'
-            f'{t("LME Cash, zásoby &amp; historie měď/hliník: <strong>Westmetall</strong> · "
-            "Kurzy CZK: <strong>ČNB</strong> · ostatní grafy: <strong>Yahoo</strong>")}</div>',
+            f'<div class="currency-bar-hint">{rate_txt}<br>{hint_sources}</div>',
             unsafe_allow_html=True,
         )
     st.markdown("</div>", unsafe_allow_html=True)
@@ -4621,8 +4640,9 @@ _FORECAST_BAND_Z = 1.28      # ±1.28σ ≈ 80% interval spolehlivosti
 _FORECAST_HOLT_WINDOW = 120  # dní pro fit Holtova vyhlazování
 _FORECAST_MR_HALF_LIFE = 20.0  # poločas návratu k SMA50 (dny)
 _FORECAST_DIR_THRESHOLD = 0.5  # ± % — pod tím bereme výhled jako stagnaci
-_FORECAST_BACKTEST_ORIGINS = 30  # kolik minulých „startů“ se backtestuje
-_FORECAST_BACKTEST_MIN = 8       # minimum úspěšných originů pro zobrazení MAPE
+_FORECAST_BACKTEST_ORIGINS = 24  # počet týdenních startů (krok 5 obch. dní ≈ půl roku)
+_FORECAST_BACKTEST_STEP = 5      # rozestup mezi starty, ať se okna nepřekrývají ze 95 %
+_FORECAST_BACKTEST_MIN = 6       # minimum úspěšných originů pro zobrazení MAPE
 
 # (název modelu, barva, styl čáry) — pořadí odpovídá _forecast_models()
 _FORECAST_MODEL_STYLES = [
@@ -4729,10 +4749,11 @@ def _forecast_backtest(
     price_col: str = "Close",
     horizon: int = _FORECAST_HORIZON,
     n_origins: int = _FORECAST_BACKTEST_ORIGINS,
+    step: int = _FORECAST_BACKTEST_STEP,
 ) -> dict | None:
     """
-    Walk-forward backtest: pro posledních n_origins obchodních dní spustí model
-    „jakoby ten den“ a srovná predikci za horizon dní s reálnou cenou.
+    Walk-forward backtest po týdnech (krok 5 obch. dní): pro až n_origins startů
+    napříč posledním půlrokem srovná predikci za horizon dní s reálnou cenou.
     Vrací MAPE (%) pro ensemble i jednotlivé modely + počet úspěšných originů.
     """
     if hist is None or hist.empty or price_col not in hist.columns:
@@ -4740,22 +4761,23 @@ def _forecast_backtest(
     df = hist[["Date", price_col]].dropna().copy()
     df["Date"] = pd.to_datetime(df["Date"])
     df = df.sort_values("Date").reset_index(drop=True)
-    # potřebujeme fit okno + horizon dopředu + aspoň n_origins originů
-    min_len = _FORECAST_FIT_WINDOW + horizon + n_origins
-    if len(df) < min_len:
+    last_origin = len(df) - 1 - horizon
+    if last_origin < _FORECAST_FIT_WINDOW:
         return None
 
-    # poslední index, pro který ještě existuje skutečná cena za horizon dní
-    last_origin = len(df) - 1 - horizon
-    first_origin = max(_FORECAST_FIT_WINDOW, last_origin - n_origins + 1)
-    if first_origin > last_origin:
+    step = max(1, int(step))
+    origins = list(range(last_origin, _FORECAST_FIT_WINDOW - 1, -step))[:n_origins]
+    if len(origins) < _FORECAST_BACKTEST_MIN and step > 1:
+        origins = list(range(last_origin, _FORECAST_FIT_WINDOW - 1, -1))[:n_origins]
+    origins.reverse()
+    if len(origins) < _FORECAST_BACKTEST_MIN:
         return None
 
     abs_pct: dict[str, list[float]] = {"ensemble": []}
     for name, _, _ in _FORECAST_MODEL_STYLES:
         abs_pct[name] = []
 
-    for i in range(first_origin, last_origin + 1):
+    for i in origins:
         past = df.iloc[: i + 1]
         actual = float(df[price_col].iloc[i + horizon])
         if actual == 0:
@@ -5419,8 +5441,9 @@ def _render_metal_date_compare(*, embedded: bool = True) -> None:
 
     Na vlastní záložce je otevřené. embedded ho schová do sbalovacího okna.
     """
-    default_from = datetime(2026, 8, 18).date()
-    default_to = datetime(2026, 9, 24).date()
+    today_d = now_prague().date()
+    default_from = today_d - timedelta(days=30)
+    default_to = today_d
     shown_from = st.session_state.get("metal_cmp_from", default_from)
     shown_to = st.session_state.get("metal_cmp_to", default_to)
     box = (
@@ -5473,18 +5496,24 @@ def _render_metal_date_compare(*, embedded: bool = True) -> None:
 
 
 def _metal_price_position(metal_key: str, days: int = 90) -> float | None:
-    """Kde je poslední cena v pásmu min–max za N dní. 0 = dole, 1 = nahoře."""
+    """Kde je poslední cena v pásmu min–max za posledních N kalendářních dní (0 = dno, 1 = strop)."""
     try:
         df = fetch_westmetall_history(WM_HISTORY_URLS[metal_key])
         if df is None or df.empty:
             return None
-        s = pd.to_numeric(df.sort_values("Date")["Close"], errors="coerce").dropna()
-        if len(s) < 10:
+        work = df.dropna(subset=["Close", "Date"]).copy()
+        work["Date"] = pd.to_datetime(work["Date"])
+        work["Close"] = pd.to_numeric(work["Close"], errors="coerce")
+        work = work.dropna(subset=["Close"]).sort_values("Date")
+        if len(work) < 10:
             return None
-        window = s.iloc[-days:] if len(s) > days else s
+        cutoff = work["Date"].max() - pd.Timedelta(days=days)
+        window = work[work["Date"] >= cutoff]["Close"]
+        if len(window) < 5:
+            window = work["Close"]
         lo = float(window.min())
         hi = float(window.max())
-        last = float(s.iloc[-1])
+        last = float(work["Close"].iloc[-1])
         if hi <= lo:
             return None
         return (last - lo) / (hi - lo)
@@ -5493,50 +5522,60 @@ def _metal_price_position(metal_key: str, days: int = 90) -> float | None:
 
 
 def _metal_buy_verdict(metal_key: str) -> dict | None:
-    """Jednoduchý verdikt kup teď / počkej z RSI, měsíčního výhledu a pozice v pásmu."""
+    """
+    Nákupní verdikt oddělující cenovou úroveň (RSI + 90d pásmo) od směru trendu (výhled).
+    Nekontroluje se prostým sčítáním, které by na dně rušilo signál k nákupu.
+    """
     rsi = _metal_rsi_value(metal_key)
     hist = fetch_westmetall_history(WM_HISTORY_URLS[metal_key])
     fc = _forecast_models(hist)
-    pos = _metal_price_position(metal_key)
+    pos = _metal_price_position(metal_key, days=90)
     if rsi is None and fc is None and pos is None:
         return None
-    score = 0
+
     parts: list[str] = []
+    pct_month: float | None = None
     if rsi is not None:
-        if rsi < 30:
-            score += 1
-        elif rsi > 70:
-            score -= 1
         parts.append(f"RSI {rsi:.0f}")
     if fc:
         last = float(fc["last_price"])
         end = float(fc["ensemble"][-1])
         if last:
             pct_month = (end / last - 1.0) * 100.0
-            if pct_month > _FORECAST_DIR_THRESHOLD:
-                score += 1
-            elif pct_month < -_FORECAST_DIR_THRESHOLD:
-                score -= 1
             parts.append(f"výhled {_signed_pct(pct_month)}/měs")
     if pos is not None:
-        if pos > 0.70:
-            score -= 1
-            parts.append("u horní hrany pásma")
-        elif pos < 0.30:
-            score += 1
-            parts.append("u dolní hrany pásma")
+        if pos > 0.65:
+            parts.append(f"u horní hrany 90d pásma ({pos * 100:.0f} %)")
+        elif pos < 0.35:
+            parts.append(f"u dolní hrany 90d pásma ({pos * 100:.0f} %)")
         else:
-            parts.append("uprostřed pásma")
-    if score >= 2:
-        verdict, tone = "Nakoupit", "success"
-    elif score == 1:
-        verdict, tone = "Spíš nakoupit", "success"
-    elif score == 0:
-        verdict, tone = "Neutrální — sleduj", "info"
-    elif score == -1:
-        verdict, tone = "Spíš počkat", "warning"
+            parts.append(f"střed 90d pásma ({pos * 100:.0f} %)")
+
+    is_cheap = (pos is not None and pos < 0.35) or (rsi is not None and rsi < 35)
+    is_expensive = (pos is not None and pos > 0.65) or (rsi is not None and rsi > 65)
+    trend_up = pct_month is not None and pct_month > _FORECAST_DIR_THRESHOLD
+    trend_down = pct_month is not None and pct_month < -_FORECAST_DIR_THRESHOLD
+
+    if is_cheap and not is_expensive:
+        if trend_up:
+            verdict, tone, score = "Nakoupit (levno a otáčí nahoru)", "success", 2
+        elif trend_down:
+            verdict, tone, score = "Postupně nakupovat / hlídat dno", "info", 1
+        else:
+            verdict, tone, score = "Spíš nakoupit (u dolní hrany)", "success", 1
+    elif is_expensive and not is_cheap:
+        if trend_down:
+            verdict, tone, score = "Počkat (vysoko a klesá)", "warning", -2
+        else:
+            verdict, tone, score = "Spíš počkat / brát jen nutné", "warning", -1
     else:
-        verdict, tone = "Počkat", "warning"
+        if pct_month is not None and pct_month >= 1.5:
+            verdict, tone, score = "Spíš nakoupit (rostoucí trend)", "success", 1
+        elif pct_month is not None and pct_month <= -1.5:
+            verdict, tone, score = "Spíš počkat (klesající trend)", "warning", -1
+        else:
+            verdict, tone, score = "Neutrální — sleduj", "info", 0
+
     return {"verdict": verdict, "tone": tone, "parts": parts, "score": score}
 
 
@@ -5990,26 +6029,38 @@ def _render_cable_price_index(brent_now: float | None) -> None:
         st.warning("Kabel jde nahoru víc než samotný kov. Táhnou ho ostatní složky, ne jen burza.")
     else:
         st.info("Kabel je níž než samotný kov. Ostatní složky ho brzdí.")
+    total_w = sum(float(weights.get(key) or 0.0) for key, _lbl in _CABLE_PARTS)
+    if abs(total_w - 100.0) >= 0.5:
+        st.caption(
+            f"Součet zadaných vah je {format_num(total_w, 0)} % — pro výpočet indexu se automaticky přepočítávají na 100 % (sloupec Podíl)."
+        )
     if built["used_pct"] < 99.5:
         st.caption(f"Do indexu šlo {format_num(built['used_pct'], 0)} % vah. Zbytek nemá pohyb za 30 dní.")
+    used_w = sum(
+        float(r["weight"]) for r in built["rows"]
+        if float(r["weight"]) > 0 and r["move"] is not None
+    )
     table_rows = []
     for row in built["rows"]:
         if row["weight"] <= 0:
             continue
         move = row["move"]
-        contribution = None if move is None else row["share"] / 100.0 * float(move)
+        eff_share = (float(row["weight"]) / used_w * 100.0) if (used_w > 0 and move is not None) else row["share"]
+        contribution = None if move is None else eff_share / 100.0 * float(move)
         table_rows.append([
             row["label"],
             _nakup_num(row["weight"], 0) + " %",
+            _nakup_num(eff_share, 1) + " %",
             _signed_pct(move),
             _signed_pct(contribution),
         ])
     if table_rows:
         st.markdown(_nakup_fit_html([
-            ("Složka", "25%", ""),
-            ("Váha", "25%", "num"),
-            ("Pohyb 30 dní", "25%", "num"),
-            ("Příspěvek", "25%", "num"),
+            ("Složka", "22%", ""),
+            ("Váha", "16%", "num"),
+            ("Podíl", "18%", "num"),
+            ("Pohyb 30 dní", "22%", "num"),
+            ("Příspěvek", "22%", "num"),
         ], table_rows), unsafe_allow_html=True)
     st.caption(plastic_note)
 
@@ -6022,6 +6073,7 @@ def render_oil_plastics() -> None:
     brent_delta = (oil or {}).get("brent", {}).get("delta")
     live = brent_price is not None
     brent_lag = _brent_close_n_days_ago(_PLASTIC_LAG_DAYS)
+    brent_lag_delta = _brent_lagged_delta(_PLASTIC_LAG_DAYS)
     plastics = calc_plastic_prices(brent_lag or brent_price) if (brent_lag or brent_price) else None
     plastics_spot = calc_plastic_prices(brent_price) if brent_price else None
     used_lag = brent_lag is not None
@@ -6102,7 +6154,8 @@ def render_oil_plastics() -> None:
                 px_usd = plastics[key]["price"]
                 px_disp = usd_to_display(px_usd, ccy_oil)
                 slope = float(plastics[key]["slope"])
-                d_usd = (slope * float(brent_delta)) if brent_delta is not None else None
+                ref_delta = brent_lag_delta if used_lag else brent_delta
+                d_usd = (slope * float(ref_delta)) if ref_delta is not None else None
                 d_disp = usd_to_display(d_usd, ccy_oil) if d_usd is not None else None
                 spot_txt = ""
                 if used_lag and plastics_spot and key in plastics_spot:
@@ -6758,14 +6811,25 @@ def _landed_metal_choices(invoice: pd.DataFrame) -> pd.DataFrame:
 
 
 def _invoice_metal_move(
-    invoice: pd.DataFrame,
+    invoice_eur: pd.DataFrame,
     choices: pd.DataFrame,
     day_from,
     day_to,
+    *,
+    invoice_raw: pd.DataFrame | None = None,
+    entry_ccy: str = "EUR",
+    eur_czk: float = 0.0,
+    usd_czk: float = 0.0,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, dict | None]]:
-    """Nová nákupní cena po kovu. Řádek bez burzy nechá původní cenu a označí se."""
-    adjusted = invoice.copy().reset_index(drop=True)
+    """
+    Nová nákupní cena po kovu.
+    U řádků v USD / CZK drží pohyb kovu v jejich měně a kurz aplikuje jednou přes _nakup_move_unit(),
+    u EUR použije přímý eurový poměr LME. Řádek bez burzy nechá původní cenu a označí se.
+    """
+    adjusted = invoice_eur.copy().reset_index(drop=True)
     pairs: dict[str, dict | None] = {}
+    quotes_then: dict[str, dict | None] = {}
+    quotes_now: dict[str, dict | None] = {}
     rows: list[dict] = []
     for pos, row in adjusted.iterrows():
         metal = "Měď"
@@ -6780,7 +6844,9 @@ def _invoice_metal_move(
         key = _METAL_CHOICE_KEY[metal]
         if key not in pairs:
             pairs[key] = _metal_pair(key, day_from, day_to)
-        price = float(row[_INVOICE_COL_PRICE])
+            quotes_then[key] = _metal_quote_on(key, day_from)
+            quotes_now[key] = _metal_quote_on(key, day_to)
+        price_eur = float(row[_INVOICE_COL_PRICE])
         pair = pairs[key]
         if pair is None:
             rows.append({
@@ -6792,14 +6858,41 @@ def _invoice_metal_move(
                 "ok": False,
             })
             continue
-        moved = _price_after_metal(price, share_pct, pair)
-        adjusted.at[pos, _INVOICE_COL_PRICE] = moved["new_price"]
+
+        row_ccy = "EUR"
+        raw_price = price_eur
+        if invoice_raw is not None and pos < len(invoice_raw):
+            c_val = str(invoice_raw.iloc[pos].get(_INVOICE_COL_CCY, entry_ccy))
+            if c_val in _LANDED_CCYS:
+                row_ccy = c_val
+            raw_price = float(invoice_raw.iloc[pos][_INVOICE_COL_PRICE])
+
+        if row_ccy in ("USD", "CZK") and eur_czk > 0 and (row_ccy == "CZK" or usd_czk > 0):
+            moved_u = _nakup_move_unit(
+                raw_price,
+                row_ccy,
+                share_pct,
+                quotes_then[key],
+                quotes_now[key],
+                eur_czk,
+                usd_czk,
+            )
+            kov_val = moved_u["kov"]
+            mena_val = moved_u["mena"]
+            new_p = moved_u["eur_now"]
+        else:
+            moved = _price_after_metal(price_eur, share_pct, pair)
+            kov_val = moved["kov"]
+            mena_val = moved["mena"]
+            new_p = moved["new_price"]
+
+        adjusted.at[pos, _INVOICE_COL_PRICE] = new_p
         rows.append({
             _COL_METAL: metal,
             _COL_METAL_SHARE: share_pct,
-            _COL_METAL_KOV: moved["kov"],
-            _COL_METAL_FX: moved["mena"],
-            _COL_NEW_PRICE: moved["new_price"],
+            _COL_METAL_KOV: kov_val,
+            _COL_METAL_FX: mena_val,
+            _COL_NEW_PRICE: new_p,
             "ok": True,
         })
     return adjusted, pd.DataFrame(rows), pairs
@@ -7532,15 +7625,6 @@ def _nakup_lme_ratio(then_q: dict | None, now_q: dict | None, key: str) -> float
     return float(new) / float(old)
 
 
-def _nakup_entry_ratio(ccy: str, then_q: dict | None, now_q: dict | None) -> float:
-    """Poměr, kterým se v měně nabídky posune podíl kovu."""
-    if ccy == "USD":
-        return _nakup_lme_ratio(then_q, now_q, "usd")
-    if ccy == "CZK":
-        return _nakup_lme_ratio(then_q, now_q, "czk")
-    return _nakup_lme_ratio(then_q, now_q, "eur")
-
-
 def _nakup_move_unit(
     price: float,
     ccy: str,
@@ -7610,37 +7694,6 @@ def _nakup_share_from_kg(kg_per_km: float, eur_per_m: float, lme_eur_per_t: floa
         return None
     metal_eur = float(kg_per_km) * float(lme_eur_per_t) / 1_000_000.0
     return min(100.0, max(0.0, metal_eur / float(eur_per_m) * 100.0))
-
-
-def _nakup_as_date(value, fallback):
-    """Datum z editoru. Prázdná buňka znamená datum nabídky."""
-    try:
-        if value is None or pd.isna(value):
-            return fallback
-    except (TypeError, ValueError):
-        if value is None:
-            return fallback
-    parsed = pd.to_datetime(value, errors="coerce")
-    if pd.isna(parsed):
-        return fallback
-    return parsed.date()
-
-
-def _nakup_ensure_offer_cols(df: pd.DataFrame) -> pd.DataFrame:
-    """Doplní kov, podíl, kg a datum. Prázdný podíl nechá na nabídce."""
-    out = df.copy()
-    if _COL_METAL not in out.columns:
-        out[_COL_METAL] = "Měď"
-    else:
-        metal = out[_COL_METAL].astype(str)
-        out.loc[~metal.isin(list(_METAL_CHOICES)), _COL_METAL] = "Měď"
-    if _COL_METAL_SHARE not in out.columns:
-        out[_COL_METAL_SHARE] = pd.NA
-    if _COL_KG not in out.columns:
-        out[_COL_KG] = pd.NA
-    if _COL_OFFER_DATE not in out.columns:
-        out[_COL_OFFER_DATE] = pd.NaT
-    return out
 
 
 def _nakup_fit_html(columns: list[tuple[str, str, str]], rows: list[list[str]]) -> str:
@@ -8337,16 +8390,29 @@ def render_landed_cost_pricing() -> None:
         "Zahrnout pohyb kovu",
         value=False,
         key="landed_include_metal",
-        help="Doplní tabulku nové ceny a do Excelu sloupce kovu. Dny se berou ze záložky Porovnání nabídek.",
+        help="Doplní tabulku nové ceny a do Excelu sloupce kovu.",
     )
-    day_from = st.session_state.get("metal_cmp_from", datetime(2026, 8, 18).date())
-    day_to = st.session_state.get("metal_cmp_to", datetime(2026, 9, 24).date())
+    _today_nakup = now_prague().date()
+    day_from = st.session_state.get("metal_cmp_from", _today_nakup - timedelta(days=30))
+    day_to = st.session_state.get("metal_cmp_to", _today_nakup)
     if include_metal:
+        d_c1, d_c2 = st.columns(2)
+        day_from = d_c1.date_input(
+            "Datum původní nabídky (LME od)",
+            value=day_from,
+            format="DD.MM.YYYY",
+            key="landed_metal_from",
+        )
+        day_to = d_c2.date_input(
+            "Datum porovnání (LME do)",
+            value=day_to,
+            format="DD.MM.YYYY",
+            key="landed_metal_to",
+        )
         st.caption(
-            f"Dny jsou ze záložky Porovnání nabídek: {_cz_day(day_from)} → {_cz_day(day_to)}. "
-            "Podíl kovu v nákupní ceně se posune s LME. V eurech je v tom i kurz dolaru. "
-            "Zbytek ceny za jednotku zůstane. Doprava, clo a prodej se pak dopočítají stejně. "
-            "Prodej je v korunách dnešním kurzem ČNB."
+            f"Období burzy: {_cz_day(day_from)} → {_cz_day(day_to)}. "
+            "Podíl kovu v nákupní ceně se posune s LME (u USD/CZK v původní měně, u EUR přes eurové LME). "
+            "Zbytek ceny za jednotku zůstane. Doprava, clo a prodej se pak dopočítají stejně."
         )
         metal_choices = _landed_metal_choices(invoice_eur)
         if _COL_KG in invoice.columns:
@@ -8358,11 +8424,17 @@ def render_landed_cost_pricing() -> None:
                     continue
                 metal_name = str(metal_choices.iloc[i].get(_COL_METAL, "Měď"))
                 metal_key = _METAL_CHOICE_KEY.get(metal_name, "copper")
-                pair = _metal_pair(metal_key, day_from, day_to)
-                unit_eur = float(invoice_eur.iloc[i][_INVOICE_COL_PRICE])
-                share = _nakup_share_from_kg(
-                    float(kg_raw), unit_eur, 0.0 if not pair else float(pair["eur1"]),
-                )
+                q_then = _metal_quote_on(metal_key, day_from)
+                if not q_then or not q_then.get("eur"):
+                    continue
+                row_ccy_i = str(invoice.iloc[i].get(_INVOICE_COL_CCY, entry_ccy))
+                if row_ccy_i not in _LANDED_CCYS:
+                    row_ccy_i = entry_ccy
+                raw_p_i = float(invoice.iloc[i][_INVOICE_COL_PRICE])
+                eur_then_fx, usd_then_fx = _nakup_pair_rates(q_then, float(eur_czk), usd_czk)
+                per_then = _nakup_eur_per_unit(row_ccy_i, eur_then_fx, usd_then_fx)
+                unit_eur_then = (raw_p_i * per_then) if per_then else float(invoice_eur.iloc[i][_INVOICE_COL_PRICE])
+                share = _nakup_share_from_kg(float(kg_raw), unit_eur_then, float(q_then["eur"]))
                 if share is None:
                     continue
                 metal_choices.at[i, _COL_METAL_SHARE] = share
@@ -8370,9 +8442,16 @@ def render_landed_cost_pricing() -> None:
                     f"{invoice.iloc[i][_INVOICE_COL_NAME]} {share:.0f} % z {float(kg_raw):.1f} kg/km"
                 )
             if kg_notes:
-                st.caption("Podíl kovu z hmotnosti: " + " · ".join(kg_notes) + ".")
+                st.caption("Podíl kovu z hmotnosti (k datu původní nabídky): " + " · ".join(kg_notes) + ".")
         adjusted, metal_move, metal_pairs = _invoice_metal_move(
-            invoice_eur, metal_choices, day_from, day_to,
+            invoice_eur,
+            metal_choices,
+            day_from,
+            day_to,
+            invoice_raw=invoice,
+            entry_ccy=entry_ccy,
+            eur_czk=float(eur_czk),
+            usd_czk=usd_czk,
         )
         results_sales[_COL_METAL] = metal_move[_COL_METAL].to_numpy()
         results_sales[_COL_METAL_SHARE] = metal_move[_COL_METAL_SHARE].to_numpy()
@@ -8701,10 +8780,11 @@ def render_landed_cost_pricing() -> None:
     _money_metric(sum_g, "Landed", float(results_sales[_COL_LANDED].sum()))
     qty_sum = float(results_sales[_INVOICE_COL_QTY].sum())
     sum_h.metric(
-        "Landed za 1 m",
+        "Průměr landed / j.",
         f"{_nakup_num(float(results_sales[_COL_LANDED].sum()) / qty_sum, 3)} €",
         delta=f"{_nakup_num(float(results_sales[_COL_LANDED].sum()) * float(eur_czk) / qty_sum, 2)} Kč",
         delta_color="off",
+        help="Vážený průměr přes všechny řádky faktury. U mixu metrů a kusů sleduj cenu v tabulce po položkách.",
     )
 
     with st.expander("Co udělá pohyb kurzu", expanded=False):
@@ -8925,6 +9005,12 @@ def _render_offer_scorecard() -> None:
             {"Nabídka": "Dodavatel B", "Landed cena": 0.0, "Měna": "USD",
              "Dodání (dny)": 0, "MOQ": "", "Platnost do": ""},
         ])
+    if (
+        "offer_scorecard_editor" not in st.session_state
+        and isinstance(st.session_state.get("offer_scorecard_live"), pd.DataFrame)
+        and not st.session_state["offer_scorecard_live"].empty
+    ):
+        st.session_state["offer_scorecard_data"] = st.session_state["offer_scorecard_live"].copy().reset_index(drop=True)
     edited = st.data_editor(
         st.session_state["offer_scorecard_data"],
         key="offer_scorecard_editor",
@@ -8933,14 +9019,14 @@ def _render_offer_scorecard() -> None:
         hide_index=True,
         column_config={
             "Nabídka": st.column_config.TextColumn("Nabídka", width="medium"),
-            "Landed cena": st.column_config.NumberColumn("Landed cena", min_value=0.0, format="%.2f"),
-            "Měna": st.column_config.SelectboxColumn("Měna", options=list(_LANDED_CCYS), width="small"),
-            "Dodání (dny)": st.column_config.NumberColumn("Dodání (dny)", min_value=0, step=1),
+            "Landed cena": st.column_config.NumberColumn("Landed cena", min_value=0.0, format="%.2f", default=0.0),
+            "Měna": st.column_config.SelectboxColumn("Měna", options=list(_LANDED_CCYS), width="small", default="EUR"),
+            "Dodání (dny)": st.column_config.NumberColumn("Dodání (dny)", min_value=0, step=1, default=0),
             "MOQ": st.column_config.TextColumn("MOQ", width="small"),
             "Platnost do": st.column_config.TextColumn("Platnost do", width="small"),
         },
     )
-    st.session_state["offer_scorecard_data"] = edited
+    st.session_state["offer_scorecard_live"] = edited.copy()
 
     rows = []
     for _, r in edited.iterrows():
@@ -9148,9 +9234,13 @@ def _days_cs(n: int) -> str:
     return f"{n} dní"
 
 
-def _gps_transit_days(row: dict) -> int | None:
-    """Kalendářní dny expedice → příjezd. Bez data vrací None."""
-    start = _parse_gps_date(row.get("first_signal") or row.get("added"))
+def _gps_transit_days(row: dict, *, strict_signal: bool = False) -> int | None:
+    """
+    Kalendářní dny expedice → příjezd. Bez data vrací None.
+    strict_signal=True bere jen skutečný 1. GPS signál (vyhne se zkreslení, když se tracker přidal až v půlce cesty).
+    """
+    raw_start = row.get("first_signal") if strict_signal else (row.get("first_signal") or row.get("added"))
+    start = _parse_gps_date(raw_start)
     end = _parse_gps_date(row.get("arrived"))
     if start is None or end is None:
         return None
@@ -10174,17 +10264,24 @@ def _recent_rail_samples(
     arrived_rows: list[dict],
     limit: int = _RAIL_ETA_LAST,
 ) -> tuple[tuple[str, int], ...]:
-    """Nejnovější doručené kontejnery s známou dobou cesty: (jméno, dny)."""
-    scored: list[tuple[datetime, str, int]] = []
-    for row in arrived_rows:
-        days = _gps_transit_days(row)
-        end = _parse_gps_date(row.get("arrived"))
-        if days is None or end is None:
-            continue
-        name = str(row.get("container") or "").strip() or "—"
-        scored.append((end, name, int(days)))
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return tuple((name, days) for _end, name, days in scored[:limit])
+    """
+    Nejnovější doručené kontejnery s reálným 1. GPS signálem (expedice → příjezd).
+    Když žádný kontejner nemá first_signal, použije záložně datum přidání.
+    """
+    def _collect(strict: bool) -> list[tuple[datetime, str, int]]:
+        scored: list[tuple[datetime, str, int]] = []
+        for row in arrived_rows:
+            days = _gps_transit_days(row, strict_signal=strict)
+            end = _parse_gps_date(row.get("arrived"))
+            if days is None or end is None:
+                continue
+            name = str(row.get("container") or "").strip() or "—"
+            scored.append((end, name, int(days)))
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return scored
+
+    picked = _collect(strict=True) or _collect(strict=False)
+    return tuple((name, days) for _end, name, days in picked[:limit])
 
 
 @st.fragment
@@ -11242,22 +11339,33 @@ def _format_drive_time(minutes: float | None) -> str:
     return f"{h} h {m:02d} min" if h else f"{m} min"
 
 
+_VEHICLE_OSRM_TIME_FACTOR = {
+    "truck": 1.22,  # OSRM vrací čas osobáku (~130 km/h); návěs má omezovač 85 km/h
+    "solo": 1.15,
+    "van": 1.05,
+}
+
+
 def _transit_estimate(
     drive_min: float | None,
     *,
     border_h: float = 0.0,
     border_days: int = 0,
+    wait_days: int = 0,
 ) -> dict:
     """
-    Orientační doba přepravy: čistá jízda + pauzy AETR + nakládka/vykládka + hranice.
-    Kalendářní dny jízdy: max 9 h / den, mezi dny 11 h odpočinek.
-    Čekání na hranici TR/EU jsou celé dny navíc — fronta nejede zároveň s jízdou.
+    Orientační doba přepravy: čistá jízda + pauzy AETR + nakládka/vykládka + hranice/čekání.
+    AETR: 45 min pauza jen po 4,5 h jízdy v rámci jednoho dne (při 9 h je 1 pauza, druhá splývá s 11 h nočním klidem).
     """
     drive = max(0.0, float(drive_min or 0.0))
     border_days = max(0, int(border_days or 0))
-    if border_days:
-        border_h = float(border_days) * 24.0
-    breaks_min = math.floor(drive / 270.0) * 45.0
+    wait_days = max(0, int(wait_days or 0))
+    delay_days = border_days + wait_days
+    if delay_days:
+        border_h = float(delay_days) * 24.0
+    full_days, rem_min = divmod(drive, 540.0)
+    breaks_count = int(full_days) + (1 if rem_min > 270.0 + 1e-6 else 0)
+    breaks_min = breaks_count * 45.0
     handling_min = 120.0
     border_min = max(0.0, float(border_h or 0.0)) * 60.0
     drive_days = max(1, math.ceil(drive / (9.0 * 60.0))) if drive else 1
@@ -11265,9 +11373,8 @@ def _transit_estimate(
     wheel_plus = handling_min + drive + breaks_min + border_min
     total_min = wheel_plus + overnight_min
 
-    if border_days:
-        # Fronta na Kapıkule stojí celé dny, jízda před ní a za ní je zvlášť.
-        calendar_days = drive_days + border_days
+    if delay_days:
+        calendar_days = drive_days + delay_days
         when = "druhý den" if calendar_days == 2 else f"za {_days_cs(calendar_days)}"
     elif border_min < 60 and wheel_plus <= 12 * 60:
         calendar_days = 1
@@ -11284,15 +11391,19 @@ def _transit_estimate(
             calendar_days = 2
         when = "druhý den" if calendar_days == 2 else f"za {_days_cs(calendar_days)}"
 
-    if border_days:
+    if border_days and wait_days:
+        border_bit = f"hranice TR/EU {_days_cs(border_days)} + čekání {_days_cs(wait_days)}"
+    elif border_days:
         border_bit = f"hranice TR/EU {_days_cs(border_days)}"
+    elif wait_days:
+        border_bit = f"čekání {_days_cs(wait_days)}"
     elif border_min:
         border_bit = f"hranice {_format_drive_time(border_min)}"
     else:
         border_bit = None
     bits = [
         f"jízda {_format_drive_time(drive)}" if drive else None,
-        f"pauzy {_format_drive_time(breaks_min)}" if breaks_min else None,
+        f"pauzy AETR {_format_drive_time(breaks_min)}" if breaks_min else None,
         "nakládka/vykládka 2 h",
         border_bit,
         f"noční odpočinek {_format_drive_time(overnight_min)}" if overnight_min else None,
@@ -11311,6 +11422,7 @@ def _transit_estimate(
         "when": when,
         "detail": detail,
         "border_days": border_days,
+        "wait_days": wait_days,
     }
 
 
@@ -11991,61 +12103,6 @@ def _logistics_quote_panel() -> None:
                 )
 
             st.markdown("#### Parametry nákladu a vozidla")
-            cargo_kg = float(st.session_state.get("log_cargo_kg", 24000.0))
-            cargo_pallets = int(st.session_state.get("log_cargo_pallets", 0))
-            if cargo_pallets > 0:
-                cargo_ldm = cargo_pallets * _DOMESTIC_LDM_PER_EUR_PALLET
-            else:
-                cargo_ldm = float(st.session_state.get("log_cargo_ldm", 6.0))
-            saved_route = _log_saved_route(start_loc, dest_loc)
-            pick_km = float(saved_route[0]) if saved_route else None
-            diesel_now = fetch_mbenzin_diesel()
-            nafta_for_pick = float(diesel_now["czk"]) if diesel_now else float(_DIESEL_BASE_CZK)
-            vehicle_prices = _logistics_vehicle_prices(cargo_kg, cargo_ldm, pick_km, nafta_for_pick)
-            if vehicle_prices:
-                recommended_v = min(vehicle_prices, key=vehicle_prices.get)
-            else:
-                recommended_v = _domestic_suggest_vehicle(cargo_kg, cargo_ldm)
-            cargo_sig = (round(cargo_kg), round(cargo_ldm, 1), None if pick_km is None else round(pick_km))
-            if st.session_state.get("log_vehicle_sig") != cargo_sig:
-                st.session_state["log_vehicle_sig"] = cargo_sig
-                st.session_state["log_vehicle_pinned"] = False
-            if (
-                not st.session_state.get("log_vehicle_pinned")
-                and recommended_v in _DOMESTIC_VEHICLE_ORDER
-            ):
-                st.session_state["domestic_v_type_selector_v75"] = recommended_v
-            v_type_raw = st.selectbox(
-                "Druh vozidla",
-                _DOMESTIC_VEHICLE_ORDER,
-                format_func=_domestic_vehicle_option_label,
-                key="domestic_v_type_selector_v75",
-                on_change=_pin_logistics_vehicle,
-                help=f"Sólo: pevný limit {_DOMESTIC_SOLO_MAX_KG:.0f} kg (7,5 t). "
-                "Při změně váhy se vybere nejlevnější vůz, který náklad uveze.",
-            )
-            v_type = _domestic_normalize_vehicle_type(v_type_raw)
-            profile = _DOMESTIC_VEHICLE_PROFILES[v_type]
-            max_w = profile["max_w"]
-            max_l = profile["max_l"]
-            def_rate = profile["def_rate"]
-            vehicle_key = _domestic_vehicle_key(v_type)
-            v_idx = _DOMESTIC_VEHICLE_ORDER.index(v_type)
-            if vehicle_prices and recommended_v in vehicle_prices:
-                bits = [
-                    f"{name.split('(')[0].strip()} {format_num(price, 0)} Kč"
-                    for name, price in sorted(vehicle_prices.items(), key=lambda item: item[1])
-                ]
-                if v_type == recommended_v:
-                    st.caption("Nejlevnější vůz pro tuhle váhu a trasu: " + " · ".join(bits))
-                else:
-                    st.info(
-                        f"Levněji vychází **{recommended_v}** "
-                        f"({format_num(vehicle_prices[recommended_v], 0)} Kč). "
-                        "Nechávám vámi vybraný vůz. Změňte váhu a výběr se přepne sám. "
-                        + " · ".join(bits)
-                    )
-
             waha = st.number_input(
                 "Váha (kg)",
                 min_value=1.0,
@@ -12084,6 +12141,61 @@ def _logistics_quote_panel() -> None:
                     format="%.1f",
                     key="log_cargo_ldm",
                 )
+
+            saved_route = _log_saved_route(start_loc, dest_loc)
+            pick_km = float(saved_route[0]) if saved_route else None
+            diesel_now = fetch_mbenzin_diesel()
+            nafta_for_pick = float(diesel_now["czk"]) if diesel_now else float(_DIESEL_BASE_CZK)
+            # Pokud uživatel ručně přepsal cenu nafty u aktuálního vozu, použijeme ji i pro porovnání vozidel
+            prev_v = st.session_state.get("domestic_v_type_selector_v75")
+            if prev_v in _DOMESTIC_VEHICLE_ORDER:
+                prev_vi = _DOMESTIC_VEHICLE_ORDER.index(prev_v)
+                if st.session_state.get(f"log_diesel_pinned_v{prev_vi}") and f"log_diesel_v{prev_vi}" in st.session_state:
+                    nafta_for_pick = float(st.session_state[f"log_diesel_v{prev_vi}"])
+            vehicle_prices = _logistics_vehicle_prices(float(waha), float(ldm), pick_km, nafta_for_pick)
+            if vehicle_prices:
+                recommended_v = min(vehicle_prices, key=vehicle_prices.get)
+            else:
+                recommended_v = _domestic_suggest_vehicle(float(waha), float(ldm))
+            cargo_sig = (round(float(waha)), round(float(ldm), 1), None if pick_km is None else round(pick_km))
+            if st.session_state.get("log_vehicle_sig") != cargo_sig:
+                st.session_state["log_vehicle_sig"] = cargo_sig
+                st.session_state["log_vehicle_pinned"] = False
+            if (
+                not st.session_state.get("log_vehicle_pinned")
+                and recommended_v in _DOMESTIC_VEHICLE_ORDER
+            ):
+                st.session_state["domestic_v_type_selector_v75"] = recommended_v
+            v_type_raw = st.selectbox(
+                "Druh vozidla",
+                _DOMESTIC_VEHICLE_ORDER,
+                format_func=_domestic_vehicle_option_label,
+                key="domestic_v_type_selector_v75",
+                on_change=_pin_logistics_vehicle,
+                help=f"Sólo: pevný limit {_DOMESTIC_SOLO_MAX_KG:.0f} kg (7,5 t). "
+                "Při změně váhy nebo LDM se rovnou vybere nejlevnější vůz, který náklad uveze.",
+            )
+            v_type = _domestic_normalize_vehicle_type(v_type_raw)
+            profile = _DOMESTIC_VEHICLE_PROFILES[v_type]
+            max_w = profile["max_w"]
+            max_l = profile["max_l"]
+            def_rate = profile["def_rate"]
+            vehicle_key = _domestic_vehicle_key(v_type)
+            v_idx = _DOMESTIC_VEHICLE_ORDER.index(v_type)
+            if vehicle_prices and recommended_v in vehicle_prices:
+                bits = [
+                    f"{name.split('(')[0].strip()} {format_num(price, 0)} Kč"
+                    for name, price in sorted(vehicle_prices.items(), key=lambda item: item[1])
+                ]
+                if v_type == recommended_v:
+                    st.caption("Nejlevnější vůz pro tuhle váhu a trasu: " + " · ".join(bits))
+                else:
+                    st.info(
+                        f"Levněji vychází **{recommended_v}** "
+                        f"({format_num(vehicle_prices[recommended_v], 0)} Kč). "
+                        "Nechávám vámi vybraný vůz. Změňte váhu a výběr se přepne sám. "
+                        + " · ".join(bits)
+                    )
 
             diesel = diesel_now
             l_per_100 = float(profile["l_per_100"])
@@ -12206,14 +12318,20 @@ def _logistics_quote_panel() -> None:
                 else "Záložní odhad: vzdušná vzdálenost × 1,3 (OSRM nedostupné)"
             )
             if drive_min is not None:
-                eta_help = "Čistá jízda dle OSRM (bez pauz, nakládky a hranice)"
+                speed_k = _VEHICLE_OSRM_TIME_FACTOR.get(vehicle_key, 1.2)
+                drive_min = float(drive_min) * speed_k
+                eta_help = (
+                    f"Čistá jízda dle OSRM přepočtená pro {v_type} (×{speed_k:.2f} proti osobáku; "
+                    "bez pauz AETR, nakládky a hranice)"
+                )
             else:
                 drive_min = road_km / _DOMESTIC_AVG_SPEED_KMH * 60.0
                 eta_help = (
                     f"Záložní odhad jízdy: {format_num(road_km, 0)} km ÷ "
                     f"{_DOMESTIC_AVG_SPEED_KMH:.0f} km/h (OSRM čas nedostupný)"
                 )
-            transit = _transit_estimate(drive_min, border_days=border_days)
+            extra_wait_days = int(wait_days) if (scope == "intl" and not involves_tr) else 0
+            transit = _transit_estimate(drive_min, border_days=border_days, wait_days=extra_wait_days)
             dist = road_km
             quote = _domestic_compute_quote(
                 dist, waha, ldm, profile, sazba, vehicle_key
@@ -12290,9 +12408,16 @@ def _logistics_quote_panel() -> None:
             wait_eur = float(wait_eur_day) * int(wait_days)
             extra_eur = float(toll_eur) + wait_eur
             extra_czk = (extra_eur * eur_czk) if eur_czk else 0.0
+            # Pro mezinárodní dokládku (LTL) rozpočítáme mýto i čekání poměrem LTL koeficientu
+            ltl_extra_eur = extra_eur * float(ltl_koef)
+            ltl_extra_czk = extra_czk * float(ltl_koef)
+            intl_ltl_eur = ((price_eur + ltl_extra_eur) if price_eur is not None else None) if (scope == "intl" and quote["price_valid"] and price_czk is not None) else price_eur
+            intl_ftl_eur = ((ftl_eur + extra_eur) if ftl_eur is not None else None) if (scope == "intl" and quote["price_valid"] and ftl_price is not None) else ftl_eur
+            intl_ltl_czk = (price_czk + ltl_extra_czk) if (scope == "intl" and quote["price_valid"] and price_czk is not None) else price_czk
+            intl_ftl_czk = ((ftl_price + extra_czk) if ftl_price is not None else None) if (scope == "intl" and quote["price_valid"] and ftl_price is not None) else ftl_price
             if scope == "intl" and float(carrier_eur) > 0:
                 deal_eur = float(carrier_eur) + extra_eur
-            if quote["price_valid"] and price_czk is not None:
+            if quote["price_valid"] and intl_ltl_czk is not None:
                 quote_row = {
                     "saved": now_prague().strftime("%d. %m. %Y %H:%M"),
                     "start": str((start_loc or {}).get("display_name") or "").split(",")[0].strip(),
@@ -12305,11 +12430,11 @@ def _logistics_quote_panel() -> None:
                     "diesel": round(float(nafta_czk), 2),
                     "diesel_date": str((diesel or {}).get("date") or ""),
                     "rate": round(float(sazba), 1),
-                    "border_days": int(border_days),
-                    "ltl": int(round(float(price_czk))),
-                    "ftl": int(round(float(ftl_price))) if ftl_price else None,
-                    "ltl_eur": None if price_eur is None else int(round(float(price_eur))),
-                    "ftl_eur": None if ftl_eur is None else int(round(float(ftl_eur))),
+                    "border_days": int(border_days) + int(extra_wait_days),
+                    "ltl": int(round(float(intl_ltl_czk))),
+                    "ftl": int(round(float(intl_ftl_czk))) if intl_ftl_czk else None,
+                    "ltl_eur": None if intl_ltl_eur is None else int(round(float(intl_ltl_eur))),
+                    "ftl_eur": None if intl_ftl_eur is None else int(round(float(intl_ftl_eur))),
                     "when": str(transit.get("when") or ""),
                 }
                 if deal_eur is not None:
@@ -12340,10 +12465,6 @@ def _logistics_quote_panel() -> None:
                             f"{est_eur_txt}{format_num(price_czk, 0)} Kč."
                         )
                 elif quote["price_valid"] and price_czk is not None:
-                    intl_ltl_eur = (price_eur + extra_eur) if price_eur is not None else None
-                    intl_ftl_eur = (ftl_eur + extra_eur) if ftl_eur is not None else None
-                    intl_ltl_czk = price_czk + extra_czk
-                    intl_ftl_czk = (ftl_price + extra_czk) if ftl_price is not None else None
                     p_eur, p_ftl_eur = st.columns(2)
                     p_czk, p_ftl = st.columns(2)
                     p_eur.metric(
@@ -12368,9 +12489,10 @@ def _logistics_quote_panel() -> None:
                     )
                     if extra_eur > 0:
                         st.caption(
-                            f"V odhadu je započteno mýto {format_num(toll_eur, 0)} EUR a čekání "
-                            f"{format_num(wait_eur, 0)} EUR ({format_num(wait_eur_day, 0)} EUR/den × {int(wait_days)} dní). "
-                            "Pevnou nabídku dopravce případně zadejte vlevo."
+                            f"Mýto {format_num(toll_eur, 0)} EUR + čekání {format_num(wait_eur, 0)} EUR "
+                            f"({format_num(wait_eur_day, 0)} EUR/den × {int(wait_days)} dní): "
+                            f"u FTL 100 % ({format_num(extra_eur, 0)} EUR), u LTL podíl {float(ltl_koef) * 100:.0f} % "
+                            f"({format_num(ltl_extra_eur, 0)} EUR). Pevnou nabídku dopravce zadejte vlevo."
                         )
                     else:
                         st.caption(
@@ -12968,46 +13090,10 @@ def _apply_drum_ktg_preset(ktg_all: list) -> None:
     st.session_state["_drum_preset_mass"] = float(d0["mass"])
 
 
-def _drum_inputs_now() -> dict:
-    """Hodnoty z minulého běhu, ať jde výsledek vykreslit nad formulář."""
-    fd = float(st.session_state.get("drum_fd", 1000.0))
-    kd_mode = str(st.session_state.get("drum_kd_mode", "Průměr"))
-    if kd_mode.startswith("Obvod"):
-        circ = float(st.session_state.get("drum_kd_circ", 1571.0))
-        kd = circ / math.pi
-    else:
-        kd = float(st.session_state.get("drum_kd", 500.0))
-    l2 = float(st.session_state.get("drum_l2", 560.0))
-    d_cab = float(st.session_state.get("drum_cable_d", 20.0))
-    target_m = float(st.session_state.get("drum_target_m", 0.0))
-    clearance_mode = str(st.session_state.get("drum_clearance_mode", "1 × průměr kabelu"))
-    if clearance_mode == "Vlastní [mm]":
-        clearance = float(st.session_state.get("drum_clearance_mm", 20.0))
-    else:
-        mult = 1.0 if clearance_mode.startswith("1") else 2.0
-        clearance = mult * d_cab
-    bend_label = st.session_state.get("drum_bend_factor")
-    if bend_label not in _DRUM_BEND_LABELS:
-        bend_label = _DRUM_BEND_DEFAULT
-    return {
-        "fd": fd,
-        "kd": kd,
-        "l2": l2,
-        "d_cab": d_cab,
-        "target_m": target_m,
-        "clearance": clearance,
-        "bend_n": _DRUM_BEND_LABELS[bend_label],
-        "kg_per_km": float(st.session_state.get("drum_kg_km", 0.0)),
-        "empty_mass": float(
-            st.session_state.get("drum_empty_mass", st.session_state.get("_drum_preset_mass") or 0.0)
-        ),
-        "max_load": float(st.session_state.get("drum_max_load", 0.0)),
-    }
-
-
 def render_drum_capacity_calculator() -> None:
     """
     Kapacita bubnu + plán návinu po vrstvách + doporučení min. KTG dle ohybu.
+    Horní souhrn se vykresluje přes st.empty() až z čerstvých vstupů (nulové zpoždění).
     """
     section_header("🪵", t("Kapacita bubnu — co se vejde na buben"))
     old_bend = st.session_state.get("drum_bend_factor")
@@ -13016,102 +13102,7 @@ def render_drum_capacity_calculator() -> None:
 
     _ktg_all = ktg_wood_drums() if ktg_wood_drums is not None else []
     _apply_drum_ktg_preset(_ktg_all)
-    inp = _drum_inputs_now()
-    fd = inp["fd"]
-    kd = inp["kd"]
-    l2 = inp["l2"]
-    d_cab = inp["d_cab"]
-    target_m = inp["target_m"]
-    clearance = inp["clearance"]
-    bend_n = inp["bend_n"]
-    kg_per_km = inp["kg_per_km"]
-    empty_mass = inp["empty_mass"]
-    max_load = inp["max_load"]
-    kd_min = _drum_core_min_mm(bend_n, d_cab)
-    bend_ok = kd >= kd_min
-
-    cap = None
-    plan = None
-    capacity_m = None
-    usable_m = None
-    limit_note = ""
-    if kd < fd:
-        cap = _drum_layer_plan(fd, kd, l2, d_cab, clearance, target_m=None)
-        if target_m and target_m > 0:
-            plan = _drum_layer_plan(fd, kd, l2, d_cab, clearance, target_m=float(target_m))
-        if cap["capacity_m"] is not None:
-            capacity_m = float(cap["capacity_m"])
-            weight_limit_m = None
-            if max_load > 0 and kg_per_km > 0:
-                weight_limit_m = max_load / (kg_per_km / 1000.0)
-            usable_m = capacity_m
-            if weight_limit_m is not None and weight_limit_m < capacity_m:
-                usable_m = weight_limit_m
-                limit_note = (
-                    f" Limit nosnosti {format_num(max_load, 0)} kg "
-                    f"→ max {format_num(weight_limit_m, 0)} m."
-                )
-
-    if kd >= fd:
-        st.markdown(
-            '<div class="error-box" style="margin:0 0 10px;font-size:1.05rem;text-align:left;">'
-            "Průměr jádra musí být menší než výška čela.</div>",
-            unsafe_allow_html=True,
-        )
-    elif cap is None or capacity_m is None:
-        st.markdown(
-            '<div class="error-box" style="margin:0 0 10px;font-size:1.05rem;text-align:left;">'
-            "Po odečtení rezervy nezůstává prostor pro návin. Zmenši rezervu nebo zkontroluj rozměry."
-            "</div>",
-            unsafe_allow_html=True,
-        )
-    else:
-        if not bend_ok:
-            fit_note = ""
-            if plan is not None and not plan["fits"]:
-                fit_note = (
-                    f" Na buben se {format_num(target_m, 0)} m nevejde "
-                    f"(kapacita ≈ {format_num(capacity_m, 0)} m)."
-                )
-            st.markdown(
-                '<div class="warning-box" style="margin:0 0 10px;font-size:1.08rem;line-height:1.35;">'
-                "⚠️ <strong>Jádro je malé pro zvolený ohyb</strong> — "
-                f"jádro {format_num(kd, 0)} mm, potřeba {format_num(kd_min, 0)} mm. "
-                f"Katalog {bend_n:g} × je poloměr, průměr jádra je dvojnásobek."
-                f"{limit_note}{fit_note}</div>",
-                unsafe_allow_html=True,
-            )
-        elif plan is not None and not plan["fits"]:
-            st.markdown(
-                '<div class="error-box" style="margin:0 0 10px;font-size:1.05rem;text-align:left;">'
-                f"Na tento buben se <strong>{format_num(target_m, 0)} m</strong> nevejde "
-                f"(kapacita ≈ {format_num(capacity_m, 0)} m)."
-                f"{limit_note}</div>",
-                unsafe_allow_html=True,
-            )
-        else:
-            st.markdown(
-                '<div class="success-box" style="margin:0 0 10px;font-size:1.02rem;">'
-                f"✅ <strong>Ohyb OK</strong> — jádro {format_num(kd, 0)} mm ≥ "
-                f"{format_num(kd_min, 0)} mm. Katalog {bend_n:g} × je poloměr, "
-                "průměr jádra je dvojnásobek."
-                f"{limit_note}</div>",
-                unsafe_allow_html=True,
-            )
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Kolik se vejde", f"{capacity_m:,.0f} m".replace(",", " "))
-        m2.metric("Použitelná délka", f"{usable_m:,.0f} m".replace(",", " "))
-        m3.metric("Max. řad / závity", f"{cap['max_layers']} / {cap['turns_per_layer']}")
-        if plan is not None and plan["fits"]:
-            m4.metric("Namotáno", f"{plan['length_m']:.1f} m")
-        elif plan is not None:
-            m4.metric("Chci namotat", f"{target_m:,.0f} m".replace(",", " "))
-        else:
-            m4.metric("Závity v řadě", str(cap["turns_per_layer"]))
-        st.caption(
-            "Kabely se ve výpočtu skládají přímo na sebe, ne do mezer mezi závity. "
-            "Ve skutečnosti se jich často vejde o něco víc."
-        )
+    top_summary_slot = st.empty()
 
     if st.session_state.get("drum_kd_mode") == "Obvod (metr)":
         st.session_state["drum_kd_mode"] = "Obvod v mm"
@@ -13268,23 +13259,106 @@ def render_drum_capacity_calculator() -> None:
                 if len(suited) > show_n:
                     st.caption(f"… a dalších {len(suited) - show_n} větších KTG splňuje ohyb.")
 
-    if kd >= fd or cap is None or cap.get("capacity_m") is None:
-        return
-
-    cap = _drum_layer_plan(fd, kd, l2, d_cab, clearance, target_m=None)
-    plan = None
-    if target_m and target_m > 0:
-        plan = _drum_layer_plan(fd, kd, l2, d_cab, clearance, target_m=float(target_m))
-    if cap["capacity_m"] is None:
-        return
-
-    capacity_m = float(cap["capacity_m"])
+    cap = _drum_layer_plan(fd, kd, l2, d_cab, clearance, target_m=None) if kd < fd else None
+    plan = (
+        _drum_layer_plan(fd, kd, l2, d_cab, clearance, target_m=float(target_m))
+        if (kd < fd and target_m and target_m > 0)
+        else None
+    )
+    capacity_m = float(cap["capacity_m"]) if (cap is not None and cap.get("capacity_m") is not None) else None
     weight_limit_m: float | None = None
     if max_load > 0 and kg_per_km > 0:
         weight_limit_m = max_load / (kg_per_km / 1000.0)
     usable_m = capacity_m
-    if weight_limit_m is not None and weight_limit_m < capacity_m:
+    limit_note = ""
+    if capacity_m is not None and weight_limit_m is not None and weight_limit_m < capacity_m:
         usable_m = weight_limit_m
+        limit_note = (
+            f" Limit nosnosti {format_num(max_load, 0)} kg "
+            f"→ max {format_num(weight_limit_m, 0)} m."
+        )
+    target_weight_ok = True
+    if target_m and target_m > 0 and weight_limit_m is not None:
+        target_weight_ok = float(target_m) <= weight_limit_m + 1e-6
+
+    with top_summary_slot.container():
+        if kd >= fd:
+            st.markdown(
+                '<div class="error-box" style="margin:0 0 10px;font-size:1.05rem;text-align:left;">'
+                "Průměr jádra musí být menší než výška čela.</div>",
+                unsafe_allow_html=True,
+            )
+        elif cap is None or capacity_m is None or usable_m is None:
+            st.markdown(
+                '<div class="error-box" style="margin:0 0 10px;font-size:1.05rem;text-align:left;">'
+                "Po odečtení rezervy nezůstává prostor pro návin. Zmenši rezervu nebo zkontroluj rozměry."
+                "</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            geom_fits = True if plan is None else bool(plan.get("fits"))
+            if not bend_ok:
+                fit_note = ""
+                if plan is not None and not geom_fits:
+                    fit_note = (
+                        f" Na buben se {format_num(target_m, 0)} m nevejde "
+                        f"(kapacita ≈ {format_num(capacity_m, 0)} m)."
+                    )
+                elif plan is not None and not target_weight_ok:
+                    fit_note = (
+                        f" Zadaná délka {format_num(target_m, 0)} m překračuje nosnost bubnu "
+                        f"(max {format_num(weight_limit_m, 0)} m)."
+                    )
+                st.markdown(
+                    '<div class="warning-box" style="margin:0 0 10px;font-size:1.08rem;line-height:1.35;">'
+                    "⚠️ <strong>Jádro je malé pro zvolený ohyb</strong> — "
+                    f"jádro {format_num(kd, 0)} mm, potřeba {format_num(kd_min, 0)} mm. "
+                    f"Katalog {bend_n:g} × je poloměr, průměr jádra je dvojnásobek."
+                    f"{limit_note}{fit_note}</div>",
+                    unsafe_allow_html=True,
+                )
+            elif plan is not None and not geom_fits:
+                st.markdown(
+                    '<div class="error-box" style="margin:0 0 10px;font-size:1.05rem;text-align:left;">'
+                    f"Na tento buben se <strong>{format_num(target_m, 0)} m</strong> nevejde "
+                    f"(kapacita ≈ {format_num(capacity_m, 0)} m)."
+                    f"{limit_note}</div>",
+                    unsafe_allow_html=True,
+                )
+            elif plan is not None and not target_weight_ok:
+                st.markdown(
+                    '<div class="error-box" style="margin:0 0 10px;font-size:1.05rem;text-align:left;">'
+                    f"Rozměrově se {format_num(target_m, 0)} m vejde, ale <strong>překračuje nosnost "
+                    f"{format_num(max_load, 0)} kg</strong> (max {format_num(weight_limit_m, 0)} m)."
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    '<div class="success-box" style="margin:0 0 10px;font-size:1.02rem;">'
+                    f"✅ <strong>Ohyb OK</strong> — jádro {format_num(kd, 0)} mm ≥ "
+                    f"{format_num(kd_min, 0)} mm. Katalog {bend_n:g} × je poloměr, "
+                    "průměr jádra je dvojnásobek."
+                    f"{limit_note}</div>",
+                    unsafe_allow_html=True,
+                )
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Kolik se vejde", f"{capacity_m:,.0f} m".replace(",", " "))
+            m2.metric("Použitelná délka", f"{usable_m:,.0f} m".replace(",", " "))
+            m3.metric("Max. řad / závity", f"{cap['max_layers']} / {cap['turns_per_layer']}")
+            if plan is not None and geom_fits and target_weight_ok:
+                m4.metric("Namotáno", f"{plan['length_m']:.1f} m")
+            elif plan is not None:
+                m4.metric("Chci namotat", f"{target_m:,.0f} m".replace(",", " "))
+            else:
+                m4.metric("Závity v řadě", str(cap["turns_per_layer"]))
+            st.caption(
+                "Kabely se ve výpočtu skládají přímo na sebe, ne do mezer mezi závity. "
+                "Ve skutečnosti se jich často vejde o něco víc."
+            )
+
+    if kd >= fd or cap is None or capacity_m is None or usable_m is None:
+        return
 
     st.markdown(
         f'<div style="display:flex;gap:10px;align-items:center;flex-wrap:nowrap;'
@@ -13447,9 +13521,21 @@ def render_drum_capacity_calculator() -> None:
             fits_a = "—"
             fits_b = "—"
             layers_a = turns_a = layers_b = turns_b = "—"
+            weight_ok_a = True
+            weight_ok_b = True
             if target_m and target_m > 0:
-                fits_a = "ano" if (plan and plan.get("fits")) else "ne"
-                fits_b = "ano" if (plan_b and plan_b.get("fits")) else "ne"
+                if max_load > 0 and kg_per_km > 0:
+                    weight_ok_a = (float(target_m) * kg_per_km / 1000.0) <= max_load + 1e-6
+                if max_load_b > 0 and kg_per_km > 0:
+                    weight_ok_b = (float(target_m) * kg_per_km / 1000.0) <= max_load_b + 1e-6
+                fits_a = (
+                    "ano" if (plan and plan.get("fits") and weight_ok_a)
+                    else ("ne (přetížení váhou)" if (plan and plan.get("fits")) else "ne")
+                )
+                fits_b = (
+                    "ano" if (plan_b and plan_b.get("fits") and weight_ok_b)
+                    else ("ne (přetížení váhou)" if (plan_b and plan_b.get("fits")) else "ne")
+                )
                 if plan and plan.get("fits"):
                     layers_a = str(plan["layers_used"])
                     turns_a = f"{plan['turns_total']:.0f}"
@@ -13462,7 +13548,7 @@ def render_drum_capacity_calculator() -> None:
                 {"Údaj": "Čelo / jádro / šířka [mm]",
                  "Buben A (výše)": f"{format_num(fd, 0)} / {format_num(kd, 0)} / {format_num(l2, 0)}",
                  "Buben B": f"{format_num(fd_b, 0)} / {format_num(kd_b, 0)} / {format_num(l2_b, 0)}"},
-                {"Údaj": "Ohyb (jádro ≥ N×D)",
+                {"Údaj": "Ohyb (jádro ≥ 2×N×D)",
                  "Buben A (výše)": bend_a,
                  "Buben B": bend_b},
                 {"Údaj": "Kapacita [m]",
@@ -13504,13 +13590,15 @@ def render_drum_capacity_calculator() -> None:
                      "Buben B": f"{cb + empty_b:,.0f}".replace(",", " ")},
                 ]
             st.dataframe(pd.DataFrame(cmp_rows), use_container_width=True, hide_index=True)
-            # rychlý verdikt
+            # rychlý verdikt (geometrie + nosnost)
             if target_m and target_m > 0 and plan and plan_b:
-                if plan.get("fits") and not plan_b.get("fits"):
-                    st.info("Pro zadanou délku stačí **buben A**, buben B je malý.")
-                elif plan_b.get("fits") and not plan.get("fits"):
-                    st.info("Pro zadanou délku stačí **buben B**, buben A je malý.")
-                elif plan.get("fits") and plan_b.get("fits"):
+                ok_a = bool(plan.get("fits")) and weight_ok_a
+                ok_b = bool(plan_b.get("fits")) and weight_ok_b
+                if ok_a and not ok_b:
+                    st.info("Pro zadanou délku a váhu vyhoví **buben A**, buben B nestačí.")
+                elif ok_b and not ok_a:
+                    st.info("Pro zadanou délku a váhu vyhoví **buben B**, buben A nestačí.")
+                elif ok_a and ok_b:
                     if fd_b < fd:
                         st.success("Oba bubny délku zvládnou — **B má menší čelo** (kompaktnější).")
                     elif fd < fd_b:
