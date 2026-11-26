@@ -1,53 +1,53 @@
 {
   "ccmn": {
-    "copper": 95270.0,
-    "aluminum": 22320.0
+    "copper": 95090.0,
+    "aluminum": 22695.0
   },
   "yf_spot": {
     "HRC=F": {
-      "price": 1432.0,
-      "prev": 1352.0,
-      "delta": 80.0,
-      "delta_pct": 5.917
+      "price": 1429.0,
+      "prev": 1403.0,
+      "delta": 26.0,
+      "delta_pct": 1.853
     },
     "BZ=F": {
-      "price": 89.879997,
-      "prev": 91.400002,
-      "delta": -1.520004,
-      "delta_pct": -1.663
+      "price": 91.379997,
+      "prev": 94.610001,
+      "delta": -3.230003,
+      "delta_pct": -3.414
     },
     "CL=F": {
-      "price": 83.339996,
-      "prev": 82.050003,
-      "delta": 1.289993,
-      "delta_pct": 1.572
+      "price": 84.529999,
+      "prev": 83.68,
+      "delta": 0.849998,
+      "delta_pct": 1.016
     },
     "EURUSD=X": {
-      "price": 1.094331,
-      "prev": 1.09081,
-      "delta": 0.003521,
-      "delta_pct": 0.323
+      "price": 1.098539,
+      "prev": 1.096227,
+      "delta": 0.002312,
+      "delta_pct": 0.211
     },
     "EURCZK=X": {
-      "price": 24.427099,
-      "prev": 24.4072,
-      "delta": 0.019899,
-      "delta_pct": 0.082
+      "price": 24.447901,
+      "prev": 24.4053,
+      "delta": 0.042601,
+      "delta_pct": 0.175
     },
     "HG=F": {
-      "price": 5.3155,
-      "prev": 5.3625,
-      "delta": -0.047,
-      "delta_pct": -0.876
+      "price": 5.466,
+      "prev": 5.3325,
+      "delta": 0.1335,
+      "delta_pct": 2.504
     },
     "ALI=F": {
-      "price": 2738.5,
-      "prev": 2872.5,
-      "delta": -134.0,
-      "delta_pct": -4.665
+      "price": 2768.5,
+      "prev": 2822.75,
+      "delta": -54.25,
+      "delta_pct": -1.922
     }
   },
-  "_ts": "2026-11-25 15:29",
+  "_ts": "2026-11-26 15:02",
   "_health": {
     "ccmn_copper": true,
     "ccmn_aluminum": true,
@@ -55,5 +55,5 @@
     "eurusd": true,
     "history": true
   },
-  "_alert_sig": "2026-11-25|Hlin\u00edk COMEX (ALI=F) den: -4.7 % (pr\u00e1h \u00b13.0 %) \u00b7 2738.5 USD"
+  "_alert_sig": "2026-11-26|Brent den: -3.4 % (pr\u00e1h \u00b13.0 %) \u00b7 $91.38"
 }
