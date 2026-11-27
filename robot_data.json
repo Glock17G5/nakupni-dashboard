@@ -1,53 +1,53 @@
 {
   "ccmn": {
-    "copper": 95090.0,
-    "aluminum": 22695.0
+    "copper": 97090.0,
+    "aluminum": 22880.0
   },
   "yf_spot": {
     "HRC=F": {
-      "price": 1429.0,
-      "prev": 1403.0,
-      "delta": 26.0,
-      "delta_pct": 1.853
+      "price": 1403.0,
+      "prev": 1352.0,
+      "delta": 51.0,
+      "delta_pct": 3.772
     },
     "BZ=F": {
-      "price": 91.379997,
+      "price": 91.080002,
       "prev": 94.610001,
-      "delta": -3.230003,
-      "delta_pct": -3.414
+      "delta": -3.529999,
+      "delta_pct": -3.731
     },
     "CL=F": {
-      "price": 84.529999,
+      "price": 83.919998,
       "prev": 83.68,
-      "delta": 0.849998,
-      "delta_pct": 1.016
+      "delta": 0.239998,
+      "delta_pct": 0.287
     },
     "EURUSD=X": {
-      "price": 1.098539,
-      "prev": 1.096227,
-      "delta": 0.002312,
-      "delta_pct": 0.211
+      "price": 1.09553,
+      "prev": 1.097008,
+      "delta": -0.001478,
+      "delta_pct": -0.135
     },
     "EURCZK=X": {
-      "price": 24.447901,
+      "price": 24.4077,
       "prev": 24.4053,
-      "delta": 0.042601,
-      "delta_pct": 0.175
+      "delta": 0.002399,
+      "delta_pct": 0.01
     },
     "HG=F": {
-      "price": 5.466,
+      "price": 5.5715,
       "prev": 5.3325,
-      "delta": 0.1335,
-      "delta_pct": 2.504
+      "delta": 0.239,
+      "delta_pct": 4.482
     },
     "ALI=F": {
-      "price": 2768.5,
+      "price": 2804.25,
       "prev": 2822.75,
-      "delta": -54.25,
-      "delta_pct": -1.922
+      "delta": -18.5,
+      "delta_pct": -0.655
     }
   },
-  "_ts": "2026-11-26 15:02",
+  "_ts": "2026-11-27 14:56",
   "_health": {
     "ccmn_copper": true,
     "ccmn_aluminum": true,
@@ -55,5 +55,5 @@
     "eurusd": true,
     "history": true
   },
-  "_alert_sig": "2026-11-26|Brent den: -3.4 % (pr\u00e1h \u00b13.0 %) \u00b7 $91.38"
+  "_alert_sig": "2026-11-27|Brent den: -3.7 % (pr\u00e1h \u00b13.0 %) \u00b7 $91.08|M\u011b\u010f COMEX (HG=F) den: +4.5 % (pr\u00e1h \u00b13.0 %) \u00b7 5.5715 USD/lb"
 }
